@@ -679,3 +679,23 @@ export const oidcAuthStates = pgTable(
     index("idx_oidc_auth_states_consumed").on(table.consumedAt)
   ]
 );
+
+export const skills = pgTable(
+  "skills",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    repositoryUrl: text("repository_url").notNull(),
+    version: text("version").notNull(),
+    installed: boolean("installed").notNull(),
+    categories: jsonb("categories").$type<string[]>().notNull(),
+    instructions: text("instructions").notNull(),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_skills_name").on(table.name),
+    index("idx_skills_installed").on(table.installed),
+    uniqueIndex("ux_skills_repository_name").on(table.repositoryUrl, table.name)
+  ]
+);

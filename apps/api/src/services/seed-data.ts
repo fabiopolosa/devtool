@@ -27,6 +27,7 @@ import {
   type RoutingRule,
   type RoadmapItem,
   type Session,
+  type Skill,
   type Task,
   type TaskRun,
   type User,
@@ -602,6 +603,36 @@ const seededSession: Session = {
   updatedBy: "system"
 };
 
+const installedSkill: Skill = {
+  id: "skill_001",
+  name: "checks",
+  description: "Verification and quality check helpers for code changes.",
+  repositoryUrl: "https://github.com/example/skills-checks",
+  version: "1.0.0",
+  installed: true,
+  categories: ["quality", "verification"],
+  instructions: "Run repository checks before finalizing changes and summarize failures with remediation hints.",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const availableSkill: Skill = {
+  id: "skill_002",
+  name: "release-notes",
+  description: "Generate structured release notes from merged changes.",
+  repositoryUrl: "https://github.com/example/skills-release-notes",
+  version: "0.9.0",
+  installed: false,
+  categories: ["documentation", "release"],
+  instructions: "Collect PR metadata and produce concise release notes grouped by feature area.",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
 export const seedData: ApiSeedData = {
   projects: [project],
   repositories: [repository],
@@ -635,7 +666,8 @@ export const seedData: ApiSeedData = {
   projectRoleBindings: [scopedProjectRoleBinding],
   repositoryRoleBindings: [scopedRepositoryRoleBinding],
   delegatedPermissions: [delegatedPermission],
-  oidcAuthStates: [oidcAuthState]
+  oidcAuthStates: [oidcAuthState],
+  skills: [installedSkill, availableSkill]
 };
 
 export const runEventsByRunId: Record<string, RunEvent[]> = {

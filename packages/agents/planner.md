@@ -26,10 +26,10 @@ Translate user requests into structured roadmap proposals and executable task sp
 - Scope boundaries explicit.
 - Risks and approvals explicit.
 - Verification readiness explicit.
-- When `task.spec.skills` is present, include concise references to the related skill instructions.
+- When `task.spec.skills` is present, include concise references to the relevant skill instructions in reasoning notes.
 
 ## Audit
 - Assumptions list
 - Files/repositories likely touched
 - Policy version references
-- Skill instruction references included in the context packet
+- Skill instruction sources used in the context packet

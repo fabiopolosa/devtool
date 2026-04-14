@@ -21,6 +21,7 @@ import type {
   RetrievalQueryLog,
   RoadmapItem,
   Session,
+  Skill,
   Task,
   TaskRun,
   User,
@@ -68,6 +69,7 @@ export interface ApiSeedData {
   repositoryRoleBindings: RepositoryRoleBinding[];
   delegatedPermissions: DelegatedPermission[];
   oidcAuthStates: OidcAuthState[];
+  skills: Skill[];
 }
 
 export interface RunEvent {

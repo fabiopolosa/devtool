@@ -26,7 +26,8 @@
       "@cp/agents": ["packages/agents/src/index.ts"],
       "@cp/db": ["packages/db/src/index.ts"],
       "@cp/ui-kit": ["packages/ui-kit/src/index.ts"],
-      "@cp/auth": ["packages/auth/src/index.ts"]
+      "@cp/auth": ["packages/auth/src/index.ts"],
+      "@cp/skills": ["packages/skills/src/index.ts"]
     }
   }
 }

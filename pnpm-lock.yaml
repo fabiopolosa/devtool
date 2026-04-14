@@ -44,6 +44,9 @@ importers:
       '@cp/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@cp/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
       '@fastify/cors':
         specifier: ^11.0.0
         version: 11.2.0
@@ -286,6 +289,19 @@ importers:
       '@cp/domain':
         specifier: workspace:*
         version: link:../domain
+    devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/skills:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
     devDependencies:
       vitest:
         specifier: ^3.2.4

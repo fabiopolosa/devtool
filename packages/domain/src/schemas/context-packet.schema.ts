@@ -12,6 +12,13 @@ export const contextPacketChunkSchema = z.object({
   tokenEstimate: z.number().int().nonnegative()
 });
 
+export const contextPacketSkillInstructionSchema = z.object({
+  name: z.string().min(1),
+  instructions: z.string().min(1),
+  repositoryUrl: z.string().optional(),
+  tokenEstimate: z.number().int().nonnegative()
+});
+
 export const contextPacketSchema = z.object({
   packetId: idSchema,
   projectId: idSchema,
@@ -28,6 +35,7 @@ export const contextPacketSchema = z.object({
   ]),
   query: z.string().min(1),
   chunks: z.array(contextPacketChunkSchema),
+  skillInstructions: z.array(contextPacketSkillInstructionSchema).default([]),
   compactSummary: z.string().min(1),
   sourceChunkIds: z.array(idSchema),
   tokenBudgetUsed: z.number().int().nonnegative(),

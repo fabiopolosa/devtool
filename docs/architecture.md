@@ -62,6 +62,7 @@ packages/
   orchestration-ruflo/    # workflow adapter, execution engine, escalation
   autoresearch/           # experiment framework and optimizer subsystem
   auth/                   # auth service, session lifecycle, RBAC policy layer
+  skills/                 # skills marketplace catalog + install management
   agents/                 # role prompts and role metadata
   config/                 # policy/env loaders
   ui-kit/                 # reusable dashboard components
@@ -82,6 +83,7 @@ configs/
 - `packages/orchestration-ruflo`: deterministic workflow control and run transitions.
 - `packages/autoresearch`: offline optimization against metrics logs.
 - `packages/auth`: user/session/role orchestration and permission evaluation.
+- `packages/skills`: marketplace ingestion, installation orchestration, and installed-skill lookup.
 - `apps/web`: control-plane UI and inspectability surface.
 
 ## Allowed Package Dependencies
@@ -93,6 +95,7 @@ These dependencies are the only allowed import directions.
 | `@cp/config` | `@cp/domain` |
 | `@cp/db` | `@cp/domain`, `@cp/config` |
 | `@cp/auth` | `@cp/domain`, `@cp/config` |
+| `@cp/skills` | `@cp/domain`, `@cp/config` |
 | `@cp/providers` | `@cp/domain`, `@cp/config` |
 | `@cp/memory` | `@cp/domain`, `@cp/config`, `@cp/providers` |
 | `@cp/retrieval` | `@cp/domain`, `@cp/config`, `@cp/memory`, `@cp/providers` |
@@ -134,6 +137,16 @@ Each step emits normalized result data and artifact references.
 - Provider/model routing is project-bound and role-aware.
 - Fallback chains are explicit.
 - Health status is part of routing decisions.
+
+## Skills Marketplace and Task Skill Selection
+- Skills are modeled as first-class domain entities (`Skill`) and persisted in dedicated storage (`skills` table).
+- Marketplace ingestion supports adapter-based URL resolution (official/custom GitHub raw manifests), avoiding vendor lock-in.
+- Installation is optional and isolated: install failures return warnings and do not block core task execution.
+- Task-level skill selection is captured in `TaskSpec.skills` and propagated to retrieval as `skillInstructions` in context packets.
+- Planner prompt policy requires selected skill instructions to be included when present, preserving traceability with compact summaries.
+- UI surface:
+  - `/skills` for catalog discovery and installation
+  - task detail section for selecting installed skills per task spec
 
 ## Swarm Readiness Checklist
 - [x] Structure frozen.

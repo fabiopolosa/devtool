@@ -42,6 +42,7 @@ describe("API contract", () => {
       "/retrieval/logs",
       "/experiments",
       "/providers",
+      "/skills/installed",
       "/chat/threads"
     ];
 

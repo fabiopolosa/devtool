@@ -281,3 +281,41 @@ Validation:
 - `pnpm lint` passed.
 - `pnpm test` passed.
 - `pnpm build` passed.
+
+## Phase H — Skills Marketplace + Per-Task Skill Selection
+Status: implemented
+
+Implemented:
+- Added `Skill` as first-class domain entity and schema contracts:
+  - `packages/domain/src/entities/skill.ts`
+  - `packages/domain/src/schemas/skill.schema.ts`
+  - exports updated in domain index/schema barrels.
+- Added DB migration `006_skills.sql` and repository/schema wiring for `skills` persistence.
+- Added dedicated `@cp/skills` package with:
+  - marketplace adapters (raw URL + GitHub repository)
+  - marketplace fetch and catalog upsert
+  - optional shell installer (`npx -y skills add <repo>`)
+  - installed/search/list APIs through service contracts
+- Added API endpoints:
+  - `GET /skills/catalog?marketplace=<url>`
+  - `GET /skills/installed`
+  - `POST /skills/install`
+- Added dashboard Skills page (`/skills`) with:
+  - marketplace URL input
+  - search + category filter
+  - available skills list with install action
+  - installed skills list
+- Added per-task skill selection UI in task detail, mapped to `TaskSpec.skills` intent via app state (`taskSpecSkills`) without changing existing `Task` contract.
+- Extended retrieval context packet flow with skill instructions:
+  - `RetrievalQuery.skillInstructions`
+  - context packet schema + builder includes compact skill instruction summaries and token accounting.
+- Updated planner prompt guidance to include selected skill instructions in context-aware planning output.
+- Added tests:
+  - `packages/skills/src/service.test.ts`
+  - `apps/api/src/__tests__/skills.contract.test.ts`
+  - `apps/web/src/__tests__/skills.smoke.test.tsx`
+  - retrieval test updated to validate skill instructions in context packets.
+
+Validation:
+- New skills migration is included in normal migration path.
+- API/UI test coverage for skills routes and UI smoke is active.

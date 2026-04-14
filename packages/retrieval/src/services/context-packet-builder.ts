@@ -39,6 +39,9 @@ const compactSummaryForRole = (role: AgentRoleName, chunks: RetrievedChunk[]): s
   return `${header}: ${sections.join(" | ")}`;
 };
 
+const summarizeSkillInstruction = (name: string, instructions: string): string =>
+  `${name}: ${truncate(normalizeText(instructions), 180)}`;
+
 export class DefaultContextPacketBuilder implements ContextPacketBuilder {
   async build(role: AgentRoleName, query: RetrievalQuery, chunks: RetrievedChunk[]): Promise<ContextPacket> {
     const ordered = this.orderForRole(role, chunks);
@@ -53,7 +56,20 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
       tokenEstimate: chunk.tokenEstimate
     }));
     const sourceChunkIds = uniqueBy(ordered, (chunk) => chunk.chunkId).map((chunk) => chunk.chunkId);
-    const tokenBudgetUsed = packetChunks.reduce((sum, chunk) => sum + chunk.tokenEstimate, 0) + estimateTokens(query.query);
+    const skillInstructions = (query.skillInstructions ?? []).map((skill) => ({
+      name: skill.name,
+      instructions: summarizeSkillInstruction(skill.name, skill.instructions),
+      ...(skill.repositoryUrl ? { repositoryUrl: skill.repositoryUrl } : {}),
+      tokenEstimate: estimateTokens(skill.instructions)
+    }));
+    const tokenBudgetUsed =
+      packetChunks.reduce((sum, chunk) => sum + chunk.tokenEstimate, 0) +
+      skillInstructions.reduce((sum, skill) => sum + skill.tokenEstimate, 0) +
+      estimateTokens(query.query);
+    const skillSummary =
+      skillInstructions.length > 0
+        ? ` | Skills: ${skillInstructions.map((skill) => skill.instructions).join(" | ")}`
+        : "";
 
     return {
       packetId: newId(),
@@ -62,7 +78,8 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
       role,
       query: query.query,
       chunks: packetChunks,
-      compactSummary: compactSummaryForRole(role, ordered),
+      skillInstructions,
+      compactSummary: `${compactSummaryForRole(role, ordered)}${skillSummary}`,
       sourceChunkIds,
       tokenBudgetUsed,
       generatedAt: new Date().toISOString()

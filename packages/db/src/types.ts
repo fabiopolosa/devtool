@@ -29,6 +29,7 @@ import type {
   RetrievalQueryLog,
   RoadmapItem,
   Session,
+  Skill,
   RoutingRule,
   Task,
   TaskRun,
@@ -76,6 +77,7 @@ export interface DatabaseTables {
   repository_role_bindings: RepositoryRoleBinding;
   delegated_permissions: DelegatedPermission;
   oidc_auth_states: OidcAuthState;
+  skills: Skill;
 }
 
 export type TableName = keyof DatabaseTables;

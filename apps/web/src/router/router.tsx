@@ -16,6 +16,7 @@ import { ChatPage } from '@/pages/ChatPage';
 import { ProvidersPage } from '@/pages/ProvidersPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { AdminRbacPage } from '@/pages/AdminRbacPage';
+import { SkillsPage } from '@/pages/SkillsPage';
 
 const rootRoute = createRootRoute({
   component: AppShell
@@ -105,6 +106,12 @@ const providersRoute = createRoute({
   component: ProvidersPage
 });
 
+const skillsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'skills',
+  component: SkillsPage
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'login',
@@ -132,6 +139,7 @@ const routeTree = rootRoute.addChildren([
   experimentsRoute,
   chatRoute,
   providersRoute,
+  skillsRoute,
   loginRoute,
   adminRbacRoute
 ]);

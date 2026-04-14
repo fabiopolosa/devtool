@@ -16,6 +16,7 @@
     "@cp/auth": "workspace:*",
     "@cp/db": "workspace:*",
     "@cp/domain": "workspace:*",
+    "@cp/skills": "workspace:*",
     "@fastify/cors": "^11.0.0",
     "@fastify/sensible": "^6.0.3",
     "@fastify/swagger": "^9.5.1",

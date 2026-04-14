@@ -80,6 +80,7 @@ export type AppState = {
   providerModels: ProviderModel[];
   projectBindings: ProjectProviderBinding[];
   providerHealthchecks: ProviderHealthcheck[];
+  taskSpecSkills: Record<string, string[]>;
 };
 
 export interface AuthPrincipal {
@@ -125,7 +126,8 @@ type Action =
   | { type: 'createProject'; name: string; description: string }
   | { type: 'linkRepository'; projectId: string; repositoryId: string }
   | { type: 'proposeRoadmapFromChat'; projectId: string; content: string }
-  | { type: 'convertRoadmapToTask'; roadmapItemId: string };
+  | { type: 'convertRoadmapToTask'; roadmapItemId: string }
+  | { type: 'setTaskSkills'; taskId: string; skills: string[] };
 
 const initialState: AppState = {
   projects: initialProjects,
@@ -152,7 +154,8 @@ const initialState: AppState = {
   providerCapabilities: initialProviderCapabilities,
   providerModels: initialProviderModels,
   projectBindings: initialProjectBindings,
-  providerHealthchecks: initialProviderHealthchecks
+  providerHealthchecks: initialProviderHealthchecks,
+  taskSpecSkills: {}
 };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -371,9 +374,21 @@ function reducer(state: AppState, action: Action): AppState {
             ? { ...roadmap, state: 'converted', convertedTaskId: nextTask.id, updatedAt: now }
             : roadmap
         ),
-        tasks: [...state.tasks, nextTask]
+        tasks: [...state.tasks, nextTask],
+        taskSpecSkills: {
+          ...state.taskSpecSkills,
+          [nextTask.id]: []
+        }
       };
     }
+    case 'setTaskSkills':
+      return {
+        ...state,
+        taskSpecSkills: {
+          ...state.taskSpecSkills,
+          [action.taskId]: [...action.skills]
+        }
+      };
     default:
       return state;
   }

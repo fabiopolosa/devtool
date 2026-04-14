@@ -34,6 +34,7 @@ import {
   roadmapItems,
   routingRules,
   sessions,
+  skills,
   tasks,
   taskRuns,
   userRoles,
@@ -93,7 +94,8 @@ const tableMap: Record<TableName, AnyPgTable> = {
   project_role_bindings: projectRoleBindings,
   repository_role_bindings: repositoryRoleBindings,
   delegated_permissions: delegatedPermissions,
-  oidc_auth_states: oidcAuthStates
+  oidc_auth_states: oidcAuthStates,
+  skills
 };
 
 const sanitizeRecord = (value: Record<string, unknown>): Record<string, unknown> =>

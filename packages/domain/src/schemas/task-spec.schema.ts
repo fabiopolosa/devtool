@@ -20,7 +20,8 @@ export const taskSpecSchema = z.object({
   }),
   risks: z.array(riskSchema).default([]),
   approvalsRequired: z.boolean(),
-  dependencyTaskIds: z.array(idSchema).default([])
+  dependencyTaskIds: z.array(idSchema).default([]),
+  skills: z.array(z.string().min(1)).default([])
 });
 
 export type TaskSpec = z.infer<typeof taskSpecSchema>;

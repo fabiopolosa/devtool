@@ -139,12 +139,22 @@ describe("retrieval service", () => {
       role: "claude_debugger",
       query: "why verification failed",
       topK: 1,
-      filters: { projectId: "proj_001" }
+      filters: { projectId: "proj_001" },
+      skillInstructions: [
+        {
+          name: "checks",
+          instructions: "Always run lint, test, build before merge.",
+          repositoryUrl: "https://github.com/example/skills-checks"
+        }
+      ]
     });
 
     expect(packet.role).toBe("claude_debugger");
     expect(packet.chunks).toHaveLength(1);
     expect(packet.sourceChunkIds[0]).toBe("chunk_4");
     expect(packet.compactSummary.toLowerCase()).toContain("debugger context");
+    expect(packet.skillInstructions).toHaveLength(1);
+    expect(packet.skillInstructions[0]?.name).toBe("checks");
+    expect(packet.compactSummary.toLowerCase()).toContain("skills:");
   });
 });

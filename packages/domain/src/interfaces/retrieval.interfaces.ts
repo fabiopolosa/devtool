@@ -1,6 +1,12 @@
 import type { AgentRoleName } from "../capabilities.js";
 import type { ContextPacket } from "../schemas/context-packet.schema.js";
 
+export interface SkillInstruction {
+  name: string;
+  instructions: string;
+  repositoryUrl?: string;
+}
+
 export interface RetrievalFilters {
   projectId: string;
   repositoryId?: string;
@@ -17,6 +23,7 @@ export interface RetrievalQuery {
   query: string;
   topK: number;
   filters: RetrievalFilters;
+  skillInstructions?: SkillInstruction[];
 }
 
 export interface RetrievedChunk {

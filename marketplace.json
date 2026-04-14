@@ -1,0 +1,20 @@
+{
+  "skills": [
+    {
+      "name": "checks",
+      "description": "Run deterministic lint, test, and build gates before completion.",
+      "repositoryUrl": "https://github.com/example/skills-checks",
+      "version": "1.0.0",
+      "categories": ["quality", "verification"],
+      "instructions": "Run lint, test, and build in sequence; report failures with concrete remediation steps."
+    },
+    {
+      "name": "release-notes",
+      "description": "Draft structured release notes from merged work items.",
+      "repositoryUrl": "https://github.com/example/skills-release-notes",
+      "version": "1.0.0",
+      "categories": ["delivery", "documentation"],
+      "instructions": "Summarize notable changes grouped by feature, bugfix, and refactor with linked artifacts."
+    }
+  ]
+}

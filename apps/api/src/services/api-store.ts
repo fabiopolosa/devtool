@@ -1,4 +1,6 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   InMemoryDatabase,
   PostgresDatabase,
@@ -36,6 +38,7 @@ import type {
   RoutingRule,
   RoadmapItem,
   Session,
+  Skill,
   Task,
   TaskRun,
   User,
@@ -58,6 +61,17 @@ export interface ApiStoreOptions {
 
 const defaultMode = (): ApiStoreMode =>
   process.env.API_STORE_MODE === "in_memory" ? "in_memory" : "postgres";
+
+const resolveDefaultMigrationsDir = (): string => {
+  const fromCwd = path.resolve(process.cwd(), "packages/db/migrations");
+  if (existsSync(fromCwd)) {
+    return fromCwd;
+  }
+
+  // Fallback for commands executed from workspace packages (for example apps/api).
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(moduleDir, "../../../../packages/db/migrations");
+};
 
 export class ApiStore {
   private readonly seed: ApiSeedData;
@@ -83,7 +97,7 @@ export class ApiStore {
       this.database = new InMemoryDatabase();
     } else {
       const client = createPostgresClient();
-      const migrationsDir = this.options.migrationsDir ?? path.resolve(process.cwd(), "packages/db/migrations");
+      const migrationsDir = this.options.migrationsDir ?? resolveDefaultMigrationsDir();
       await runDatabaseMigrations({ pool: client.pool, migrationsDir });
       this.database = new PostgresDatabase(client);
     }
@@ -132,6 +146,22 @@ export class ApiStore {
   async listProviderModels(): Promise<ProviderModel[]> { return this.repo("provider_models").list(); }
   async listProviderBindings(projectId?: string): Promise<ProjectProviderBinding[]> { return this.repo("project_provider_bindings").list(projectId ? { projectId } : undefined); }
   async listProviderHealthchecks(): Promise<ProviderHealthcheck[]> { return this.repo("provider_healthchecks").list(); }
+  async listSkills(): Promise<Skill[]> { return this.repo("skills").list(); }
+  async getSkill(skillId: string): Promise<Skill | null> { return this.repo("skills").getById(skillId); }
+  async createSkill(skill: Skill): Promise<Skill> { return this.repo("skills").create(skill); }
+  async updateSkill(skillId: string, patch: Partial<Skill>): Promise<Skill> { return this.repo("skills").update(skillId, patch); }
+  async findSkillByNameAndRepository(name: string, repositoryUrl: string): Promise<Skill | null> {
+    const normalizedName = name.trim().toLowerCase();
+    const normalizedRepositoryUrl = repositoryUrl.trim();
+    const rows = await this.repo("skills").list();
+    return (
+      rows.find(
+        (row) =>
+          row.name.trim().toLowerCase() === normalizedName &&
+          row.repositoryUrl.trim() === normalizedRepositoryUrl
+      ) ?? null
+    );
+  }
   async listExperiments(): Promise<AutoResearchExperiment[]> { return this.repo("autoresearch_experiments").list(); }
   async listExperimentRuns(experimentId?: string): Promise<AutoResearchRun[]> { return this.repo("autoresearch_runs").list(experimentId ? { experimentId } : undefined); }
   async listUsers(): Promise<User[]> { return this.repo("users").list(); }
@@ -261,6 +291,7 @@ export class ApiStore {
     await this.seedTable("repository_role_bindings", this.seed.repositoryRoleBindings);
     await this.seedTable("delegated_permissions", this.seed.delegatedPermissions);
     await this.seedTable("oidc_auth_states", this.seed.oidcAuthStates);
+    await this.seedTable("skills", this.seed.skills);
   }
 
   private async seedTable<K extends TableName>(table: K, rows: DatabaseTables[K][]): Promise<void> {

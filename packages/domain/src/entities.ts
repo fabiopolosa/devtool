@@ -452,3 +452,5 @@ export interface OidcAuthState extends AuditMetadata {
   ipAddress?: string;
   userAgent?: string;
 }
+
+export type { Skill } from "./entities/skill.js";

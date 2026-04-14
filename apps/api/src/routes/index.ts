@@ -11,6 +11,7 @@ export * from "./memory.js";
 export * from "./retrieval.js";
 export * from "./experiments.js";
 export * from "./providers.js";
+export * from "./skills.js";
 export * from "./chat.js";
 export * from "./auth.js";
 export * from "./admin.js";

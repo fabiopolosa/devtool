@@ -12,6 +12,7 @@ type ShellNavItem = {
     | '/approvals'
     | '/experiments'
     | '/providers'
+    | '/skills'
     | '/chat/$threadId'
     | '/login'
     | '/admin/rbac';
@@ -27,6 +28,7 @@ const navItems: ShellNavItem[] = [
   { to: '/approvals', label: 'Approvals' },
   { to: '/experiments', label: 'AutoResearch' },
   { to: '/providers', label: 'Providers' },
+  { to: '/skills', label: 'Skills' },
   { to: '/admin/rbac', label: 'Admin RBAC' },
   { to: '/chat/$threadId', label: 'Chat', params: { threadId: 'thread-1' } }
 ] as const;
@@ -65,7 +67,8 @@ export function AppShell() {
           </div>
           <nav className="space-y-1">
             {navItems.map((item) => (
-              (item.to === '/admin/rbac' && auth.enabled && !auth.principal?.roles.includes('admin')) ? null : (
+              ((item.to === '/admin/rbac' && auth.enabled && !auth.principal?.roles.includes('admin')) ||
+              (item.to === '/skills' && !auth.enabled)) ? null : (
               <Link
                 key={item.to}
                 to={item.to as any}
