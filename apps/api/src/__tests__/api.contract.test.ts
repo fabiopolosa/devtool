@@ -44,6 +44,12 @@ describe("API contract", () => {
       "/providers",
       "/agents",
       "/skills/installed",
+      "/secrets",
+      "/schema-docs",
+      "/environments",
+      "/machines",
+      "/local-repos",
+      "/versioning/snapshots",
       "/chat/threads"
     ];
 

@@ -7,6 +7,36 @@ export interface SkillInstruction {
   repositoryUrl?: string;
 }
 
+export interface SecretReference {
+  name: string;
+  scope: string;
+  description?: string;
+}
+
+export interface EnvironmentContext {
+  environmentId: string;
+  name: string;
+  status: string;
+  machines: Array<{
+    machineId: string;
+    name: string;
+    status: string;
+    cpuCores: number;
+    gpuCount: number;
+    ramGb: number;
+    agents: string[];
+    services: string[];
+  }>;
+}
+
+export interface VersionSnapshotReference {
+  snapshotId: string;
+  label: string;
+  trigger: string;
+  localRepositoryId: string;
+  taskId?: string;
+}
+
 export interface AgentRuntimeContext {
   agentId: string;
   agentName: string;
@@ -33,6 +63,9 @@ export interface RetrievalQuery {
   filters: RetrievalFilters;
   skillInstructions?: SkillInstruction[];
   agentContext?: AgentRuntimeContext;
+  secretReferences?: SecretReference[];
+  environmentContext?: EnvironmentContext;
+  versionSnapshots?: VersionSnapshotReference[];
 }
 
 export interface RetrievedChunk {

@@ -1,7 +1,8 @@
 import { Link, Outlet, useMatchRoute, useNavigate } from '@tanstack/react-router';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/store/app-store';
 import { Button, Pill, StatCard } from '@/components/common';
+import { getThemeMode, onThemeChange, setThemeMode, toggleThemeMode, type ThemeMode } from '@/theme';
 
 type ShellNavItem = {
   to:
@@ -15,6 +16,12 @@ type ShellNavItem = {
     | '/skills'
     | '/agents'
     | '/runtime'
+    | '/secrets'
+    | '/database'
+    | '/stack'
+    | '/local-repos'
+    | '/versioning'
+    | '/settings'
     | '/chat/$threadId'
     | '/login'
     | '/admin/rbac';
@@ -33,6 +40,12 @@ const navItems: ShellNavItem[] = [
   { to: '/skills', label: 'Skills' },
   { to: '/agents', label: 'Agents' },
   { to: '/runtime', label: 'Ruflo & Runtime' },
+  { to: '/secrets', label: 'Secrets' },
+  { to: '/database', label: 'Database' },
+  { to: '/stack', label: 'Stack & Machines' },
+  { to: '/local-repos', label: 'Local Repos' },
+  { to: '/versioning', label: 'Versioning' },
+  { to: '/settings', label: 'Settings' },
   { to: '/admin/rbac', label: 'Admin RBAC' },
   { to: '/chat/$threadId', label: 'Chat', params: { threadId: 'thread-1' } }
 ] as const;
@@ -41,15 +54,24 @@ export function AppShell() {
   const { state, auth, authActions } = useAppStore();
   const matchRoute = useMatchRoute();
   const navigate = useNavigate();
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => getThemeMode());
   const activeProjects = state.projects.filter((project) => project.status === 'active').length;
   const openApprovals = state.approvals.filter((approval) => approval.status === 'pending').length;
   const runningTasks = state.tasks.filter((task) => task.state === 'running').length;
   const isLoginRoute = Boolean(matchRoute({ to: '/login' }));
+  const isAdmin = auth.enabled && Boolean(auth.principal?.roles.includes('admin'));
 
   useEffect(() => {
     if (!auth.enabled || !auth.required || isLoginRoute) return;
     void navigate({ to: '/login' });
   }, [auth.enabled, auth.required, isLoginRoute, navigate]);
+
+  useEffect(() => {
+    const current = getThemeMode();
+    setThemeMode(current);
+    setThemeModeState(current);
+    return onThemeChange(setThemeModeState);
+  }, []);
 
   const isActive = useMemo(() => (item: ShellNavItem) => {
     if (item.params) {
@@ -60,7 +82,7 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen text-slate-100">
-      <div className="mx-auto grid min-h-screen max-w-[1800px] gap-5 p-4 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)_320px] xl:p-6">
+      <div className="matrix-canvas grid min-h-screen w-full gap-5 p-4 lg:grid-cols-[270px_minmax(0,1fr)] xl:grid-cols-[270px_minmax(0,1fr)_320px] xl:p-6">
         <aside className="shell-panel flex flex-col gap-4 p-4">
           <div>
             <div className="label">Control Plane</div>
@@ -71,8 +93,10 @@ export function AppShell() {
           </div>
           <nav className="space-y-1">
             {navItems.map((item) => (
-              ((item.to === '/admin/rbac' && auth.enabled && !auth.principal?.roles.includes('admin')) ||
-              (item.to === '/skills' && !auth.enabled)) ? null : (
+              ((item.to === '/admin/rbac' && !isAdmin) ||
+              (item.to === '/skills' && !auth.enabled) ||
+              (item.to === '/secrets' && (!auth.enabled || !isAdmin)) ||
+              (item.to === '/stack' && (!auth.enabled || !isAdmin))) ? null : (
               <Link
                 key={item.to}
                 to={item.to as any}
@@ -89,6 +113,21 @@ export function AppShell() {
               )
             ))}
           </nav>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+            <div className="label">Theme</div>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="text-slate-300">{themeMode === 'dark' ? 'Dark Matrix' : 'Light'}</span>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const next = toggleThemeMode();
+                  setThemeModeState(next);
+                }}
+              >
+                Toggle
+              </Button>
+            </div>
+          </div>
           {auth.enabled ? (
             <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
               <div className="label">Session</div>

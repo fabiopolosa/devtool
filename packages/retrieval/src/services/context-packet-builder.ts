@@ -56,6 +56,26 @@ const summarizeRuntimeConfig = (runtimeConfig: Record<string, unknown>): string 
   return `Runtime: ${parts.join(", ")}`;
 };
 
+const summarizeSecretReference = (name: string, scope: string, description?: string): string => {
+  const detail = description ? ` (${truncate(normalizeText(description), 80)})` : "";
+  return `${scope}:${name}${detail}`;
+};
+
+const summarizeEnvironmentContext = (environment: NonNullable<RetrievalQuery["environmentContext"]>): string => {
+  const machineSummary = environment.machines
+    .slice(0, 4)
+    .map(
+      (machine) =>
+        `${machine.name}[${machine.status}] cpu:${machine.cpuCores} gpu:${machine.gpuCount} ram:${machine.ramGb}`
+    )
+    .join("; ");
+  return `${environment.name} (${environment.status})${machineSummary ? ` | ${machineSummary}` : ""}`;
+};
+
+const summarizeVersionSnapshot = (
+  snapshot: NonNullable<RetrievalQuery["versionSnapshots"]>[number]
+): string => `${snapshot.label} (${snapshot.trigger})`;
+
 export class DefaultContextPacketBuilder implements ContextPacketBuilder {
   async build(role: AgentRoleName, query: RetrievalQuery, chunks: RetrievedChunk[]): Promise<ContextPacket> {
     const ordered = this.orderForRole(role, chunks);
@@ -83,9 +103,57 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
     const runtimeSummary = query.agentContext
       ? summarizeRuntimeConfig(query.agentContext.runtimeConfig)
       : undefined;
+    const secretReferences = (query.secretReferences ?? []).map((secret) => ({
+      name: secret.name,
+      scope: secret.scope,
+      ...(secret.description ? { description: secret.description } : {})
+    }));
+    const environmentContext = query.environmentContext
+      ? {
+          environmentId: query.environmentContext.environmentId,
+          name: query.environmentContext.name,
+          status: query.environmentContext.status,
+          machines: query.environmentContext.machines.map((machine) => ({
+            machineId: machine.machineId,
+            name: machine.name,
+            status: machine.status,
+            cpuCores: machine.cpuCores,
+            gpuCount: machine.gpuCount,
+            ramGb: machine.ramGb,
+            agents: [...machine.agents],
+            services: [...machine.services]
+          }))
+        }
+      : undefined;
+    const versionSnapshots = (query.versionSnapshots ?? []).map((snapshot) => ({
+      snapshotId: snapshot.snapshotId,
+      label: snapshot.label,
+      trigger: snapshot.trigger,
+      localRepositoryId: snapshot.localRepositoryId,
+      ...(snapshot.taskId ? { taskId: snapshot.taskId } : {})
+    }));
+    const secretSummary =
+      secretReferences.length > 0
+        ? ` | Secrets: ${secretReferences
+            .map((secret) => summarizeSecretReference(secret.name, secret.scope, secret.description))
+            .join(", ")}`
+        : "";
+    const environmentSummary = environmentContext
+      ? ` | Environment: ${summarizeEnvironmentContext(environmentContext)}`
+      : "";
+    const snapshotSummary =
+      versionSnapshots.length > 0
+        ? ` | Snapshots: ${versionSnapshots.map((snapshot) => summarizeVersionSnapshot(snapshot)).join(", ")}`
+        : "";
     const tokenBudgetUsed =
       packetChunks.reduce((sum, chunk) => sum + chunk.tokenEstimate, 0) +
       skillInstructions.reduce((sum, skill) => sum + skill.tokenEstimate, 0) +
+      secretReferences.reduce(
+        (sum, secret) => sum + estimateTokens(`${secret.scope}:${secret.name}${secret.description ?? ""}`),
+        0
+      ) +
+      versionSnapshots.reduce((sum, snapshot) => sum + estimateTokens(summarizeVersionSnapshot(snapshot)), 0) +
+      (environmentContext ? estimateTokens(summarizeEnvironmentContext(environmentContext)) : 0) +
       (runtimeSummary ? estimateTokens(runtimeSummary) : 0) +
       estimateTokens(query.query);
     const skillSummary =
@@ -116,7 +184,10 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
             }
           }
         : {}),
-      compactSummary: `${compactSummaryForRole(role, ordered)}${skillSummary}${agentSummary}`,
+      secretReferences,
+      ...(environmentContext ? { environmentContext } : {}),
+      versionSnapshots,
+      compactSummary: `${compactSummaryForRole(role, ordered)}${skillSummary}${agentSummary}${secretSummary}${environmentSummary}${snapshotSummary}`,
       sourceChunkIds,
       tokenBudgetUsed,
       generatedAt: new Date().toISOString()

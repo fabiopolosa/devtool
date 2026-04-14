@@ -17,3 +17,8 @@ export * from "./auth.schema.js";
 export * from "./audit-event.schema.js";
 export * from "./skill.schema.js";
 export * from "./agent.schema.js";
+export * from "./secret.schema.js";
+export * from "./schema-doc.schema.js";
+export * from "./environment.schema.js";
+export * from "./local-repository.schema.js";
+export * from "./version-snapshot.schema.js";

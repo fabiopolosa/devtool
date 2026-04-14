@@ -382,3 +382,79 @@ Validation:
 - `pnpm lint` passed.
 - `pnpm test` passed (including new agents API/service/web smoke suites).
 - `pnpm build` passed.
+
+## Phase J — Platform Ops Modules + Modern UI Redesign
+Status: implemented
+
+Implemented:
+- Added new domain entities and schemas for:
+  - `SecretConfig`
+  - `SchemaDoc`
+  - `Environment` and `Machine`
+  - `LocalRepository`
+  - `VersionSnapshot`
+- Added additive migrations and DB table wiring:
+  - `008_secrets.sql`
+  - `009_schema_docs.sql`
+  - `010_env_machine_localrepos_versioning.sql`
+- Added modular packages and API wiring:
+  - `@cp/secrets` + `/secrets` routes
+  - `@cp/schema-docs` + `/schema-docs` routes
+  - `@cp/environments` + `/environments` and `/machines` routes
+  - `@cp/local-repos` + `/local-repos` routes
+  - `@cp/versioning` + `/versioning` routes
+- Added UI sections and routing:
+  - `/secrets`
+  - `/database`
+  - `/stack`
+  - `/local-repos`
+  - `/versioning`
+  - `/settings`
+- Added local repository file manager UX:
+  - folder/file list navigation
+  - read-only code viewer
+  - git history tab
+  - snapshot diff tab
+- Added task detail snapshot history + diff panel.
+- Expanded context-packet support in retrieval:
+  - secret refs
+  - environment/machine context
+  - version snapshot refs
+  - compatibility with selected skills and explicit agent runtime config
+- Updated planner prompt guidance to consume expanded context packet fields.
+- Implemented modern dashboard redesign:
+  - dark Matrix-like theme by default
+  - optional light-mode toggle in `/settings`
+  - live agent mesh panel for parallel agent/resource visibility on dashboard
+- Access control UX behavior:
+  - advanced sections (`Secrets`, `Stack & Machines`) hidden when auth is disabled or principal is not admin.
+
+Key files:
+- `apps/web/src/pages/SecretsPage.tsx`
+- `apps/web/src/pages/DatabasePage.tsx`
+- `apps/web/src/pages/StackPage.tsx`
+- `apps/web/src/pages/LocalReposPage.tsx`
+- `apps/web/src/pages/VersioningPage.tsx`
+- `apps/web/src/pages/SettingsPage.tsx`
+- `apps/web/src/layout/AppShell.tsx`
+- `apps/web/src/router/router.tsx`
+- `apps/web/src/styles.css`
+- `apps/web/src/components/panels.tsx`
+- `packages/retrieval/src/services/context-packet-builder.ts`
+- `packages/retrieval/src/retrieval.service.test.ts`
+- `apps/api/src/routes/secrets.ts`
+- `apps/api/src/routes/schema-docs.ts`
+- `apps/api/src/routes/environments.ts`
+- `apps/api/src/routes/local-repos.ts`
+- `apps/api/src/routes/versioning.ts`
+
+Testing:
+- Added smoke coverage for new web sections:
+  - `apps/web/src/__tests__/platform-modern-ui.smoke.test.tsx`
+- Existing API extension contract coverage remains active:
+  - `apps/api/src/__tests__/platform-ext.contract.test.ts`
+
+Usage notes:
+- Dark mode is default and can be toggled in `Settings`.
+- Live agent runtime panels are visible on dashboard home in the `Live Agent Mesh` section.
+- File manager and history/snapshot inspection are available in `Local Repos`.

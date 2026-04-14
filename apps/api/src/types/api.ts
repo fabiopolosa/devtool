@@ -16,6 +16,12 @@ import type {
   Project,
   ProjectProviderBinding,
   ProjectRoleBinding,
+  SecretConfig,
+  SchemaDoc,
+  Environment,
+  Machine,
+  LocalRepository,
+  VersionSnapshot,
   Repository,
   RepositoryRoleBinding,
   Role,
@@ -72,6 +78,12 @@ export interface ApiSeedData {
   delegatedPermissions: DelegatedPermission[];
   oidcAuthStates: OidcAuthState[];
   skills: Skill[];
+  secrets: SecretConfig[];
+  schemaDocs: SchemaDoc[];
+  environments: Environment[];
+  machines: Machine[];
+  localRepositories: LocalRepository[];
+  versionSnapshots: VersionSnapshot[];
 }
 
 export interface RunEvent {

@@ -17,6 +17,7 @@
     "@cp/orchestration-ruflo": "workspace:*",
     "@cp/retrieval": "workspace:*",
     "@cp/memory": "workspace:*",
+    "@cp/local-repos": "workspace:*",
     "@cp/providers": "workspace:*",
     "@cp/verifier": "workspace:*",
     "@cp/autoresearch": "workspace:*",

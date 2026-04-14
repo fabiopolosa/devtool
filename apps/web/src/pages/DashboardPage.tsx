@@ -1,14 +1,43 @@
 import { Link } from '@tanstack/react-router';
+import { useCallback, useEffect, useState } from 'react';
+import type { AgentConfig, Machine } from '@cp/domain';
 import { StatCard } from '@/components/common';
-import { AgentRunTable, ExecutionTracePanel, PlannerOutputCard, ProjectCard, VerificationSummary } from '@/components/panels';
+import { AgentRunTable, ExecutionTracePanel, LiveAgentGrid, PlannerOutputCard, ProjectCard, VerificationSummary } from '@/components/panels';
 import { useAppStore } from '@/store/app-store';
 
 export function DashboardPage() {
-  const { state } = useAppStore();
+  const { state, authActions } = useAppStore();
   const activeProject = state.projects[0];
   const run = state.taskRuns[0];
   const verification = state.verificationResults[0];
   const verificationSteps = state.verificationSteps.filter((step) => step.runId === run?.id);
+  const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [machines, setMachines] = useState<Machine[]>([]);
+
+  const loadLiveData = useCallback(async () => {
+    try {
+      const [agentsResponse, machinesResponse] = await Promise.all([
+        authActions.apiFetch('/agents'),
+        authActions.apiFetch('/machines')
+      ]);
+
+      const agentsBody = (await agentsResponse.json()) as { items?: AgentConfig[] };
+      const machinesBody = (await machinesResponse.json()) as { items?: Machine[] };
+
+      if (agentsResponse.ok) {
+        setAgents(agentsBody.items ?? []);
+      }
+      if (machinesResponse.ok) {
+        setMachines(machinesBody.items ?? []);
+      }
+    } catch {
+      // keep dashboard resilient; live mesh can fall back to existing local state panels
+    }
+  }, [authActions]);
+
+  useEffect(() => {
+    void loadLiveData();
+  }, [loadLiveData]);
 
   return (
     <div className="space-y-5">
@@ -48,6 +77,8 @@ export function DashboardPage() {
           />
         </div>
       ) : null}
+
+      <LiveAgentGrid agents={agents} machines={machines} runs={state.taskRuns} />
 
       <AgentRunTable runs={state.taskRuns} />
 

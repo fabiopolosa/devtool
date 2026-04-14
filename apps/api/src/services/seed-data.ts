@@ -9,13 +9,18 @@ import {
   type ChatMessage,
   type ChatThread,
   type DelegatedPermission,
+  type Environment,
+  type LocalRepository,
   type MemoryChunk,
   type MemoryEntry,
+  type Machine,
   type OidcAuthState,
   type Policy,
   type Project,
   type ProjectProviderBinding,
   type ProjectRoleBinding,
+  type SchemaDoc,
+  type SecretConfig,
   type ProviderCapability,
   type ProviderConfig,
   type ProviderHealthcheck,
@@ -33,6 +38,7 @@ import {
   type TaskRun,
   type User,
   type UserRole,
+  type VersionSnapshot,
   type VerificationResult,
   type VerificationStep
 } from "@cp/domain";
@@ -634,6 +640,129 @@ const availableSkill: Skill = {
   updatedBy: "system"
 };
 
+const secretConfig: SecretConfig = {
+  id: "secret_001",
+  name: "OPENAI_API_KEY",
+  description: "Primary OpenAI API key reference for provider calls",
+  encryptedValue: "v1:seeded-demo-ciphertext",
+  scope: "provider",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const schemaDoc: SchemaDoc = {
+  id: "schema_doc_001",
+  title: "Control Plane PostgreSQL schema",
+  description: "Normalized schema for control-plane entities and operational modules.",
+  databaseName: "devtool",
+  dialect: "postgresql",
+  tables: [
+    {
+      tableName: "projects",
+      schemaName: "public",
+      columns: [
+        { name: "id", dataType: "text", nullable: false },
+        { name: "name", dataType: "text", nullable: false },
+        { name: "status", dataType: "text", nullable: false }
+      ],
+      primaryKeyColumns: ["id"]
+    },
+    {
+      tableName: "tasks",
+      schemaName: "public",
+      columns: [
+        { name: "id", dataType: "text", nullable: false },
+        { name: "project_id", dataType: "text", nullable: false },
+        { name: "state", dataType: "text", nullable: false }
+      ],
+      primaryKeyColumns: ["id"]
+    }
+  ],
+  conventions: [
+    { key: "table_naming", value: "snake_case plural" },
+    { key: "json_columns", value: "jsonb for structured payloads" }
+  ],
+  stackNotes: ["TypeScript + Drizzle", "PostgreSQL + pgvector", "Additive migrations only"],
+  lastIntrospectedAt: now,
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const environment: Environment = {
+  id: "env_001",
+  name: "Local Development",
+  description: "Primary local development environment",
+  type: "development",
+  region: "eu-central-local",
+  baseUrl: "http://localhost:3000",
+  status: "active",
+  notes: ["Docker compose for Postgres/Redis", "Auth disabled by default"],
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const machine: Machine = {
+  id: "machine_001",
+  environmentId: environment.id,
+  name: "andromeda-workstation",
+  host: "http://localhost:3000",
+  status: "online",
+  cpuCores: 12,
+  gpuCount: 1,
+  ramGb: 32,
+  services: ["api", "web", "worker", "postgres", "redis"],
+  agents: ["codex-builder-primary"],
+  lastHeartbeatAt: now,
+  metadata: { os: "macOS", arch: "arm64" },
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const localRepository: LocalRepository = {
+  id: "local_repo_001",
+  name: "devtool",
+  rootPath: "/Users/andromeda/devtool",
+  description: "Main control-plane monorepo",
+  status: "active",
+  detectedGit: true,
+  currentBranch: "main",
+  lastCommitSha: "d912d30",
+  indexedFileCount: 1200,
+  lastScannedAt: now,
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const versionSnapshot: VersionSnapshot = {
+  id: "snapshot_001",
+  localRepositoryId: localRepository.id,
+  taskId: task.id,
+  label: "task_start",
+  trigger: "task_start",
+  files: [
+    {
+      path: "apps/api/src/app.ts",
+      contentHash: "seeded-hash-api-app",
+      content: "seeded snapshot content"
+    }
+  ],
+  metadata: { fileCount: 1 },
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
 const builderAgent: AgentConfig = {
   id: "agent_001",
   name: "codex-builder-primary",
@@ -655,6 +784,12 @@ const builderAgent: AgentConfig = {
 };
 
 export const seedData: ApiSeedData = {
+  secrets: [secretConfig],
+  schemaDocs: [schemaDoc],
+  environments: [environment],
+  machines: [machine],
+  localRepositories: [localRepository],
+  versionSnapshots: [versionSnapshot],
   agents: [builderAgent],
   projects: [project],
   repositories: [repository],

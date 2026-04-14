@@ -1,10 +1,18 @@
 import { Link } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AgentConfig, Skill } from '@cp/domain';
+import type { AgentConfig, Skill, VersionSnapshot } from '@cp/domain';
 import { Panel, SectionHeading } from '@/components/common';
 import { AgentRunTable, ExecutionTracePanel, TaskTimeline } from '@/components/panels';
 import { usePathParam } from './_utils';
 import { useAppStore } from '@/store/app-store';
+
+type SnapshotDiffResult = {
+  leftSnapshotId: string;
+  rightSnapshotId: string;
+  added: string[];
+  removed: string[];
+  changed: Array<{ path: string; beforeHash: string; afterHash: string }>;
+};
 
 export function TaskDetailPage() {
   const { state, dispatch, auth, authActions } = useAppStore();
@@ -12,8 +20,13 @@ export function TaskDetailPage() {
   const task = state.tasks.find((item) => item.id === taskId) ?? state.tasks[0];
   const [installedSkills, setInstalledSkills] = useState<Skill[]>([]);
   const [availableAgents, setAvailableAgents] = useState<AgentConfig[]>([]);
+  const [taskSnapshots, setTaskSnapshots] = useState<VersionSnapshot[]>([]);
+  const [leftSnapshotId, setLeftSnapshotId] = useState('');
+  const [rightSnapshotId, setRightSnapshotId] = useState('');
+  const [snapshotDiff, setSnapshotDiff] = useState<SnapshotDiffResult | undefined>();
   const [skillsError, setSkillsError] = useState<string | undefined>();
   const [agentsError, setAgentsError] = useState<string | undefined>();
+  const [snapshotError, setSnapshotError] = useState<string | undefined>();
   const runs = task ? state.taskRuns.filter((run) => run.taskId === task.id) : [];
   const firstRun = runs[0];
   const selectedTaskSkills = task ? (state.taskSpecSkills[task.id] ?? []) : [];
@@ -51,6 +64,53 @@ export function TaskDetailPage() {
     }
     void loadTaskDependencies();
   }, [auth.enabled, loadTaskDependencies]);
+
+  const loadTaskSnapshots = useCallback(async () => {
+    if (!task) return;
+    setSnapshotError(undefined);
+    try {
+      const response = await authActions.apiFetch(`/versioning/snapshots?taskId=${encodeURIComponent(task.id)}`);
+      const body = (await response.json()) as { items?: VersionSnapshot[]; message?: string };
+      if (!response.ok) {
+        throw new Error(body.message ?? `Unable to load task snapshots (HTTP ${response.status})`);
+      }
+      const items = body.items ?? [];
+      setTaskSnapshots(items);
+      if (!leftSnapshotId && items.length > 0) {
+        setLeftSnapshotId(items[0]!.id);
+      }
+      if (!rightSnapshotId && items.length > 1) {
+        setRightSnapshotId(items[1]!.id);
+      }
+    } catch (error) {
+      setSnapshotError(error instanceof Error ? error.message : 'Unable to load task snapshots');
+    }
+  }, [authActions, leftSnapshotId, rightSnapshotId, task]);
+
+  useEffect(() => {
+    if (!task) return;
+    void loadTaskSnapshots();
+  }, [loadTaskSnapshots, task]);
+
+  const compareSnapshots = async (): Promise<void> => {
+    if (!leftSnapshotId || !rightSnapshotId) {
+      setSnapshotError('Select two snapshots to compare.');
+      return;
+    }
+    setSnapshotError(undefined);
+    try {
+      const response = await authActions.apiFetch(
+        `/versioning/diff?leftSnapshotId=${encodeURIComponent(leftSnapshotId)}&rightSnapshotId=${encodeURIComponent(rightSnapshotId)}`
+      );
+      const body = (await response.json()) as { item?: SnapshotDiffResult; message?: string };
+      if (!response.ok || !body.item) {
+        throw new Error(body.message ?? `Unable to compare task snapshots (HTTP ${response.status})`);
+      }
+      setSnapshotDiff(body.item);
+    } catch (error) {
+      setSnapshotError(error instanceof Error ? error.message : 'Unable to compare task snapshots');
+    }
+  };
 
   const availableSkills = useMemo(
     () => [...installedSkills].sort((left, right) => left.name.localeCompare(right.name)),
@@ -171,6 +231,83 @@ export function TaskDetailPage() {
         <p className="mt-3 text-xs text-slate-400">
           Selected skills: {selectedTaskSkills.length > 0 ? selectedTaskSkills.join(', ') : 'none'}
         </p>
+      </Panel>
+
+      <Panel>
+        <SectionHeading
+          title="Task Snapshot History"
+          subtitle={`${taskSnapshots.length} snapshots`}
+          action={
+            <button
+              onClick={() => void loadTaskSnapshots()}
+              className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-200 hover:bg-white/5"
+            >
+              Refresh
+            </button>
+          }
+        />
+        {snapshotError ? <p className="text-sm text-rose-300">{snapshotError}</p> : null}
+        <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+          <select
+            value={leftSnapshotId}
+            onChange={(event) => setLeftSnapshotId(event.target.value)}
+            className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
+          >
+            <option value="">Left snapshot</option>
+            {taskSnapshots.map((snapshot) => (
+              <option key={`task-left:${snapshot.id}`} value={snapshot.id}>
+                {snapshot.label} · {snapshot.trigger}
+              </option>
+            ))}
+          </select>
+          <select
+            value={rightSnapshotId}
+            onChange={(event) => setRightSnapshotId(event.target.value)}
+            className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
+          >
+            <option value="">Right snapshot</option>
+            {taskSnapshots.map((snapshot) => (
+              <option key={`task-right:${snapshot.id}`} value={snapshot.id}>
+                {snapshot.label} · {snapshot.trigger}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => void compareSnapshots()}
+            className="rounded-xl border border-cyan-400/30 bg-cyan-500/20 px-3 py-2 text-sm text-cyan-100"
+          >
+            Diff
+          </button>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-3 text-xs">
+            <div className="label">Added</div>
+            <div className="mt-2 space-y-1 text-emerald-100">
+              {snapshotDiff?.added.map((entry) => (
+                <div key={`task-added:${entry}`} className="truncate">{entry}</div>
+              ))}
+              {(snapshotDiff?.added.length ?? 0) === 0 ? <div className="text-slate-500">none</div> : null}
+            </div>
+          </div>
+          <div className="rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs">
+            <div className="label">Removed</div>
+            <div className="mt-2 space-y-1 text-rose-100">
+              {snapshotDiff?.removed.map((entry) => (
+                <div key={`task-removed:${entry}`} className="truncate">{entry}</div>
+              ))}
+              {(snapshotDiff?.removed.length ?? 0) === 0 ? <div className="text-slate-500">none</div> : null}
+            </div>
+          </div>
+          <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-3 text-xs">
+            <div className="label">Changed</div>
+            <div className="mt-2 space-y-1 text-cyan-100">
+              {snapshotDiff?.changed.map((entry) => (
+                <div key={`task-changed:${entry.path}`} className="truncate">{entry.path}</div>
+              ))}
+              {(snapshotDiff?.changed.length ?? 0) === 0 ? <div className="text-slate-500">none</div> : null}
+            </div>
+          </div>
+        </div>
       </Panel>
 
       <div className="grid gap-4 xl:grid-cols-2">

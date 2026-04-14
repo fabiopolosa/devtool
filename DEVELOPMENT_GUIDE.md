@@ -15,6 +15,8 @@ Key features:
 - **Shared memory & retrieval**: canonical memory store, vector index (pgvector), context packet builder per agent, and AutoResearch optimisation.
 - **Ruflo orchestration**: workflow definitions, run state machine, escalation and budget rules.
 - **Authentication/RBAC**: optional OIDC support, session management, scoped roles, audit logging and admin UI.
+- **Platform ops modules**: Secrets, Database schema docs, Stack/Machines, Local Repos file manager, and Versioning snapshots/diffs.
+- **Modern UI shell**: dark Matrix-style default theme with optional light mode toggle (`/settings`) and live agent mesh panel on dashboard.
 
 ## Setup
 
@@ -35,6 +37,13 @@ Controllata da `AUTH_ENABLED`. Quando abilitata, `/auth/*` gestisce login/logout
 ## Providers
 
 Gli adapter sono in `packages/providers/src/adapters`. Configura le chiavi in `.env` con prefissi `env://` o `secret://`.
+
+## Operations UI Notes
+
+- **Secrets** and **Stack/Machines** are privileged sections: they are visible only when auth is enabled and the current user is `admin`.
+- **Local Repos** offers a read-only file inspector, git history tab, and snapshot diff tab.
+- **Versioning** centralizes snapshot creation/comparison and feeds task-level diff visibility.
+- Theme is controlled in **Settings** and persisted client-side.
 
 ## Documentazione
 

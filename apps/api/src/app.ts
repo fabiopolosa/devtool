@@ -11,9 +11,13 @@ import {
   approvalsRoutes,
   artifactsRoutes,
   chatRoutes,
+  environmentsRoutes,
   experimentsRoutes,
   healthRoutes,
+  localRepositoriesRoutes,
   memoryRoutes,
+  schemaDocsRoutes,
+  secretsRoutes,
   providersRoutes,
   skillsRoutes,
   agentsRoutes,
@@ -23,6 +27,7 @@ import {
   roadmapRoutes,
   runsRoutes,
   tasksRoutes,
+  versioningRoutes,
   verificationRoutes
 } from "./routes/index.js";
 
@@ -71,6 +76,11 @@ export async function buildApp() {
   await app.register(providersRoutes);
   await app.register(skillsRoutes);
   await app.register(agentsRoutes);
+  await app.register(secretsRoutes);
+  await app.register(schemaDocsRoutes);
+  await app.register(environmentsRoutes);
+  await app.register(localRepositoriesRoutes);
+  await app.register(versioningRoutes);
   await app.register(chatRoutes);
   await app.register(authRoutes);
   await app.register(adminRoutes);

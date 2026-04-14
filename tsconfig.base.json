@@ -27,7 +27,12 @@
       "@cp/db": ["packages/db/src/index.ts"],
       "@cp/ui-kit": ["packages/ui-kit/src/index.ts"],
       "@cp/auth": ["packages/auth/src/index.ts"],
-      "@cp/skills": ["packages/skills/src/index.ts"]
+      "@cp/skills": ["packages/skills/src/index.ts"],
+      "@cp/secrets": ["packages/secrets/src/index.ts"],
+      "@cp/schema-docs": ["packages/schema-docs/src/index.ts"],
+      "@cp/environments": ["packages/environments/src/index.ts"],
+      "@cp/local-repos": ["packages/local-repos/src/index.ts"],
+      "@cp/versioning": ["packages/versioning/src/index.ts"]
     }
   }
 }

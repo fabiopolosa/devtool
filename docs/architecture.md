@@ -63,6 +63,11 @@ packages/
   autoresearch/           # experiment framework and optimizer subsystem
   auth/                   # auth service, session lifecycle, RBAC policy layer
   skills/                 # skills marketplace catalog + install management
+  secrets/                # encrypted secret registry service
+  schema-docs/            # DB introspection + schema documentation service
+  environments/           # environments + machines + healthcheck service
+  local-repos/            # local repository registry + file manager backend
+  versioning/             # snapshot + diff service
   agents/                 # role prompts and role metadata
   config/                 # policy/env loaders
   ui-kit/                 # reusable dashboard components
@@ -84,6 +89,11 @@ configs/
 - `packages/autoresearch`: offline optimization against metrics logs.
 - `packages/auth`: user/session/role orchestration and permission evaluation.
 - `packages/skills`: marketplace ingestion, installation orchestration, and installed-skill lookup.
+- `packages/secrets`: encrypted secret lifecycle and secure resolution adapters.
+- `packages/schema-docs`: schema introspection and convention documentation snapshotting.
+- `packages/environments`: environment and machine topology with healthcheck orchestration.
+- `packages/local-repos`: local workspace registration, file tree inspection, and git history helpers.
+- `packages/versioning`: repository snapshot persistence and deterministic diffing.
 - `apps/web`: control-plane UI and inspectability surface.
 
 ## Allowed Package Dependencies
@@ -96,6 +106,11 @@ These dependencies are the only allowed import directions.
 | `@cp/db` | `@cp/domain`, `@cp/config` |
 | `@cp/auth` | `@cp/domain`, `@cp/config` |
 | `@cp/skills` | `@cp/domain`, `@cp/config` |
+| `@cp/secrets` | `@cp/domain`, `@cp/config` |
+| `@cp/schema-docs` | `@cp/domain`, `@cp/config`, `@cp/db` |
+| `@cp/environments` | `@cp/domain`, `@cp/config` |
+| `@cp/local-repos` | `@cp/domain`, `@cp/config` |
+| `@cp/versioning` | `@cp/domain`, `@cp/config` |
 | `@cp/providers` | `@cp/domain`, `@cp/config` |
 | `@cp/memory` | `@cp/domain`, `@cp/config`, `@cp/providers` |
 | `@cp/retrieval` | `@cp/domain`, `@cp/config`, `@cp/memory`, `@cp/providers` |
@@ -105,7 +120,7 @@ These dependencies are the only allowed import directions.
 | `@cp/autoresearch` | `@cp/domain`, `@cp/config`, `@cp/retrieval` |
 | `@cp/ui-kit` | `@cp/domain` |
 | `apps/api` | all packages except `@cp/ui-kit` |
-| `apps/worker` | `@cp/domain`, `@cp/config`, `@cp/orchestration-ruflo`, `@cp/retrieval`, `@cp/memory`, `@cp/providers`, `@cp/verifier`, `@cp/autoresearch` |
+| `apps/worker` | `@cp/domain`, `@cp/config`, `@cp/orchestration-ruflo`, `@cp/retrieval`, `@cp/memory`, `@cp/providers`, `@cp/verifier`, `@cp/autoresearch`, `@cp/local-repos`, `@cp/agents` |
 | `apps/web` | `@cp/domain`, `@cp/ui-kit` |
 
 ## Lifecycle Definitions
@@ -292,6 +307,61 @@ This section tracks post-stabilization implementation progress while preserving 
   - `apps/api/src/__tests__/agents.contract.test.ts`
   - `apps/web/src/__tests__/agents.smoke.test.tsx`
   - orchestration and retrieval tests updated for routing/context behavior
+
+### Step 11 — Secrets, Schema Docs, Stack/Machines, Local Repos, Versioning, and Modern UI (Phase J)
+- Added additive domain contracts and schemas for:
+  - `SecretConfig`
+  - `SchemaDoc`
+  - `Environment` / `Machine`
+  - `LocalRepository`
+  - `VersionSnapshot`
+- Added additive migrations:
+  - `008_secrets.sql`
+  - `009_schema_docs.sql`
+  - `010_env_machine_localrepos_versioning.sql`
+- Added modular service packages:
+  - `@cp/secrets` for encrypted secret lifecycle and secure reveal
+  - `@cp/schema-docs` for DB introspection + schema conventions snapshots
+  - `@cp/environments` for environment/machine inventory + health checks
+  - `@cp/local-repos` for local repository registry, file listing, read-only file access, git history, and scan scheduling
+  - `@cp/versioning` for snapshot capture and deterministic snapshot diff
+- Added additive API routes:
+  - `/secrets/*`
+  - `/schema-docs/*`
+  - `/environments/*`
+  - `/machines/*`
+  - `/local-repos/*`
+  - `/versioning/*`
+- Added dashboard command-center pages:
+  - `/secrets`
+  - `/database`
+  - `/stack`
+  - `/local-repos`
+  - `/versioning`
+  - `/settings`
+- Implemented UI-first operational capabilities:
+  - secrets CRUD/reveal panel with encrypted-at-rest workflow messaging
+  - database ER-like table visualization + conventions/stack notes
+  - machine topology cards with CPU/GPU/RAM utilization bars and health checks
+  - local file manager with path navigation and read-only code inspector
+  - repository history tab and snapshot-diff tab
+  - global versioning workspace for snapshot creation and diff
+- Task and planner context integration:
+  - task detail now inspects snapshot history/diffs
+  - retrieval/context packet supports:
+    - selected skill instructions
+    - explicit agent runtime context
+    - secret references
+    - environment/machine context
+    - version snapshot references
+  - planner prompt guidance updated to consume the expanded context envelope
+- Modern UI redesign:
+  - full-width responsive shell
+  - dark Matrix-style default palette with subtle grid/scanline motion
+  - light mode optional toggle via `/settings`
+  - live parallel agent mesh cards on dashboard with resource and step visibility
+- Access controls:
+  - advanced sections (`Secrets`, `Stack & Machines`) are hidden when auth is disabled or user is non-admin.
 
 ### Operational Notes
 - Local developer defaults use Postgres host port `56432` in `.env.example` and `docker-compose.yml` to reduce host collision risk.

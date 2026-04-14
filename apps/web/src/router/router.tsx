@@ -21,6 +21,12 @@ import { AgentsListPage } from '@/pages/AgentsListPage';
 import { AgentDetailPage } from '@/pages/AgentDetailPage';
 import { AgentCreatePage } from '@/pages/AgentCreatePage';
 import { RuntimePage } from '@/pages/RuntimePage';
+import { SecretsPage } from '@/pages/SecretsPage';
+import { DatabasePage } from '@/pages/DatabasePage';
+import { StackPage } from '@/pages/StackPage';
+import { LocalReposPage } from '@/pages/LocalReposPage';
+import { VersioningPage } from '@/pages/VersioningPage';
+import { SettingsPage } from '@/pages/SettingsPage';
 
 const rootRoute = createRootRoute({
   component: AppShell
@@ -140,6 +146,42 @@ const runtimeRoute = createRoute({
   component: RuntimePage
 });
 
+const secretsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'secrets',
+  component: SecretsPage
+});
+
+const databaseRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'database',
+  component: DatabasePage
+});
+
+const stackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'stack',
+  component: StackPage
+});
+
+const localReposRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'local-repos',
+  component: LocalReposPage
+});
+
+const versioningRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'versioning',
+  component: VersioningPage
+});
+
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings',
+  component: SettingsPage
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'login',
@@ -172,6 +214,12 @@ const routeTree = rootRoute.addChildren([
   agentCreateRoute,
   agentDetailRoute,
   runtimeRoute,
+  secretsRoute,
+  databaseRoute,
+  stackRoute,
+  localReposRoute,
+  versioningRoute,
+  settingsRoute,
   loginRoute,
   adminRbacRoute
 ]);

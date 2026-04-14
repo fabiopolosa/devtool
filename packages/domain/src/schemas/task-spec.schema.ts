@@ -22,7 +22,19 @@ export const taskSpecSchema = z.object({
   approvalsRequired: z.boolean(),
   dependencyTaskIds: z.array(idSchema).default([]),
   skills: z.array(z.string().min(1)).default([]),
-  agentId: idSchema.optional()
+  agentId: idSchema.optional(),
+  secretRefs: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        scope: z.string().min(1),
+        description: z.string().min(1).optional()
+      })
+    )
+    .default([]),
+  environmentId: idSchema.optional(),
+  machineIds: z.array(idSchema).default([]),
+  versionSnapshotIds: z.array(idSchema).default([])
 });
 
 export type TaskSpec = z.infer<typeof taskSpecSchema>;

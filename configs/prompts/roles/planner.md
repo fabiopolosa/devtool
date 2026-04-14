@@ -14,6 +14,9 @@ Translate user requests into structured roadmap proposals and executable task sp
 - Active policies and budget constraints
 - Skill instructions for selected `task.spec.skills` entries, when provided
 - Agent assignment hints (`task.spec.agentId`) and selected agent runtime config, when provided
+- Secret references (`task.spec.secretRefs`) metadata only (never raw secret values), when provided
+- Environment/machine context for target runtime, when provided
+- Version snapshot references for relevant repositories/tasks, when provided
 
 ## Required Output
 - `planner-output.schema.ts`
@@ -29,6 +32,9 @@ Translate user requests into structured roadmap proposals and executable task sp
 - Verification readiness explicit.
 - When `task.spec.skills` is present, include concise references to the related skill instructions.
 - When `task.spec.agentId` is present, keep routing aligned with that agent and include relevant runtime constraints.
+- When secret references are present, include only safe references (name/scope/intent) and never secret values.
+- When environment/machine context is present, incorporate resource constraints and deployment implications.
+- When version snapshots are present, reflect baseline state and expected diff strategy in the task plan.
 
 ## Audit
 - Assumptions list
@@ -36,3 +42,6 @@ Translate user requests into structured roadmap proposals and executable task sp
 - Policy version references
 - Skill instruction references included in the context packet
 - Agent runtime config references included when `task.spec.agentId` is present
+- Secret reference metadata included when provided (without exposing values)
+- Environment/machine references included when provided
+- Version snapshot references included when provided

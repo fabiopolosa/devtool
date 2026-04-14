@@ -167,7 +167,40 @@ describe("retrieval service", () => {
             repositoryUrl: "https://github.com/example/skills-logs"
           }
         ]
-      }
+      },
+      secretReferences: [
+        {
+          name: "OPENAI_API_KEY",
+          scope: "provider",
+          description: "Primary provider key"
+        }
+      ],
+      environmentContext: {
+        environmentId: "env_001",
+        name: "staging",
+        status: "active",
+        machines: [
+          {
+            machineId: "machine_001",
+            name: "node-a",
+            status: "online",
+            cpuCores: 8,
+            gpuCount: 1,
+            ramGb: 32,
+            agents: ["claude_debugger"],
+            services: ["api", "worker"]
+          }
+        ]
+      },
+      versionSnapshots: [
+        {
+          snapshotId: "snapshot_001",
+          localRepositoryId: "lrepo_001",
+          label: "task-start",
+          trigger: "task_start",
+          taskId: "task_001"
+        }
+      ]
     });
 
     expect(packet.role).toBe("claude_debugger");
@@ -179,5 +212,11 @@ describe("retrieval service", () => {
     expect(packet.compactSummary.toLowerCase()).toContain("skills:");
     expect(packet.agentContext?.agentId).toBe("agent_001");
     expect(packet.compactSummary.toLowerCase()).toContain("agent:");
+    expect(packet.secretReferences).toHaveLength(1);
+    expect(packet.environmentContext?.environmentId).toBe("env_001");
+    expect(packet.versionSnapshots).toHaveLength(1);
+    expect(packet.compactSummary.toLowerCase()).toContain("secrets:");
+    expect(packet.compactSummary.toLowerCase()).toContain("environment:");
+    expect(packet.compactSummary.toLowerCase()).toContain("snapshots:");
   });
 });

@@ -47,9 +47,24 @@ importers:
       '@cp/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@cp/environments':
+        specifier: workspace:*
+        version: link:../../packages/environments
+      '@cp/local-repos':
+        specifier: workspace:*
+        version: link:../../packages/local-repos
+      '@cp/schema-docs':
+        specifier: workspace:*
+        version: link:../../packages/schema-docs
+      '@cp/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
       '@cp/skills':
         specifier: workspace:*
         version: link:../../packages/skills
+      '@cp/versioning':
+        specifier: workspace:*
+        version: link:../../packages/versioning
       '@fastify/cors':
         specifier: ^11.0.0
         version: 11.2.0
@@ -154,6 +169,9 @@ importers:
       '@cp/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@cp/local-repos':
+        specifier: workspace:*
+        version: link:../../packages/local-repos
       '@cp/memory':
         specifier: workspace:*
         version: link:../../packages/memory
@@ -264,6 +282,38 @@ importers:
         specifier: ^3.24.2
         version: 3.25.76
 
+  packages/environments:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/local-repos:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+      bullmq:
+        specifier: ^5.43.0
+        version: 5.73.5
+      ioredis:
+        specifier: ^5.5.0
+        version: 5.10.1
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
   packages/memory:
     dependencies:
       '@cp/domain':
@@ -310,6 +360,32 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
 
+  packages/schema-docs:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/secrets:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
   packages/skills:
     dependencies:
       '@cp/domain':
@@ -345,6 +421,19 @@ importers:
         specifier: workspace:*
         version: link:../domain
     devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/versioning:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
       vitest:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)

@@ -9,7 +9,12 @@ export default defineConfig({
       "@cp/db": path.resolve(__dirname, "../../packages/db/src/index.ts"),
       "@cp/auth": path.resolve(__dirname, "../../packages/auth/src/index.ts"),
       "@cp/agents": path.resolve(__dirname, "../../packages/agents/src/index.ts"),
-      "@cp/skills": path.resolve(__dirname, "../../packages/skills/src/index.ts")
+      "@cp/skills": path.resolve(__dirname, "../../packages/skills/src/index.ts"),
+      "@cp/secrets": path.resolve(__dirname, "../../packages/secrets/src/index.ts"),
+      "@cp/schema-docs": path.resolve(__dirname, "../../packages/schema-docs/src/index.ts"),
+      "@cp/environments": path.resolve(__dirname, "../../packages/environments/src/index.ts"),
+      "@cp/local-repos": path.resolve(__dirname, "../../packages/local-repos/src/index.ts"),
+      "@cp/versioning": path.resolve(__dirname, "../../packages/versioning/src/index.ts")
     }
   },
   test: {

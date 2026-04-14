@@ -454,4 +454,18 @@ export interface OidcAuthState extends AuditMetadata {
 }
 
 export type { AgentConfig, AgentConfigStatus, AgentRuntimeAdapterType } from "./entities/agent.js";
+export type { SecretConfig, SecretScope } from "./entities/secret.js";
+export type {
+  SchemaDoc,
+  SchemaDocColumn,
+  SchemaDocConvention,
+  SchemaDocTable
+} from "./entities/schema-doc.js";
+export type { Environment, EnvironmentStatus, Machine, MachineStatus } from "./entities/environment.js";
+export type { LocalRepository, LocalRepositoryStatus } from "./entities/local-repository.js";
+export type {
+  VersionSnapshot,
+  VersionSnapshotFile,
+  VersionSnapshotTrigger
+} from "./entities/version-snapshot.js";
 export type { Skill } from "./entities/skill.js";

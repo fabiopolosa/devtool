@@ -14,6 +14,8 @@ import type {
   RetrievalQueryLog,
   RoadmapItem,
   PromptVersion,
+  AgentConfig,
+  Machine,
   Task,
   TaskRun,
   VerificationResult,
@@ -189,6 +191,79 @@ export function AgentRunTable({ runs }: { runs: TaskRun[] }) {
           </tbody>
         </table>
       </div>
+    </Panel>
+  );
+}
+
+export function LiveAgentGrid({
+  agents,
+  machines,
+  runs
+}: {
+  agents: AgentConfig[];
+  machines: Machine[];
+  runs: TaskRun[];
+}) {
+  const runningRuns = runs.filter((run) => run.status === 'running');
+  const roleStepHints = ['plan', 'build', 'verify', 'handoff'];
+
+  return (
+    <Panel>
+      <SectionHeading title="Live Agent Mesh" subtitle="Parallel runtime overview" />
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {agents.map((agent, index) => {
+          const machine = machines.find((entry) => entry.agents.includes(agent.role)) ?? machines[index % Math.max(1, machines.length)];
+          const linkedRun = runningRuns[index % Math.max(1, runningRuns.length)];
+          const cpuLoad = machine ? Math.min(95, Math.max(8, machine.cpuCores * 7)) : 28;
+          const gpuLoad = machine ? (machine.gpuCount > 0 ? Math.min(94, machine.gpuCount * 20 + 15) : 6) : 12;
+          const ramLoad = machine ? Math.min(92, Math.max(10, machine.ramGb * 2.4)) : 24;
+          const stepHint = roleStepHints[index % roleStepHints.length] ?? 'idle';
+
+          return (
+            <div key={agent.id} className="group rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-3 transition hover:border-emerald-300/40">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-medium text-white">{agent.name}</div>
+                  <div className="text-xs text-slate-400">{agent.role} · {agent.adapterType}</div>
+                </div>
+                <Pill tone={agent.status === 'active' ? 'good' : agent.status === 'degraded' ? 'warn' : 'bad'}>
+                  {agent.status}
+                </Pill>
+              </div>
+              <div className="mt-3 grid gap-2 text-xs text-slate-300">
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span>CPU</span>
+                    <span>{cpuLoad}%</span>
+                  </div>
+                  <ProgressBar value={cpuLoad} />
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span>GPU</span>
+                    <span>{gpuLoad}%</span>
+                  </div>
+                  <ProgressBar value={gpuLoad} />
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span>RAM</span>
+                    <span>{ramLoad}%</span>
+                  </div>
+                  <ProgressBar value={ramLoad} />
+                </div>
+              </div>
+              <div className="mt-3 rounded-lg border border-white/10 bg-slate-950/40 px-2 py-1.5 text-xs text-slate-300">
+                Step: {linkedRun ? `${stepHint} · ${linkedRun.id}` : 'idle'}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Host: {machine?.host ?? 'unassigned'}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {agents.length === 0 ? <p className="text-sm text-slate-400">No active agents registered.</p> : null}
     </Panel>
   );
 }

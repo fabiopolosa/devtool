@@ -20,8 +20,11 @@ import type {
   ChatMessage,
   ChatThread,
   DelegatedPermission,
+  Environment,
+  LocalRepository,
   MemoryChunk,
   MemoryEntry,
+  Machine,
   Policy,
   OidcAuthState,
   ProviderCapability,
@@ -34,6 +37,8 @@ import type {
   RepositoryRoleBinding,
   Repository,
   Role,
+  SchemaDoc,
+  SecretConfig,
   RetrievalQueryLog,
   ResearchNote,
   RoutingRule,
@@ -44,6 +49,7 @@ import type {
   TaskRun,
   User,
   UserRole,
+  VersionSnapshot,
   VerificationResult,
   VerificationStep
 } from "@cp/domain";
@@ -116,6 +122,76 @@ export class ApiStore {
   }
 
   async listProjects(): Promise<Project[]> { return this.repo("projects").list(); }
+  async listSecrets(scope?: SecretConfig["scope"]): Promise<SecretConfig[]> {
+    return this.repo("secrets").list(scope ? { scope } : undefined);
+  }
+  async getSecret(secretId: string): Promise<SecretConfig | null> { return this.repo("secrets").getById(secretId); }
+  async findSecretByName(name: string, scope?: SecretConfig["scope"]): Promise<SecretConfig | null> {
+    const normalizedName = name.trim();
+    const secrets = await this.repo("secrets").list(scope ? { scope } : undefined);
+    return secrets.find((secret) => secret.name === normalizedName) ?? null;
+  }
+  async createSecret(secret: SecretConfig): Promise<SecretConfig> { return this.repo("secrets").create(secret); }
+  async updateSecret(secretId: string, patch: Partial<SecretConfig>): Promise<SecretConfig> {
+    return this.repo("secrets").update(secretId, patch);
+  }
+  async deleteSecret(secretId: string): Promise<void> { await this.repo("secrets").delete(secretId); }
+  async listSchemaDocs(): Promise<SchemaDoc[]> { return this.repo("schema_docs").list(); }
+  async getSchemaDoc(schemaDocId: string): Promise<SchemaDoc | null> { return this.repo("schema_docs").getById(schemaDocId); }
+  async createSchemaDoc(schemaDoc: SchemaDoc): Promise<SchemaDoc> { return this.repo("schema_docs").create(schemaDoc); }
+  async updateSchemaDoc(schemaDocId: string, patch: Partial<SchemaDoc>): Promise<SchemaDoc> {
+    return this.repo("schema_docs").update(schemaDocId, patch);
+  }
+  async listEnvironments(): Promise<Environment[]> { return this.repo("environments").list(); }
+  async getEnvironment(environmentId: string): Promise<Environment | null> {
+    return this.repo("environments").getById(environmentId);
+  }
+  async createEnvironment(environment: Environment): Promise<Environment> {
+    return this.repo("environments").create(environment);
+  }
+  async updateEnvironment(environmentId: string, patch: Partial<Environment>): Promise<Environment> {
+    return this.repo("environments").update(environmentId, patch);
+  }
+  async deleteEnvironment(environmentId: string): Promise<void> {
+    await this.repo("environments").delete(environmentId);
+  }
+  async listMachines(environmentId?: string): Promise<Machine[]> {
+    return this.repo("machines").list(environmentId ? { environmentId } : undefined);
+  }
+  async getMachine(machineId: string): Promise<Machine | null> { return this.repo("machines").getById(machineId); }
+  async createMachine(machine: Machine): Promise<Machine> { return this.repo("machines").create(machine); }
+  async updateMachine(machineId: string, patch: Partial<Machine>): Promise<Machine> {
+    return this.repo("machines").update(machineId, patch);
+  }
+  async deleteMachine(machineId: string): Promise<void> { await this.repo("machines").delete(machineId); }
+  async listLocalRepositories(): Promise<LocalRepository[]> { return this.repo("local_repositories").list(); }
+  async getLocalRepository(localRepositoryId: string): Promise<LocalRepository | null> {
+    return this.repo("local_repositories").getById(localRepositoryId);
+  }
+  async createLocalRepository(localRepository: LocalRepository): Promise<LocalRepository> {
+    return this.repo("local_repositories").create(localRepository);
+  }
+  async updateLocalRepository(
+    localRepositoryId: string,
+    patch: Partial<LocalRepository>
+  ): Promise<LocalRepository> {
+    return this.repo("local_repositories").update(localRepositoryId, patch);
+  }
+  async deleteLocalRepository(localRepositoryId: string): Promise<void> {
+    await this.repo("local_repositories").delete(localRepositoryId);
+  }
+  async listVersionSnapshots(filters?: {
+    localRepositoryId?: string;
+    taskId?: string;
+  }): Promise<VersionSnapshot[]> {
+    return this.repo("version_snapshots").list(filters);
+  }
+  async getVersionSnapshot(snapshotId: string): Promise<VersionSnapshot | null> {
+    return this.repo("version_snapshots").getById(snapshotId);
+  }
+  async createVersionSnapshot(snapshot: VersionSnapshot): Promise<VersionSnapshot> {
+    return this.repo("version_snapshots").create(snapshot);
+  }
   async listAgents(): Promise<AgentConfig[]> { return this.repo("agents").list(); }
   async getAgent(agentId: string): Promise<AgentConfig | null> { return this.repo("agents").getById(agentId); }
   async createAgent(agent: AgentConfig): Promise<AgentConfig> { return this.repo("agents").create(agent); }
@@ -266,6 +342,12 @@ export class ApiStore {
   }
 
   private async seedIfEmpty(): Promise<void> {
+    await this.seedTable("secrets", this.seed.secrets);
+    await this.seedTable("schema_docs", this.seed.schemaDocs);
+    await this.seedTable("environments", this.seed.environments);
+    await this.seedTable("machines", this.seed.machines);
+    await this.seedTable("local_repositories", this.seed.localRepositories);
+    await this.seedTable("version_snapshots", this.seed.versionSnapshots);
     await this.seedTable("agents", this.seed.agents);
     await this.seedTable("projects", this.seed.projects);
     await this.seedTable("repositories", this.seed.repositories);

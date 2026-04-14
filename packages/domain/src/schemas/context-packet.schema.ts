@@ -28,6 +28,38 @@ export const contextPacketAgentContextSchema = z.object({
   desiredSkills: z.array(z.string().min(1)).default([])
 });
 
+export const contextPacketSecretReferenceSchema = z.object({
+  name: z.string().min(1),
+  scope: z.string().min(1),
+  description: z.string().optional()
+});
+
+export const contextPacketEnvironmentSchema = z.object({
+  environmentId: idSchema,
+  name: z.string().min(1),
+  status: z.string().min(1),
+  machines: z.array(
+    z.object({
+      machineId: idSchema,
+      name: z.string().min(1),
+      status: z.string().min(1),
+      cpuCores: z.number().int().nonnegative(),
+      gpuCount: z.number().int().nonnegative(),
+      ramGb: z.number().int().nonnegative(),
+      agents: z.array(z.string().min(1)).default([]),
+      services: z.array(z.string().min(1)).default([])
+    })
+  )
+});
+
+export const contextPacketVersionSnapshotSchema = z.object({
+  snapshotId: idSchema,
+  label: z.string().min(1),
+  trigger: z.string().min(1),
+  localRepositoryId: idSchema,
+  taskId: idSchema.optional()
+});
+
 export const contextPacketSchema = z.object({
   packetId: idSchema,
   projectId: idSchema,
@@ -46,6 +78,9 @@ export const contextPacketSchema = z.object({
   chunks: z.array(contextPacketChunkSchema),
   skillInstructions: z.array(contextPacketSkillInstructionSchema).default([]),
   agentContext: contextPacketAgentContextSchema.optional(),
+  secretReferences: z.array(contextPacketSecretReferenceSchema).default([]),
+  environmentContext: contextPacketEnvironmentSchema.optional(),
+  versionSnapshots: z.array(contextPacketVersionSnapshotSchema).default([]),
   compactSummary: z.string().min(1),
   sourceChunkIds: z.array(idSchema),
   tokenBudgetUsed: z.number().int().nonnegative(),

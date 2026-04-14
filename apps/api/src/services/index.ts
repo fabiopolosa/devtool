@@ -3,3 +3,8 @@ export * from "./seed-data.js";
 export * from "./audit-log-service.js";
 export * from "./skills-service.js";
 export * from "./agents-service.js";
+export * from "./secrets-service.js";
+export * from "./schema-docs-service.js";
+export * from "./environments-service.js";
+export * from "./local-repos-service.js";
+export * from "./versioning-service.js";

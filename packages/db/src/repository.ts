@@ -4,6 +4,7 @@ import type { DrizzleDatabase, PostgresClient } from "./client.js";
 import { createPostgresClient } from "./client.js";
 import {
   agents,
+  environments,
   auditEvents,
   approvals,
   artifacts,
@@ -13,8 +14,10 @@ import {
   chatThreads,
   delegatedPermissions,
   embeddingJobs,
+  localRepositories,
   memoryChunks,
   memoryEntries,
+  machines,
   modelRoutingPreferences,
   oidcAuthStates,
   policies,
@@ -31,6 +34,8 @@ import {
   repositories,
   roles,
   researchNotes,
+  schemaDocs,
+  secrets,
   retrievalQueryLogs,
   roadmapItems,
   routingRules,
@@ -40,6 +45,7 @@ import {
   taskRuns,
   userRoles,
   users,
+  versionSnapshots,
   verificationResults,
   verificationSteps
 } from "./schema.js";
@@ -60,6 +66,12 @@ export interface DatabasePort {
 
 const tableMap: Record<TableName, AnyPgTable> = {
   agents,
+  secrets,
+  schema_docs: schemaDocs,
+  environments,
+  machines,
+  local_repositories: localRepositories,
+  version_snapshots: versionSnapshots,
   projects,
   repositories,
   project_repository_links: projectRepositoryLinks,

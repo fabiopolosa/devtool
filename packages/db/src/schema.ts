@@ -719,3 +719,109 @@ export const agents = pgTable(
   },
   (table) => [index("idx_agents_role").on(table.role), index("idx_agents_status").on(table.status)]
 );
+
+export const secrets = pgTable(
+  "secrets",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    encryptedValue: text("encrypted_value").notNull(),
+    scope: text("scope").notNull(),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("ux_secrets_name_scope").on(table.name, table.scope),
+    index("idx_secrets_scope").on(table.scope)
+  ]
+);
+
+export const schemaDocs = pgTable(
+  "schema_docs",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    databaseName: text("database_name").notNull(),
+    dialect: text("dialect").notNull(),
+    tables: jsonb("tables").$type<Record<string, unknown>[]>().notNull(),
+    conventions: jsonb("conventions").$type<Record<string, string>[]>().notNull(),
+    stackNotes: jsonb("stack_notes").$type<string[]>().notNull(),
+    lastIntrospectedAt: timestamp("last_introspected_at", { withTimezone: true, mode: "string" }).notNull(),
+    ...auditColumns
+  },
+  (table) => [index("idx_schema_docs_database").on(table.databaseName)]
+);
+
+export const environments = pgTable(
+  "environments",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    type: text("type").notNull(),
+    region: text("region"),
+    baseUrl: text("base_url"),
+    status: text("status").notNull(),
+    notes: jsonb("notes").$type<string[]>().notNull(),
+    ...auditColumns
+  },
+  (table) => [index("idx_environments_status").on(table.status), index("idx_environments_type").on(table.type)]
+);
+
+export const machines = pgTable(
+  "machines",
+  {
+    id: text("id").primaryKey(),
+    environmentId: text("environment_id").notNull(),
+    name: text("name").notNull(),
+    host: text("host").notNull(),
+    status: text("status").notNull(),
+    cpuCores: integer("cpu_cores").notNull(),
+    gpuCount: integer("gpu_count").notNull(),
+    ramGb: integer("ram_gb").notNull(),
+    services: jsonb("services").$type<string[]>().notNull(),
+    agents: jsonb("agents").$type<string[]>().notNull(),
+    lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true, mode: "string" }),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull(),
+    ...auditColumns
+  },
+  (table) => [index("idx_machines_environment").on(table.environmentId), index("idx_machines_status").on(table.status)]
+);
+
+export const localRepositories = pgTable(
+  "local_repositories",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    rootPath: text("root_path").notNull(),
+    description: text("description").notNull(),
+    status: text("status").notNull(),
+    detectedGit: boolean("detected_git").notNull(),
+    currentBranch: text("current_branch"),
+    lastCommitSha: text("last_commit_sha"),
+    indexedFileCount: integer("indexed_file_count").notNull(),
+    lastScannedAt: timestamp("last_scanned_at", { withTimezone: true, mode: "string" }),
+    ...auditColumns
+  },
+  (table) => [uniqueIndex("ux_local_repositories_root_path").on(table.rootPath), index("idx_local_repositories_status").on(table.status)]
+);
+
+export const versionSnapshots = pgTable(
+  "version_snapshots",
+  {
+    id: text("id").primaryKey(),
+    localRepositoryId: text("local_repository_id").notNull(),
+    taskId: text("task_id"),
+    label: text("label").notNull(),
+    trigger: text("trigger").notNull(),
+    files: jsonb("files").$type<Record<string, string>[]>().notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull(),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_version_snapshots_repo").on(table.localRepositoryId),
+    index("idx_version_snapshots_task").on(table.taskId),
+    index("idx_version_snapshots_trigger").on(table.trigger)
+  ]
+);

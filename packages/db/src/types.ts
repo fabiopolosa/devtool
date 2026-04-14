@@ -11,6 +11,9 @@ import type {
   EmbeddingJob,
   MemoryChunk,
   MemoryEntry,
+  Machine,
+  LocalRepository,
+  Environment,
   ModelRoutingPreference,
   OidcAuthState,
   Policy,
@@ -30,18 +33,27 @@ import type {
   RetrievalQueryLog,
   RoadmapItem,
   Session,
+  SecretConfig,
+  SchemaDoc,
   Skill,
   RoutingRule,
   Task,
   TaskRun,
   User,
   UserRole,
+  VersionSnapshot,
   VerificationResult,
   VerificationStep
 } from "@cp/domain";
 
 export interface DatabaseTables {
   agents: AgentConfig;
+  secrets: SecretConfig;
+  schema_docs: SchemaDoc;
+  environments: Environment;
+  machines: Machine;
+  local_repositories: LocalRepository;
+  version_snapshots: VersionSnapshot;
   projects: Project;
   repositories: Repository;
   project_repository_links: ProjectRepositoryLink;
