@@ -1,0 +1,17 @@
+{
+  "version": "v1",
+  "rules": [
+    {
+      "reason": "verification_failure_repeat",
+      "action": "route_to_claude_debugger"
+    },
+    {
+      "reason": "provider_health_down",
+      "action": "apply_fallback_chain"
+    },
+    {
+      "reason": "budget_limit_breach",
+      "action": "wait_for_approval"
+    }
+  ]
+}

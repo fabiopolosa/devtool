@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "description": "Optional verifier hooks for dashboard smoke, visual regression, and performance checks.",
+  "default": {
+    "smoke": {
+      "enabled": true,
+      "commands": ["pnpm verify:smoke"],
+      "required": false
+    },
+    "visual": {
+      "enabled": true,
+      "commands": ["pnpm verify:visual"],
+      "required": false
+    },
+    "performance": {
+      "enabled": true,
+      "commands": ["pnpm verify:performance"],
+      "required": false
+    }
+  }
+}

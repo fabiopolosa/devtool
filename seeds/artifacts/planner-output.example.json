@@ -1,0 +1,31 @@
+{
+  "requestId": "req_123",
+  "mode": "task_spec",
+  "normalizedIntent": "Implement provider-capability subsystem with health checks and project bindings",
+  "assumptions": ["No live credentials in v1"],
+  "roadmapCandidateIds": ["rm_001"],
+  "taskSpecs": [
+    {
+      "id": "task_001",
+      "title": "Implement provider registry",
+      "type": "feature",
+      "goal": "Enable capability-first provider routing",
+      "targetRepos": [{ "repositoryId": "repo_control_plane", "paths": ["packages/providers"] }],
+      "scopeInclude": ["registry", "adapters", "health checks"],
+      "scopeExclude": ["live paid API integration"],
+      "constraints": ["No vendor hardcoding in agents"],
+      "successCriteria": ["Capability discovery endpoint available"],
+      "verificationPlan": ["lint", "test", "build"],
+      "budgetLimits": { "maxRetries": 2 },
+      "proposedRouting": {
+        "primaryRole": "codex_builder",
+        "supportingRoles": ["gemini_researcher"],
+        "capabilityNeeds": ["coding", "chat_reasoning"]
+      },
+      "risks": [],
+      "approvalsRequired": true,
+      "dependencyTaskIds": []
+    }
+  ],
+  "unresolvedQuestions": []
+}

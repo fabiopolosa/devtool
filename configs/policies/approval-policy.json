@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "roadmap": {
+    "required": true
+  },
+  "task": {
+    "requiredWhen": ["cross_repo", "high_risk", "budget_gt_default"]
+  },
+  "policyChanges": {
+    "required": true
+  }
+}

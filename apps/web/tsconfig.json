@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client", "vitest/globals"],
+    "baseUrl": "../../",
+    "paths": {
+      "@/*": ["apps/web/src/*"],
+      "@cp/domain": ["packages/domain/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

@@ -1,0 +1,28 @@
+{
+  "projectId": "proj-control-plane",
+  "name": "AI Development Control-Plane",
+  "description": "Centralized orchestration and execution oversight",
+  "defaultBudgetPolicyVersion": "v1",
+  "defaultRoutingPolicyVersion": "v1",
+  "memoryPolicy": {
+    "crossProjectSharing": false,
+    "allowedProjectIds": [],
+    "freshnessTtlHours": 168
+  },
+  "verificationPolicy": {
+    "requiredSteps": ["lint", "test", "build"],
+    "failOnAnyStep": true
+  },
+  "providerDefaults": {
+    "capabilityBindings": {
+      "coding": {
+        "primaryModel": "openai:gpt-4.1",
+        "fallbackModels": ["anthropic:claude-3-7-sonnet"]
+      },
+      "embedding": {
+        "primaryModel": "openai:text-embedding-3-large",
+        "fallbackModels": ["gemini:text-embedding-004"]
+      }
+    }
+  }
+}

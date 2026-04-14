@@ -1,0 +1,8 @@
+{
+  "id": "research_enrichment",
+  "version": "v1",
+  "steps": [
+    { "id": "researcher", "type": "agent", "role": "gemini_researcher" },
+    { "id": "persist_note", "type": "memory_write" }
+  ]
+}

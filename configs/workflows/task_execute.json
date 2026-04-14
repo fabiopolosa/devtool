@@ -1,0 +1,15 @@
+{
+  "id": "task_execute",
+  "version": "v1",
+  "steps": [
+    { "id": "retrieve_context", "type": "retrieval" },
+    { "id": "route", "type": "router" },
+    { "id": "execute_agent", "type": "agent" },
+    { "id": "verify", "type": "verification" },
+    { "id": "decision", "type": "transition" }
+  ],
+  "transitions": {
+    "on_verify_fail": "debug_recovery",
+    "on_verify_pass": "complete"
+  }
+}

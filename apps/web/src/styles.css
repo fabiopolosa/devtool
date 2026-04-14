@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --bg: #08111e;
+  --panel: rgba(14, 26, 45, 0.9);
+  --panel2: rgba(18, 34, 56, 0.92);
+  --line: rgba(35, 52, 79, 1);
+  --text: #e5eefb;
+  --muted: #8fa3c0;
+  --accent: #62d6ff;
+  --accent2: #8b7bff;
+}
+
+html, body, #root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(98,214,255,0.16), transparent 26%),
+    radial-gradient(circle at 80% 20%, rgba(54,223,180,0.12), transparent 30%),
+    linear-gradient(180deg, #07101d 0%, #0a1524 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(98,214,255,0.22);
+}
+
+@layer components {
+  .shell-panel {
+    @apply rounded-2xl border border-white/10 bg-white/5 shadow-glow backdrop-blur;
+    background: var(--panel);
+  }
+
+  .shell-panel-soft {
+    @apply rounded-2xl border border-white/10 backdrop-blur;
+    background: var(--panel2);
+  }
+
+  .label {
+    @apply text-[11px] uppercase tracking-[0.22em] text-slate-400;
+  }
+
+  .title-xl {
+    @apply font-display text-4xl font-semibold tracking-tight text-white;
+  }
+
+  .title-lg {
+    @apply font-display text-2xl font-semibold tracking-tight text-white;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-full border border-white/10 px-2.5 py-1 text-xs font-medium;
+  }
+
+  .grid-cols-dashboard {
+    grid-template-columns: 280px minmax(0, 1fr) 340px;
+  }
+}

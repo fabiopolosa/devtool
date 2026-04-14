@@ -1,0 +1,9 @@
+{
+  "id": "intake_plan",
+  "version": "v1",
+  "steps": [
+    { "id": "collect_context", "type": "retrieval" },
+    { "id": "planner", "type": "agent", "role": "planner" },
+    { "id": "approval_gate", "type": "approval", "required": true }
+  ]
+}

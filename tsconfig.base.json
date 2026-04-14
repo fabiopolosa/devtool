@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "declaration": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cp/domain": ["packages/domain/src/index.ts"],
+      "@cp/providers": ["packages/providers/src/index.ts"],
+      "@cp/memory": ["packages/memory/src/index.ts"],
+      "@cp/retrieval": ["packages/retrieval/src/index.ts"],
+      "@cp/verifier": ["packages/verifier/src/index.ts"],
+      "@cp/orchestration-ruflo": ["packages/orchestration-ruflo/src/index.ts"],
+      "@cp/autoresearch": ["packages/autoresearch/src/index.ts"],
+      "@cp/config": ["packages/config/src/index.ts"],
+      "@cp/agents": ["packages/agents/src/index.ts"],
+      "@cp/db": ["packages/db/src/index.ts"],
+      "@cp/ui-kit": ["packages/ui-kit/src/index.ts"],
+      "@cp/auth": ["packages/auth/src/index.ts"]
+    }
+  }
+}

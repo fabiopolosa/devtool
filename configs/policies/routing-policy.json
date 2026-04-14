@@ -1,0 +1,30 @@
+{
+  "version": "v1",
+  "strategy": "capability_first",
+  "defaults": {
+    "chat_reasoning": {
+      "primary": "openai:gpt-4.1",
+      "fallback": ["anthropic:claude-3-7-sonnet", "openrouter:openai/gpt-4.1-mini"]
+    },
+    "coding": {
+      "primary": "openai:gpt-4.1",
+      "fallback": ["anthropic:claude-3-7-sonnet", "openrouter:anthropic/claude-3.7-sonnet"]
+    },
+    "embedding": {
+      "primary": "openai:text-embedding-3-large",
+      "fallback": ["gemini:text-embedding-004"]
+    },
+    "image_generation": {
+      "primary": "openai:gpt-image-1",
+      "fallback": ["kie_ai:image-gen-v1"]
+    },
+    "image_editing": {
+      "primary": "openai:gpt-image-1",
+      "fallback": ["kie_ai:image-edit-v1"]
+    },
+    "vision_analysis": {
+      "primary": "gemini:gemini-2.5-pro",
+      "fallback": ["openai:gpt-4.1-mini"]
+    }
+  }
+}

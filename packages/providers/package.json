@@ -1,0 +1,24 @@
+{
+  "name": "@cp/providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --ext .ts",
+    "test": "pnpm run test:unit",
+    "test:unit": "vitest run src/providers.unit.test.ts",
+    "test:live": "PROVIDER_E2E_MODE=real vitest run src/providers.live.test.ts",
+    "test:sandbox": "PROVIDER_E2E=1 PROVIDER_E2E_MODE=sandbox vitest run src/providers.live.test.ts"
+  },
+  "dependencies": {
+    "@cp/domain": "workspace:*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

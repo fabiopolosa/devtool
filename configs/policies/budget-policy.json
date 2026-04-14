@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "defaultTaskBudget": {
+    "maxInputTokens": 16000,
+    "maxOutputTokens": 4000,
+    "maxLatencyMs": 180000,
+    "maxCostUsd": 8.0,
+    "maxRetries": 2
+  },
+  "escalationThresholds": {
+    "retryCount": 2,
+    "verificationFailures": 2
+  }
+}

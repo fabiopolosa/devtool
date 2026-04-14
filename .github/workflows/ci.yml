@@ -1,0 +1,129 @@
+name: control-plane-ci
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROVIDER_E2E: "0"
+      PROVIDER_E2E_DEEP: "0"
+      PROVIDER_E2E_MODE: "off"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Upload Web Build Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: |
+            apps/web/dist
+          if-no-files-found: warn
+
+      - name: Upload Package Builds
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-dists
+          path: |
+            packages/*/dist
+            apps/api/dist
+            apps/worker/dist
+          if-no-files-found: warn
+
+  providers-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: verify
+    if: ${{ secrets.OPENAI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '' || secrets.OPENROUTER_API_KEY != '' || secrets.KIE_AI_API_KEY != '' }}
+    env:
+      PROVIDER_E2E: "1"
+      PROVIDER_E2E_DEEP: "0"
+      PROVIDER_E2E_MODE: "real"
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      KIE_AI_API_KEY: ${{ secrets.KIE_AI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Provider Live Tests
+        run: pnpm --filter @cp/providers test:live
+
+  providers-sandbox:
+    runs-on: ubuntu-latest
+    needs: verify
+    if: ${{ secrets.OPENAI_API_KEY == '' && secrets.ANTHROPIC_API_KEY == '' && secrets.GEMINI_API_KEY == '' && secrets.OPENROUTER_API_KEY == '' && secrets.KIE_AI_API_KEY == '' }}
+    env:
+      PROVIDER_E2E: "1"
+      PROVIDER_E2E_MODE: "sandbox"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Provider Sandbox Tests
+        run: pnpm --filter @cp/providers test:sandbox

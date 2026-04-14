@@ -1,0 +1,16 @@
+{
+  "repositoryId": "repo-control-plane",
+  "projectId": "proj-control-plane",
+  "displayName": "control-plane",
+  "localPath": "/Users/andromeda/devtool",
+  "defaultBranch": "main",
+  "codingStandardsRefs": ["docs/architecture.md"],
+  "allowedWritePaths": ["apps", "packages", "configs", "docs"],
+  "blockedWritePaths": [".env", "secrets"],
+  "verificationCommands": [
+    { "stepType": "lint", "command": "pnpm lint" },
+    { "stepType": "test", "command": "pnpm test" },
+    { "stepType": "build", "command": "pnpm build" }
+  ],
+  "contextFiles": ["AGENTS.md", "docs/architecture.md"]
+}

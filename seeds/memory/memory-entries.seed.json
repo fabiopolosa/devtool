@@ -1,0 +1,32 @@
+[
+  {
+    "id": "mem_proj_overview_001",
+    "projectId": "proj_control_plane",
+    "category": "project_overview",
+    "title": "Control-plane objective",
+    "body": "Build a centralized command center for multi-agent software development with explicit orchestration, shared memory, and deterministic verification.",
+    "priority": 90,
+    "pinned": true,
+    "isStale": false
+  },
+  {
+    "id": "mem_adr_001",
+    "projectId": "proj_control_plane",
+    "category": "adr",
+    "title": "ADR-001 Use capability-first provider routing",
+    "body": "Agents request capabilities instead of vendor names. Provider selection is resolved by registry + project bindings + fallback chains.",
+    "priority": 85,
+    "pinned": true,
+    "isStale": false
+  },
+  {
+    "id": "mem_std_001",
+    "projectId": "proj_control_plane",
+    "category": "coding_standard",
+    "title": "Structured handoffs required",
+    "body": "All inter-agent outputs must validate against shared zod schemas in @cp/domain.",
+    "priority": 80,
+    "pinned": true,
+    "isStale": false
+  }
+]

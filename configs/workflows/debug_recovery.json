@@ -1,0 +1,9 @@
+{
+  "id": "debug_recovery",
+  "version": "v1",
+  "steps": [
+    { "id": "collect_failure_evidence", "type": "artifact_collector" },
+    { "id": "debugger", "type": "agent", "role": "claude_debugger" },
+    { "id": "reverify", "type": "verification" }
+  ]
+}

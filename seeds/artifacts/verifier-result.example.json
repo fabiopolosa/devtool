@@ -1,0 +1,12 @@
+{
+  "runId": "run_001",
+  "taskId": "task_001",
+  "overallStatus": "pass",
+  "summary": "All deterministic checks passed",
+  "steps": [
+    { "stepType": "lint", "command": "pnpm lint", "status": "pass", "exitCode": 0, "durationMs": 1320 },
+    { "stepType": "test", "command": "pnpm test", "status": "pass", "exitCode": 0, "durationMs": 4410 },
+    { "stepType": "build", "command": "pnpm build", "status": "pass", "exitCode": 0, "durationMs": 5200 }
+  ],
+  "artifacts": []
+}

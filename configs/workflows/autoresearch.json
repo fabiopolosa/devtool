@@ -1,0 +1,9 @@
+{
+  "id": "autoresearch",
+  "version": "v1",
+  "steps": [
+    { "id": "collect_metrics", "type": "analytics" },
+    { "id": "run_variants", "type": "experiment" },
+    { "id": "select_winner", "type": "decision" }
+  ]
+}

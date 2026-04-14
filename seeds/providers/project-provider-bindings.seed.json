@@ -1,0 +1,20 @@
+[
+  {
+    "projectId": "proj_control_plane",
+    "capabilityClass": "chat_reasoning",
+    "primaryModel": "openai:gpt-4.1",
+    "fallbackModels": ["anthropic:claude-3-7-sonnet", "openrouter:openai/gpt-4.1-mini"]
+  },
+  {
+    "projectId": "proj_control_plane",
+    "capabilityClass": "embedding",
+    "primaryModel": "openai:text-embedding-3-large",
+    "fallbackModels": ["gemini:text-embedding-004"]
+  },
+  {
+    "projectId": "proj_control_plane",
+    "capabilityClass": "image_editing",
+    "primaryModel": "openai:gpt-image-1",
+    "fallbackModels": ["kie_ai:image-edit-v1"]
+  }
+]

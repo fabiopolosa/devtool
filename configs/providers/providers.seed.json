@@ -1,0 +1,9 @@
+{
+  "providerConfigs": [
+    { "provider": "openai", "endpoint": "https://api.openai.com/v1", "enabled": true },
+    { "provider": "anthropic", "endpoint": "https://api.anthropic.com", "enabled": true },
+    { "provider": "gemini", "endpoint": "https://generativelanguage.googleapis.com", "enabled": true },
+    { "provider": "openrouter", "endpoint": "https://openrouter.ai/api/v1", "enabled": true },
+    { "provider": "kie_ai", "endpoint": "https://api.kie.ai", "enabled": true }
+  ]
+}
