@@ -1,0 +1,9 @@
+{
+  "id": "architecture_monorepo_modular",
+  "title": "Architecture: Modular Monorepo",
+  "category": "architecture",
+  "summary": "Monorepo with explicit package boundaries and additive migrations.",
+  "prompt": "Prefer modular monorepo with apps/api, apps/web, apps/worker and packages/*. Keep contracts in shared domain and enforce additive changes.",
+  "tags": ["architecture", "monorepo", "packages", "contracts"],
+  "enabled": true
+}

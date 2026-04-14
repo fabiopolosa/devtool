@@ -5,9 +5,12 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { createAuthRuntime, resolveRequestPrincipal } from "./auth/runtime.js";
 import { apiStore } from "./services/api-store.js";
+import { maybeRunStartupProviderDiscovery } from "./services/provider-discovery-service.js";
+import { syncSubpromptsCatalog } from "./services/subprompts-service.js";
 import {
   authRoutes,
   adminRoutes,
+  brainstormRoutes,
   approvalsRoutes,
   artifactsRoutes,
   chatRoutes,
@@ -19,8 +22,10 @@ import {
   schemaDocsRoutes,
   secretsRoutes,
   providersRoutes,
+  subpromptsRoutes,
   skillsRoutes,
   agentsRoutes,
+  mcpRoutes,
   projectsRoutes,
   repositoriesRoutes,
   retrievalRoutes,
@@ -34,6 +39,8 @@ import {
 export async function buildApp() {
   const app = Fastify({ logger: true });
   await apiStore.initialize();
+  await syncSubpromptsCatalog().catch(() => undefined);
+  await maybeRunStartupProviderDiscovery();
   const authRuntime = await createAuthRuntime();
 
   await app.register(cors, { origin: true });
@@ -74,8 +81,11 @@ export async function buildApp() {
   await app.register(retrievalRoutes);
   await app.register(experimentsRoutes);
   await app.register(providersRoutes);
+  await app.register(subpromptsRoutes);
+  await app.register(brainstormRoutes);
   await app.register(skillsRoutes);
   await app.register(agentsRoutes);
+  await app.register(mcpRoutes);
   await app.register(secretsRoutes);
   await app.register(schemaDocsRoutes);
   await app.register(environmentsRoutes);

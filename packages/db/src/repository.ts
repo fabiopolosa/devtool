@@ -10,6 +10,8 @@ import {
   artifacts,
   autoresearchExperiments,
   autoresearchRuns,
+  brainstormPlans,
+  brainstormSessions,
   chatMessages,
   chatThreads,
   delegatedPermissions,
@@ -18,6 +20,8 @@ import {
   memoryChunks,
   memoryEntries,
   machines,
+  mcpConnections,
+  mcpDelegationRuns,
   modelRoutingPreferences,
   oidcAuthStates,
   policies,
@@ -28,6 +32,7 @@ import {
   promptVersions,
   providerCapabilities,
   providerConfigs,
+  providerDiscoveryLogs,
   providerHealthchecks,
   providerModels,
   repositoryRoleBindings,
@@ -36,6 +41,7 @@ import {
   researchNotes,
   schemaDocs,
   secrets,
+  subprompts,
   retrievalQueryLogs,
   roadmapItems,
   routingRules,
@@ -109,7 +115,13 @@ const tableMap: Record<TableName, AnyPgTable> = {
   repository_role_bindings: repositoryRoleBindings,
   delegated_permissions: delegatedPermissions,
   oidc_auth_states: oidcAuthStates,
-  skills
+  skills,
+  provider_discovery_logs: providerDiscoveryLogs,
+  brainstorm_sessions: brainstormSessions,
+  brainstorm_plans: brainstormPlans,
+  mcp_connections: mcpConnections,
+  mcp_delegation_runs: mcpDelegationRuns,
+  subprompts
 };
 
 const sanitizeRecord = (value: Record<string, unknown>): Record<string, unknown> =>

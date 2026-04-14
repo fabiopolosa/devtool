@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import type { AgentConfig } from "@cp/domain";
 import { Button, Panel, Pill, SectionHeading } from "@/components/common";
 import { useAppStore } from "@/store/app-store";
@@ -34,14 +35,19 @@ export function RuntimePage() {
   const [liveState, setLiveState] = useState("idle");
   const [liveLogs, setLiveLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | undefined>();
+  const [mcpEnabled, setMcpEnabled] = useState(false);
+  const [mcpMessage, setMcpMessage] = useState<string | undefined>();
+  const [mcpConnections, setMcpConnections] = useState<number>(0);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const loadRuntime = useCallback(async () => {
     setError(undefined);
     try {
-      const [workflowsResponse, agentsResponse] = await Promise.all([
+      const [workflowsResponse, agentsResponse, mcpStatusResponse, mcpConnectionsResponse] = await Promise.all([
         authActions.apiFetch("/agents/runtime/workflows"),
-        authActions.apiFetch("/agents")
+        authActions.apiFetch("/agents"),
+        authActions.apiFetch("/mcp/status"),
+        authActions.apiFetch("/mcp/connections")
       ]);
 
       const workflowsBody = (await workflowsResponse.json()) as {
@@ -49,12 +55,28 @@ export function RuntimePage() {
         message?: string;
       };
       const agentsBody = (await agentsResponse.json()) as { items?: AgentConfig[]; message?: string };
+      const mcpStatusBody = (await mcpStatusResponse.json()) as { enabled?: boolean; message?: string };
+      const mcpConnectionsBody = (await mcpConnectionsResponse.json()) as {
+        items?: Array<{ id: string }>;
+        message?: string;
+      };
 
       if (!workflowsResponse.ok) {
         throw new Error(workflowsBody.message ?? `Unable to load workflow runtime settings (HTTP ${workflowsResponse.status})`);
       }
       if (!agentsResponse.ok) {
         throw new Error(agentsBody.message ?? `Unable to load agents (HTTP ${agentsResponse.status})`);
+      }
+      if (!mcpStatusResponse.ok) {
+        throw new Error(
+          mcpStatusBody.message ?? `Unable to load MCP status (HTTP ${mcpStatusResponse.status})`
+        );
+      }
+      if (!mcpConnectionsResponse.ok) {
+        throw new Error(
+          mcpConnectionsBody.message ??
+            `Unable to load MCP connections (HTTP ${mcpConnectionsResponse.status})`
+        );
       }
 
       const nextWorkflows = workflowsBody.items ?? [];
@@ -65,6 +87,9 @@ export function RuntimePage() {
       if (!selectedAgentId && nextAgents.length > 0) {
         setSelectedAgentId(nextAgents[0]!.id);
       }
+      setMcpEnabled(Boolean(mcpStatusBody.enabled));
+      setMcpMessage(mcpStatusBody.message);
+      setMcpConnections(mcpConnectionsBody.items?.length ?? 0);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load runtime panel");
     }
@@ -232,6 +257,27 @@ export function RuntimePage() {
             );
           })}
           {workflows.length === 0 ? <p className="text-sm text-slate-400">No workflows found.</p> : null}
+        </div>
+      </Panel>
+
+      <Panel>
+        <SectionHeading title="MCP Integration" subtitle="Optional external runtime bridge" />
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Pill tone={mcpEnabled ? "good" : "warn"}>{mcpEnabled ? "enabled" : "disabled"}</Pill>
+          <span className="text-slate-400">{mcpMessage ?? "No MCP status message"}</span>
+          <span className="text-slate-400">connections: {mcpConnections}</span>
+        </div>
+        <div className="mt-3">
+          {mcpEnabled ? (
+            <Link
+              to="/mcp"
+              className="inline-flex items-center border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-200 hover:bg-white/5"
+            >
+              Open MCP panel
+            </Link>
+          ) : (
+            <span className="text-xs text-[color:var(--muted)]">MCP non configurato.</span>
+          )}
         </div>
       </Panel>
 

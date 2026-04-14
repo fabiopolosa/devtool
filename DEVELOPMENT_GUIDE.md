@@ -38,6 +38,50 @@ Controllata da `AUTH_ENABLED`. Quando abilitata, `/auth/*` gestisce login/logout
 
 Gli adapter sono in `packages/providers/src/adapters`. Configura le chiavi in `.env` con prefissi `env://` o `secret://`.
 
+## Brainstorming Mode
+
+- La modalità Brainstorming è disponibile in dashboard su `/brainstorming`.
+- Il contratto piano è canonico su `BrainstormPlan.plan.*` (non usare campi legacy top-level).
+- Flusso operativo:
+  - avvio sessione (`POST /brainstorm`)
+  - generazione piano (`status: planned`)
+  - approvazione (`POST /brainstorm/plan/:planId/approve`)
+  - applicazione progetto (`POST /brainstorm/plan/:planId/create-project`, stato finale `applied`)
+- Il workbench mostra session state, riepilogo, subprompt selezionati e azioni approve/apply.
+
+## Subprompt Library
+
+- I sottoprompt sono file-driven in `configs/subprompts/`.
+- API disponibili:
+  - `GET /subprompts`
+  - `GET /subprompts/:subpromptId`
+  - `POST /subprompts/compose`
+  - `POST /subprompts/sync`
+- Il brainstorming salva sempre:
+  - `plan.selectedSubprompts`
+  - `plan.composedPrompt`
+
+## MCP Integration (Optional)
+
+- Integrazione opzionale tramite `@cp/mcp`, disattivata di default.
+- Se non configurata, UI/API rispondono in modo tollerante con stato “MCP non configurato”.
+- Endpoint principali:
+  - `GET /mcp/status`
+  - `GET /mcp/connections`
+  - `POST /mcp/connections`
+  - `POST /mcp/connections/:connectionId/healthcheck`
+  - `GET /mcp/runs`
+  - `POST /mcp/delegate`
+- Configurazioni endpoint/token via secrets manager.
+
+## Provider Auto-Discovery
+
+- Discovery provider esteso con trigger manuale da pagina Providers.
+- Endpoint:
+  - `POST /providers/discovery/update`
+  - `GET /providers/discovery/logs`
+- In assenza rete o configurazione incompleta, il sistema non blocca startup/esecuzione e mantiene il set provider baseline.
+
 ## Operations UI Notes
 
 - **Secrets** and **Stack/Machines** are privileged sections: they are visible only when auth is enabled and the current user is `admin`.

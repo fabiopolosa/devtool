@@ -1,0 +1,9 @@
+{
+  "id": "stack_postgres_prisma",
+  "title": "Stack: PostgreSQL + Prisma",
+  "category": "stack",
+  "summary": "Production-oriented default stack with explicit migrations and relational integrity.",
+  "prompt": "Recommend PostgreSQL + Prisma for persistence, Node.js + Fastify backend, React + TypeScript + Tailwind frontend, and capability-first provider routing.",
+  "tags": ["stack", "postgres", "prisma", "production"],
+  "enabled": true
+}

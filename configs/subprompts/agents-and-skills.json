@@ -1,0 +1,9 @@
+{
+  "id": "agents_skills_default",
+  "title": "Agents & Skills baseline",
+  "category": "agents",
+  "summary": "Baseline role split and skill selection for predictable execution.",
+  "prompt": "Recommend planner, builder, refactor, debugger, researcher, verifier roles. Suggest skills checks/release-notes based on task type and verification requirements.",
+  "tags": ["agents", "skills", "roles", "planner"],
+  "enabled": true
+}

@@ -83,9 +83,9 @@ export function DashboardPage() {
       <AgentRunTable runs={state.taskRuns} />
 
       <div className="flex flex-wrap gap-2">
-        <Link to="/projects" className="pill border border-cyan-400/30 bg-cyan-400/10 text-cyan-100">Open Projects</Link>
-        <Link to="/approvals" className="pill border border-amber-400/30 bg-amber-400/10 text-amber-100">Review Approvals</Link>
-        <Link to="/providers" className="pill border border-slate-500/30 bg-slate-700/20 text-slate-100">Provider Settings</Link>
+        <Link to="/projects" className="btn btn-primary">Open Projects</Link>
+        <Link to="/approvals" className="btn btn-secondary">Review Approvals</Link>
+        <Link to="/providers" className="btn btn-ghost">Provider Settings</Link>
       </div>
     </div>
   );

@@ -22,3 +22,7 @@ export * from "./schema-doc.schema.js";
 export * from "./environment.schema.js";
 export * from "./local-repository.schema.js";
 export * from "./version-snapshot.schema.js";
+export * from "./provider-discovery-log.schema.js";
+export * from "./subprompt.schema.js";
+export * from "./brainstorm.schema.js";
+export * from "./mcp.schema.js";

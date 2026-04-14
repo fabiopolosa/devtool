@@ -208,8 +208,22 @@ export function LiveAgentGrid({
   const roleStepHints = ['plan', 'build', 'verify', 'handoff'];
 
   return (
-    <Panel>
+    <Panel className="overflow-hidden">
       <SectionHeading title="Live Agent Mesh" subtitle="Parallel runtime overview" />
+      <div className="mb-3 grid gap-2 rounded-xl border p-3 text-xs md:grid-cols-3" style={{ borderColor: 'color-mix(in oklab, var(--line) 75%, transparent)', background: 'color-mix(in oklab, var(--panel2) 70%, transparent)' }}>
+        <div>
+          <div className="label">Active agents</div>
+          <div className="mt-1 text-lg font-semibold text-[color:var(--text)]">{agents.length}</div>
+        </div>
+        <div>
+          <div className="label">Running runs</div>
+          <div className="mt-1 text-lg font-semibold text-[color:var(--text)]">{runningRuns.length}</div>
+        </div>
+        <div>
+          <div className="label">Connected machines</div>
+          <div className="mt-1 text-lg font-semibold text-[color:var(--text)]">{machines.length}</div>
+        </div>
+      </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {agents.map((agent, index) => {
           const machine = machines.find((entry) => entry.agents.includes(agent.role)) ?? machines[index % Math.max(1, machines.length)];
@@ -220,17 +234,33 @@ export function LiveAgentGrid({
           const stepHint = roleStepHints[index % roleStepHints.length] ?? 'idle';
 
           return (
-            <div key={agent.id} className="group rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-3 transition hover:border-emerald-300/40">
+            <div
+              key={agent.id}
+              className="group relative rounded-2xl border p-3 transition hover:-translate-y-0.5"
+              style={{
+                borderColor: 'color-mix(in oklab, var(--accent) 34%, transparent)',
+                background:
+                  'linear-gradient(160deg, color-mix(in oklab, var(--panel2) 78%, transparent), color-mix(in oklab, var(--accent) 9%, transparent))',
+                boxShadow: '0 10px 30px color-mix(in oklab, var(--accent) 16%, transparent)'
+              }}
+            >
+              <div
+                className="pointer-events-none absolute right-2 top-2 h-2.5 w-2.5 rounded-full"
+                style={{
+                  background: agent.status === 'active' ? 'var(--good)' : agent.status === 'degraded' ? 'var(--warn)' : 'var(--bad)',
+                  boxShadow: '0 0 12px currentColor'
+                }}
+              />
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="font-medium text-white">{agent.name}</div>
-                  <div className="text-xs text-slate-400">{agent.role} · {agent.adapterType}</div>
+                  <div className="font-medium text-[color:var(--text)]">{agent.name}</div>
+                  <div className="text-xs text-[color:var(--muted)]">{agent.role} · {agent.adapterType}</div>
                 </div>
                 <Pill tone={agent.status === 'active' ? 'good' : agent.status === 'degraded' ? 'warn' : 'bad'}>
                   {agent.status}
                 </Pill>
               </div>
-              <div className="mt-3 grid gap-2 text-xs text-slate-300">
+              <div className="mt-3 grid gap-2 text-xs text-[color:var(--text)]">
                 <div>
                   <div className="mb-1 flex items-center justify-between">
                     <span>CPU</span>
@@ -253,17 +283,17 @@ export function LiveAgentGrid({
                   <ProgressBar value={ramLoad} />
                 </div>
               </div>
-              <div className="mt-3 rounded-lg border border-white/10 bg-slate-950/40 px-2 py-1.5 text-xs text-slate-300">
+              <div className="mt-3 rounded-lg border px-2 py-1.5 text-xs text-[color:var(--text)]" style={{ borderColor: 'color-mix(in oklab, var(--line) 70%, transparent)', background: 'color-mix(in oklab, var(--panel) 75%, transparent)' }}>
                 Step: {linkedRun ? `${stepHint} · ${linkedRun.id}` : 'idle'}
               </div>
-              <div className="mt-1 text-[11px] text-slate-500">
+              <div className="mt-1 text-[11px] text-[color:var(--muted)]">
                 Host: {machine?.host ?? 'unassigned'}
               </div>
             </div>
           );
         })}
       </div>
-      {agents.length === 0 ? <p className="text-sm text-slate-400">No active agents registered.</p> : null}
+      {agents.length === 0 ? <p className="text-sm text-[color:var(--muted)]">No active agents registered.</p> : null}
     </Panel>
   );
 }

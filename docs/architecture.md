@@ -372,3 +372,46 @@ This section tracks post-stabilization implementation progress while preserving 
 - Optional visual/performance tooling is wired, but enterprise-grade baselines/reporting backends are not yet integrated.
 - OIDC flow currently trusts configured issuer endpoints and does not yet validate JWKS signatures for `id_token`.
 - SCIM provisioning, SAML implementation, and full enterprise SSO lifecycle (for example back-channel logout) are not yet implemented.
+
+### Step 12 — Brainstorming Runtime Flow, MCP Optional Integration, and Provider Auto-Discovery Finalization
+- Brainstorming contract is canonical on nested payload:
+  - `BrainstormPlan.plan.recommendedStack`
+  - `BrainstormPlan.plan.architecture`
+  - `BrainstormPlan.plan.suggestedAgents`
+  - `BrainstormPlan.plan.suggestedSkills`
+  - `BrainstormPlan.plan.providerBindings`
+  - `BrainstormPlan.plan.roadmap`
+  - `BrainstormPlan.plan.assumptions`
+  - `BrainstormPlan.plan.risks`
+  - `BrainstormPlan.plan.composedPrompt`
+  - `BrainstormPlan.plan.selectedSubprompts`
+- Compatibility helpers are centralized in `@cp/domain`:
+  - `getBrainstormPlanPayload(...)`
+  - `normalizeBrainstormPlan(...)`
+- Legacy top-level plan fields are read via temporary compatibility fallback only; all write paths persist canonical nested `plan`.
+- Brainstorming orchestration routes are additive and persistent:
+  - `GET /brainstorm`
+  - `POST /brainstorm`
+  - `GET /brainstorm/:sessionId`
+  - `GET /brainstorm/plan/:planId`
+  - `POST /brainstorm/plan/:planId/approve`
+  - `POST /brainstorm/plan/:planId/create-project`
+- Session state transitions are explicit and persisted:
+  - `collecting -> planned -> approved -> applied`
+  - `create-project` requires approved state and returns `409 invalid_state` when called too early.
+- Subprompt library is file-driven (`configs/subprompts`) and exposed via additive APIs:
+  - `GET /subprompts` (metadata by default)
+  - `GET /subprompts?includeContent=1`
+  - `GET /subprompts/:subpromptId`
+  - `POST /subprompts/compose`
+  - `POST /subprompts/sync`
+- MCP integration is optional and runtime-safe:
+  - controlled by `MCP_ENABLED`
+  - graceful degradation when disabled/unconfigured (`MCP non configurato`)
+  - secrets resolved through `env://` and `secret://`
+  - additive routes under `/mcp` for status, connections, healthcheck, delegation and run listing.
+- Provider auto-discovery finalization:
+  - startup discovery (tolerant, non-blocking)
+  - manual trigger from Providers UI (`Aggiorna provider`)
+  - persisted discovery logs (`queries`, timestamp, discovered providers/models, status/notes)
+  - fallback behavior keeps default providers when web discovery is unavailable.

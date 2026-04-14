@@ -1,0 +1,9 @@
+{
+  "id": "conventions_typescript_ops",
+  "title": "Code conventions",
+  "category": "conventions",
+  "summary": "Conventions for maintainable TypeScript services and inspectable workflows.",
+  "prompt": "Apply strict TypeScript, explicit interfaces, additive migrations, deterministic verification and structured handoffs over freeform prose.",
+  "tags": ["conventions", "typescript", "verification", "handoffs"],
+  "enabled": true
+}

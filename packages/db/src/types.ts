@@ -5,6 +5,8 @@ import type {
   Artifact,
   AutoResearchExperiment,
   AutoResearchRun,
+  BrainstormPlan,
+  BrainstormSession,
   ChatMessage,
   ChatThread,
   DelegatedPermission,
@@ -12,6 +14,8 @@ import type {
   MemoryChunk,
   MemoryEntry,
   Machine,
+  McpConnection,
+  McpDelegationRun,
   LocalRepository,
   Environment,
   ModelRoutingPreference,
@@ -24,6 +28,7 @@ import type {
   PromptVersion,
   ProviderCapability,
   ProviderConfig,
+  ProviderDiscoveryLog,
   ProviderHealthcheck,
   ProviderModel,
   RepositoryRoleBinding,
@@ -36,6 +41,7 @@ import type {
   SecretConfig,
   SchemaDoc,
   Skill,
+  Subprompt,
   RoutingRule,
   Task,
   TaskRun,
@@ -92,6 +98,12 @@ export interface DatabaseTables {
   delegated_permissions: DelegatedPermission;
   oidc_auth_states: OidcAuthState;
   skills: Skill;
+  provider_discovery_logs: ProviderDiscoveryLog;
+  brainstorm_sessions: BrainstormSession;
+  brainstorm_plans: BrainstormPlan;
+  mcp_connections: McpConnection;
+  mcp_delegation_runs: McpDelegationRun;
+  subprompts: Subprompt;
 }
 
 export type TableName = keyof DatabaseTables;

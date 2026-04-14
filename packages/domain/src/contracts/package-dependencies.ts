@@ -18,7 +18,10 @@ export const allowedPackageDependencies = {
   "@cp/autoresearch": ["@cp/domain", "@cp/config", "@cp/retrieval"],
   "@cp/agents": ["@cp/domain", "@cp/config"],
   "@cp/ui-kit": ["@cp/domain"],
-  "@cp/skills": ["@cp/domain", "@cp/config"]
+  "@cp/skills": ["@cp/domain", "@cp/config"],
+  "@cp/subprompts": ["@cp/domain", "@cp/config"],
+  "@cp/brainstorming": ["@cp/domain", "@cp/config", "@cp/subprompts", "@cp/skills"],
+  "@cp/mcp": ["@cp/domain", "@cp/config", "@cp/secrets"]
 } as const;
 
 export type PackageName = keyof typeof allowedPackageDependencies;

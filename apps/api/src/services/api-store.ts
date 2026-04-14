@@ -10,8 +10,11 @@ import {
   type DatabaseTables,
   type TableName
 } from "@cp/db";
+import { normalizeBrainstormPlan } from "@cp/domain";
 import type {
   AgentConfig,
+  BrainstormPlan,
+  BrainstormSession,
   AuditEvent,
   Approval,
   Artifact,
@@ -25,13 +28,17 @@ import type {
   MemoryChunk,
   MemoryEntry,
   Machine,
+  McpConnection,
+  McpDelegationRun,
   Policy,
   OidcAuthState,
   ProviderCapability,
   ProviderConfig,
+  ProviderDiscoveryLog,
   ProviderHealthcheck,
   ProviderModel,
   Project,
+  ProjectRepositoryLink,
   ProjectProviderBinding,
   ProjectRoleBinding,
   RepositoryRoleBinding,
@@ -39,6 +46,7 @@ import type {
   Role,
   SchemaDoc,
   SecretConfig,
+  Subprompt,
   RetrievalQueryLog,
   ResearchNote,
   RoutingRule,
@@ -206,7 +214,12 @@ export class ApiStore {
   }
   async listRepositories(): Promise<Repository[]> { return this.repo("repositories").list(); }
   async getRepository(repositoryId: string): Promise<Repository | null> { return this.repo("repositories").getById(repositoryId); }
+  async createRepository(repository: Repository): Promise<Repository> { return this.repo("repositories").create(repository); }
+  async createProjectRepositoryLink(link: ProjectRepositoryLink): Promise<ProjectRepositoryLink> {
+    return this.repo("project_repository_links").create(link);
+  }
   async listRoadmap(projectId?: string): Promise<RoadmapItem[]> { return this.repo("roadmap_items").list(projectId ? { projectId } : undefined); }
+  async createRoadmapItem(item: RoadmapItem): Promise<RoadmapItem> { return this.repo("roadmap_items").create(item); }
   async listTasks(projectId?: string): Promise<Task[]> { return this.repo("tasks").list(projectId ? { projectId } : undefined); }
   async getTask(taskId: string): Promise<Task | null> { return this.repo("tasks").getById(taskId); }
   async createTask(task: Task): Promise<Task> { return this.repo("tasks").create(task); }
@@ -226,10 +239,136 @@ export class ApiStore {
   async listThreads(projectId?: string): Promise<ChatThread[]> { return this.repo("chat_threads").list(projectId ? { projectId } : undefined); }
   async listMessages(threadId?: string): Promise<ChatMessage[]> { return this.repo("chat_messages").list(threadId ? { threadId } : undefined); }
   async listProviderConfigs(): Promise<ProviderConfig[]> { return this.repo("provider_configs").list(); }
+  async createProviderConfig(config: ProviderConfig): Promise<ProviderConfig> {
+    return this.repo("provider_configs").create(config);
+  }
+  async updateProviderConfig(providerConfigId: string, patch: Partial<ProviderConfig>): Promise<ProviderConfig> {
+    return this.repo("provider_configs").update(providerConfigId, patch);
+  }
   async listProviderCapabilities(): Promise<ProviderCapability[]> { return this.repo("provider_capabilities").list(); }
+  async createProviderCapability(capability: ProviderCapability): Promise<ProviderCapability> {
+    return this.repo("provider_capabilities").create(capability);
+  }
+  async updateProviderCapability(
+    providerCapabilityId: string,
+    patch: Partial<ProviderCapability>
+  ): Promise<ProviderCapability> {
+    return this.repo("provider_capabilities").update(providerCapabilityId, patch);
+  }
   async listProviderModels(): Promise<ProviderModel[]> { return this.repo("provider_models").list(); }
+  async createProviderModel(model: ProviderModel): Promise<ProviderModel> {
+    return this.repo("provider_models").create(model);
+  }
+  async updateProviderModel(providerModelId: string, patch: Partial<ProviderModel>): Promise<ProviderModel> {
+    return this.repo("provider_models").update(providerModelId, patch);
+  }
   async listProviderBindings(projectId?: string): Promise<ProjectProviderBinding[]> { return this.repo("project_provider_bindings").list(projectId ? { projectId } : undefined); }
+  async createProviderBinding(binding: ProjectProviderBinding): Promise<ProjectProviderBinding> {
+    return this.repo("project_provider_bindings").create(binding);
+  }
+  async updateProviderBinding(
+    bindingId: string,
+    patch: Partial<ProjectProviderBinding>
+  ): Promise<ProjectProviderBinding> {
+    return this.repo("project_provider_bindings").update(bindingId, patch);
+  }
   async listProviderHealthchecks(): Promise<ProviderHealthcheck[]> { return this.repo("provider_healthchecks").list(); }
+  async createProviderHealthcheck(healthcheck: ProviderHealthcheck): Promise<ProviderHealthcheck> {
+    return this.repo("provider_healthchecks").create(healthcheck);
+  }
+  async updateProviderHealthcheck(
+    providerHealthcheckId: string,
+    patch: Partial<ProviderHealthcheck>
+  ): Promise<ProviderHealthcheck> {
+    return this.repo("provider_healthchecks").update(providerHealthcheckId, patch);
+  }
+  async listProviderDiscoveryLogs(): Promise<ProviderDiscoveryLog[]> {
+    return this.repo("provider_discovery_logs").list();
+  }
+  async createProviderDiscoveryLog(log: ProviderDiscoveryLog): Promise<ProviderDiscoveryLog> {
+    return this.repo("provider_discovery_logs").create(log);
+  }
+  async listSubprompts(filters?: { category?: Subprompt["category"]; enabled?: boolean }): Promise<Subprompt[]> {
+    return this.repo("subprompts").list(filters);
+  }
+  async getSubprompt(subpromptId: string): Promise<Subprompt | null> {
+    return this.repo("subprompts").getById(subpromptId);
+  }
+  async createSubprompt(subprompt: Subprompt): Promise<Subprompt> {
+    return this.repo("subprompts").create(subprompt);
+  }
+  async updateSubprompt(subpromptId: string, patch: Partial<Subprompt>): Promise<Subprompt> {
+    return this.repo("subprompts").update(subpromptId, patch);
+  }
+  async listBrainstormSessions(filters?: {
+    threadId?: string;
+    projectId?: string;
+    status?: BrainstormSession["status"];
+  }): Promise<BrainstormSession[]> {
+    return this.repo("brainstorm_sessions").list(filters);
+  }
+  async getBrainstormSession(sessionId: string): Promise<BrainstormSession | null> {
+    return this.repo("brainstorm_sessions").getById(sessionId);
+  }
+  async createBrainstormSession(session: BrainstormSession): Promise<BrainstormSession> {
+    return this.repo("brainstorm_sessions").create(session);
+  }
+  async updateBrainstormSession(
+    sessionId: string,
+    patch: Partial<BrainstormSession>
+  ): Promise<BrainstormSession> {
+    return this.repo("brainstorm_sessions").update(sessionId, patch);
+  }
+  async listBrainstormPlans(filters?: { sessionId?: string }): Promise<BrainstormPlan[]> {
+    const items = await this.repo("brainstorm_plans").list(filters);
+    return items.map((item) => normalizeBrainstormPlan(item, { warnOnLegacyFallback: true }));
+  }
+  async getBrainstormPlan(planId: string): Promise<BrainstormPlan | null> {
+    const item = await this.repo("brainstorm_plans").getById(planId);
+    return item ? normalizeBrainstormPlan(item, { warnOnLegacyFallback: true }) : null;
+  }
+  async createBrainstormPlan(plan: BrainstormPlan): Promise<BrainstormPlan> {
+    const normalized = normalizeBrainstormPlan(plan);
+    return this.repo("brainstorm_plans").create(normalized);
+  }
+  async updateBrainstormPlan(planId: string, patch: Partial<BrainstormPlan>): Promise<BrainstormPlan> {
+    const existing = await this.getBrainstormPlan(planId);
+    if (!existing) {
+      throw new Error(`Record not found: brainstorm_plans/${planId}`);
+    }
+    const merged = normalizeBrainstormPlan(
+      {
+        ...existing,
+        ...patch
+      },
+      { warnOnLegacyFallback: true }
+    );
+    return this.repo("brainstorm_plans").update(planId, merged);
+  }
+  async listMcpConnections(): Promise<McpConnection[]> {
+    return this.repo("mcp_connections").list();
+  }
+  async getMcpConnection(connectionId: string): Promise<McpConnection | null> {
+    return this.repo("mcp_connections").getById(connectionId);
+  }
+  async createMcpConnection(connection: McpConnection): Promise<McpConnection> {
+    return this.repo("mcp_connections").create(connection);
+  }
+  async updateMcpConnection(connectionId: string, patch: Partial<McpConnection>): Promise<McpConnection> {
+    return this.repo("mcp_connections").update(connectionId, patch);
+  }
+  async listMcpDelegationRuns(filters?: { connectionId?: string }): Promise<McpDelegationRun[]> {
+    return this.repo("mcp_delegation_runs").list(filters);
+  }
+  async createMcpDelegationRun(run: McpDelegationRun): Promise<McpDelegationRun> {
+    return this.repo("mcp_delegation_runs").create(run);
+  }
+  async updateMcpDelegationRun(
+    runId: string,
+    patch: Partial<McpDelegationRun>
+  ): Promise<McpDelegationRun> {
+    return this.repo("mcp_delegation_runs").update(runId, patch);
+  }
   async listSkills(): Promise<Skill[]> { return this.repo("skills").list(); }
   async getSkill(skillId: string): Promise<Skill | null> { return this.repo("skills").getById(skillId); }
   async createSkill(skill: Skill): Promise<Skill> { return this.repo("skills").create(skill); }
@@ -371,6 +510,7 @@ export class ApiStore {
     await this.seedTable("provider_models", this.seed.providerModels);
     await this.seedTable("project_provider_bindings", this.seed.providerBindings);
     await this.seedTable("provider_healthchecks", this.seed.providerHealthchecks);
+    await this.seedTable("provider_discovery_logs", this.seed.providerDiscoveryLogs);
     await this.seedTable("autoresearch_experiments", this.seed.experiments);
     await this.seedTable("autoresearch_runs", this.seed.experimentRuns);
     await this.seedTable("users", this.seed.users);
@@ -383,6 +523,11 @@ export class ApiStore {
     await this.seedTable("delegated_permissions", this.seed.delegatedPermissions);
     await this.seedTable("oidc_auth_states", this.seed.oidcAuthStates);
     await this.seedTable("skills", this.seed.skills);
+    await this.seedTable("subprompts", this.seed.subprompts);
+    await this.seedTable("brainstorm_sessions", this.seed.brainstormSessions);
+    await this.seedTable("brainstorm_plans", this.seed.brainstormPlans);
+    await this.seedTable("mcp_connections", this.seed.mcpConnections);
+    await this.seedTable("mcp_delegation_runs", this.seed.mcpDelegationRuns);
   }
 
   private async seedTable<K extends TableName>(table: K, rows: DatabaseTables[K][]): Promise<void> {

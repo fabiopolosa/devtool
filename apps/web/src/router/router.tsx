@@ -13,6 +13,7 @@ import { ArtifactsPage } from '@/pages/ArtifactsPage';
 import { ApprovalsPage } from '@/pages/ApprovalsPage';
 import { ExperimentsPage } from '@/pages/ExperimentsPage';
 import { ChatPage } from '@/pages/ChatPage';
+import { BrainstormingPage } from '@/pages/BrainstormingPage';
 import { ProvidersPage } from '@/pages/ProvidersPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { AdminRbacPage } from '@/pages/AdminRbacPage';
@@ -21,6 +22,7 @@ import { AgentsListPage } from '@/pages/AgentsListPage';
 import { AgentDetailPage } from '@/pages/AgentDetailPage';
 import { AgentCreatePage } from '@/pages/AgentCreatePage';
 import { RuntimePage } from '@/pages/RuntimePage';
+import { McpPage } from '@/pages/McpPage';
 import { SecretsPage } from '@/pages/SecretsPage';
 import { DatabasePage } from '@/pages/DatabasePage';
 import { StackPage } from '@/pages/StackPage';
@@ -110,6 +112,12 @@ const chatRoute = createRoute({
   component: ChatPage
 });
 
+const brainstormingRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'brainstorming',
+  component: BrainstormingPage
+});
+
 const providersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'providers',
@@ -144,6 +152,12 @@ const runtimeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'runtime',
   component: RuntimePage
+});
+
+const mcpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'mcp',
+  component: McpPage
 });
 
 const secretsRoute = createRoute({
@@ -208,12 +222,14 @@ const routeTree = rootRoute.addChildren([
   approvalsRoute,
   experimentsRoute,
   chatRoute,
+  brainstormingRoute,
   providersRoute,
   skillsRoute,
   agentsRoute,
   agentCreateRoute,
   agentDetailRoute,
   runtimeRoute,
+  mcpRoute,
   secretsRoute,
   databaseRoute,
   stackRoute,

@@ -469,3 +469,18 @@ export type {
   VersionSnapshotTrigger
 } from "./entities/version-snapshot.js";
 export type { Skill } from "./entities/skill.js";
+export type { ProviderDiscoveryLog, ProviderDiscoveryStatus } from "./entities/provider-discovery-log.js";
+export type { Subprompt, SubpromptCategory } from "./entities/subprompt.js";
+export type {
+  BrainstormQuestion,
+  BrainstormRoadmapTask,
+  BrainstormPlan,
+  BrainstormSession,
+  BrainstormSessionStatus,
+  BrainstormPlanPayload,
+  LegacyBrainstormPlan,
+  BrainstormPlanLike,
+  BrainstormPlanNormalizationOptions
+} from "./entities/brainstorm.js";
+export { getBrainstormPlanPayload, normalizeBrainstormPlan } from "./entities/brainstorm.js";
+export type { McpConnection, McpConnectionStatus, McpDelegationRun } from "./entities/mcp.js";

@@ -1,6 +1,8 @@
 import {
   approvalStatuses,
   type AgentConfig,
+  type BrainstormPlan,
+  type BrainstormSession,
   type AuditEvent,
   type Approval,
   type Artifact,
@@ -14,6 +16,8 @@ import {
   type MemoryChunk,
   type MemoryEntry,
   type Machine,
+  type McpConnection,
+  type McpDelegationRun,
   type OidcAuthState,
   type Policy,
   type Project,
@@ -23,6 +27,7 @@ import {
   type SecretConfig,
   type ProviderCapability,
   type ProviderConfig,
+  type ProviderDiscoveryLog,
   type ProviderHealthcheck,
   type ProviderModel,
   type RepositoryRoleBinding,
@@ -34,6 +39,7 @@ import {
   type RoadmapItem,
   type Session,
   type Skill,
+  type Subprompt,
   type Task,
   type TaskRun,
   type User,
@@ -366,6 +372,166 @@ const providerHealthcheck: ProviderHealthcheck = {
   errorRate: 0.001,
   details: "Synthetic check passed",
   checkedAt: now,
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const providerDiscoveryLog: ProviderDiscoveryLog = {
+  id: "provider_discovery_log_001",
+  source: "startup",
+  queries: [
+    "2026 most popular AI providers large language models widely used providers",
+    "best enterprise LLM providers 2026",
+    "top AI model providers 2026 chat coding embeddings"
+  ],
+  discoveredProviders: ["openai", "anthropic", "gemini", "openrouter", "kie_ai"],
+  discoveredModels: ["gpt-4.1", "claude-3.7-sonnet", "gemini-2.0-flash", "openrouter/auto", "kie-vl-1"],
+  status: "fallback",
+  searchStartedAt: now,
+  searchFinishedAt: now,
+  notes: "Seeded fallback snapshot before first live discovery run.",
+  rawResults: { seeded: true },
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const stackSubprompt: Subprompt = {
+  id: "subprompt_stack_postgres_prisma",
+  title: "Stack: PostgreSQL + Prisma",
+  category: "stack",
+  summary: "Balanced default stack for maintainable products with relational data and migrations.",
+  prompt:
+    "Recommend PostgreSQL + Prisma, Node.js TypeScript backend, React TypeScript frontend, and capability-first LLM provider routing with explicit fallback.",
+  tags: ["stack", "postgres", "prisma", "typescript"],
+  sourcePath: "configs/subprompts/stack-postgres-prisma.json",
+  enabled: true
+};
+
+const architectureSubprompt: Subprompt = {
+  id: "subprompt_arch_monorepo",
+  title: "Architecture: Modular Monorepo",
+  category: "architecture",
+  summary: "Prefer modular monorepo boundaries with additive packages and explicit contracts.",
+  prompt:
+    "Use a modular monorepo with explicit package contracts, additive migrations, inspectable workflow defs, and capability abstraction for providers.",
+  tags: ["architecture", "monorepo", "contracts"],
+  sourcePath: "configs/subprompts/architecture-monorepo.json",
+  enabled: true
+};
+
+const brainstormSession: BrainstormSession = {
+  id: "brainstorm_session_001",
+  threadId: chatThread.id,
+  projectId: project.id,
+  status: "planned",
+  projectIntent: "Bootstrap an AI development control-plane with provider routing and memory retrieval.",
+  selectedSubpromptIds: [stackSubprompt.id, architectureSubprompt.id],
+  questions: [
+    {
+      id: "q_target_users",
+      question: "Who are the primary operators of the control-plane?",
+      rationale: "Determines UX density, approval strategy, and auth model."
+    }
+  ],
+  answers: {
+    q_target_users: "Small internal platform team with one admin and editors."
+  },
+  planId: "brainstorm_plan_001",
+  createdAt: now,
+  createdBy: "planner",
+  updatedAt: now,
+  updatedBy: "planner"
+};
+
+const brainstormPlan: BrainstormPlan = {
+  id: "brainstorm_plan_001",
+  sessionId: brainstormSession.id,
+  title: "Initial platform execution plan",
+  executiveSummary:
+    "Establish a modular monorepo control-plane with additive routes for providers, memory, orchestration, auth, and runtime observability.",
+  plan: {
+    recommendedStack: {
+      database: "PostgreSQL + pgvector",
+      backend: "Node.js + Fastify + Zod",
+      frontend: "React + TypeScript + Tailwind",
+      llmProviders: ["openai", "anthropic", "gemini"],
+      vectorStore: "pgvector"
+    },
+    architecture: {
+      repositoryStrategy: "monorepo",
+      packageLayout: ["apps/api", "apps/web", "apps/worker", "packages/*"],
+      rationale: "Single control-plane workspace with explicit package boundaries and reusable contracts."
+    },
+    suggestedAgents: [
+      { role: "planner", purpose: "Generate structured specs and roadmap", capabilities: ["chat_reasoning"] },
+      { role: "codex_builder", purpose: "Implement scoped changes", capabilities: ["coding"] }
+    ],
+    suggestedSkills: [
+      {
+        name: "checks",
+        repositoryUrl: "https://github.com/example/skills-checks",
+        reason: "Keep verification summaries deterministic."
+      }
+    ],
+    providerBindings: [
+      {
+        capabilityClass: "coding",
+        primaryProvider: "openai",
+        fallbackProviders: ["anthropic", "openrouter"],
+        primaryModelHint: "gpt-4.1"
+      }
+    ],
+    roadmap: [
+      {
+        id: "bs_task_1",
+        title: "Stabilize contracts and schema",
+        description: "Freeze domain schemas and additive migrations.",
+        dependencies: [],
+        targetRepos: [repository.id],
+        suggestedAgentRole: "planner",
+        suggestedSkills: ["checks"]
+      }
+    ],
+    assumptions: ["Single tenant by default", "Auth enabled selectively via env flag"],
+    risks: ["Provider credentials may be missing in local environments"],
+    composedPrompt:
+      "Seed brainstorm plan generated from stack and architecture subprompts for initial workspace bootstrap.",
+    selectedSubprompts: [stackSubprompt, architectureSubprompt]
+  },
+  createdAt: now,
+  createdBy: "planner",
+  updatedAt: now,
+  updatedBy: "planner"
+};
+
+const mcpConnection: McpConnection = {
+  id: "mcp_connection_001",
+  name: "openclaw-default",
+  baseUrl: "http://localhost:7777",
+  authSecretRef: "secret://mcp/openclaw-token",
+  enabled: false,
+  status: "disabled",
+  capabilities: ["diagnostics", "auto_config"],
+  metadata: { default: true },
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const mcpDelegationRun: McpDelegationRun = {
+  id: "mcp_run_001",
+  connectionId: mcpConnection.id,
+  operation: "bootstrap.check",
+  payload: { dryRun: true },
+  status: "completed",
+  response: { ok: true, source: "seed" },
+  startedAt: now,
+  endedAt: now,
   createdAt: now,
   createdBy: "system",
   updatedAt: now,
@@ -813,6 +979,7 @@ export const seedData: ApiSeedData = {
   providerModels: [providerModel],
   providerBindings: [providerBinding],
   providerHealthchecks: [providerHealthcheck],
+  providerDiscoveryLogs: [providerDiscoveryLog],
   experiments: [experiment],
   experimentRuns: [experimentRun],
   users: [adminUser, viewerUser],
@@ -824,7 +991,12 @@ export const seedData: ApiSeedData = {
   repositoryRoleBindings: [scopedRepositoryRoleBinding],
   delegatedPermissions: [delegatedPermission],
   oidcAuthStates: [oidcAuthState],
-  skills: [installedSkill, availableSkill]
+  skills: [installedSkill, availableSkill],
+  subprompts: [stackSubprompt, architectureSubprompt],
+  brainstormSessions: [brainstormSession],
+  brainstormPlans: [brainstormPlan],
+  mcpConnections: [mcpConnection],
+  mcpDelegationRuns: [mcpDelegationRun]
 };
 
 export const runEventsByRunId: Record<string, RunEvent[]> = {

@@ -458,3 +458,67 @@ Usage notes:
 - Dark mode is default and can be toggled in `Settings`.
 - Live agent runtime panels are visible on dashboard home in the `Live Agent Mesh` section.
 - File manager and history/snapshot inspection are available in `Local Repos`.
+
+## Phase K — Brainstorming Orchestration, MCP Optional Runtime, Provider Auto-Discovery Finalization
+Status: implemented
+
+Implemented:
+- Finalized canonical BrainstormPlan runtime flow on nested payload (`plan.*`) with additive orchestration endpoints:
+  - `POST /brainstorm` (session start/update)
+  - `GET /brainstorm` (session listing/filtering)
+  - `GET /brainstorm/plan/:planId` (normalized canonical plan)
+  - `POST /brainstorm/plan/:planId/approve`
+  - `POST /brainstorm/plan/:planId/create-project`
+- Persisted session/plan transitions with explicit lifecycle states:
+  - `collecting -> planned -> approved -> applied`
+  - added `applied_at` support in persistence and API payloads
+- Added subprompt library package and APIs as file-driven source of truth:
+  - `configs/subprompts/*`
+  - `GET /subprompts`
+  - `GET /subprompts/:subpromptId`
+  - `POST /subprompts/compose`
+  - `POST /subprompts/sync`
+- Integrated composed prompt wiring into brainstorm plans:
+  - `plan.selectedSubprompts`
+  - `plan.composedPrompt`
+- Implemented optional MCP integration with graceful degradation:
+  - `GET /mcp/status`
+  - `GET /mcp/connections`
+  - `POST /mcp/connections`
+  - `POST /mcp/connections/:connectionId/healthcheck`
+  - `GET /mcp/runs`
+  - `POST /mcp/delegate`
+  - feature-flag/runtime checks return non-breaking `MCP non configurato` behavior when disabled
+- Finalized provider auto-discovery orchestration on top of existing provider system:
+  - `POST /providers/discovery/update`
+  - `GET /providers/discovery/logs`
+  - manual trigger in Providers UI with persisted discovery history
+- Completed Brainstorming + MCP UI integration:
+  - `/brainstorming` page with guided workbench/session state and approve/apply actions
+  - `/mcp` page (conditionally visible when enabled/configured)
+  - sidebar/router wiring kept additive without changing existing routes
+
+Key files:
+- `apps/api/src/routes/brainstorm.ts`
+- `apps/api/src/services/brainstorming-service.ts`
+- `apps/api/src/routes/subprompts.ts`
+- `apps/api/src/services/subprompts-service.ts`
+- `apps/api/src/routes/mcp.ts`
+- `apps/api/src/services/mcp-service.ts`
+- `apps/api/src/services/provider-discovery-service.ts`
+- `apps/web/src/pages/BrainstormingPage.tsx`
+- `apps/web/src/components/brainstorming/BrainstormingWorkbench.tsx`
+- `apps/web/src/pages/McpPage.tsx`
+- `apps/web/src/pages/ProvidersPage.tsx`
+- `packages/subprompts/src/service.ts`
+- `packages/mcp/src/*`
+- `packages/providers/src/discovery/provider-auto-discovery.ts`
+- `packages/db/migrations/011_auto_discover_brainstorm_mcp.sql`
+- `packages/db/migrations/012_brainstorm_applied_state.sql`
+
+Validation:
+- `pnpm typecheck` passed.
+- `pnpm lint` passed.
+- `pnpm test` passed.
+- `pnpm build` passed.
+- `pnpm db:migrate` remains environment-dependent; run only when `DATABASE_URL`, `REDIS_URL`, and `SECRETS_MASTER_KEY` are available in execution context.

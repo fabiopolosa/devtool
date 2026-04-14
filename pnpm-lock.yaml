@@ -41,6 +41,9 @@ importers:
       '@cp/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@cp/brainstorming':
+        specifier: workspace:*
+        version: link:../../packages/brainstorming
       '@cp/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -53,6 +56,12 @@ importers:
       '@cp/local-repos':
         specifier: workspace:*
         version: link:../../packages/local-repos
+      '@cp/mcp':
+        specifier: workspace:*
+        version: link:../../packages/mcp
+      '@cp/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
       '@cp/schema-docs':
         specifier: workspace:*
         version: link:../../packages/schema-docs
@@ -62,6 +71,9 @@ importers:
       '@cp/skills':
         specifier: workspace:*
         version: link:../../packages/skills
+      '@cp/subprompts':
+        specifier: workspace:*
+        version: link:../../packages/subprompts
       '@cp/versioning':
         specifier: workspace:*
         version: link:../../packages/versioning
@@ -242,6 +254,25 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
 
+  packages/brainstorming:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@cp/subprompts':
+        specifier: workspace:*
+        version: link:../subprompts
+      yaml:
+        specifier: ^2.8.1
+        version: 2.8.3
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
   packages/config:
     dependencies:
       '@cp/domain':
@@ -306,6 +337,19 @@ importers:
       ioredis:
         specifier: ^5.5.0
         version: 5.10.1
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/mcp:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
     devDependencies:
       typescript:
         specifier: ^5.8.2
@@ -395,6 +439,22 @@ importers:
         specifier: ^3.24.2
         version: 3.25.76
     devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/subprompts:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+      yaml:
+        specifier: ^2.8.1
+        version: 2.8.3
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
       vitest:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)

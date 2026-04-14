@@ -12,10 +12,12 @@ type ShellNavItem = {
     | '/retrieval/$runId'
     | '/approvals'
     | '/experiments'
+    | '/brainstorming'
     | '/providers'
     | '/skills'
     | '/agents'
     | '/runtime'
+    | '/mcp'
     | '/secrets'
     | '/database'
     | '/stack'
@@ -26,28 +28,40 @@ type ShellNavItem = {
     | '/login'
     | '/admin/rbac';
   label: string;
+  group: 'core' | 'ops' | 'infra' | 'admin';
+  tier: 'primary' | 'secondary';
   params?: Record<string, string>;
 };
 
+const parseFlag = (value: string | undefined, fallback = false): boolean => {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+};
+
+const mcpFeatureEnabled = (): boolean => parseFlag(import.meta.env.VITE_MCP_ENABLED, false);
+
 const navItems: ShellNavItem[] = [
-  { to: '/', label: 'Dashboard' },
-  { to: '/projects', label: 'Projects' },
-  { to: '/memory', label: 'Memory' },
-  { to: '/retrieval/$runId', label: 'Retrieved Context', params: { runId: 'run-1' } },
-  { to: '/approvals', label: 'Approvals' },
-  { to: '/experiments', label: 'AutoResearch' },
-  { to: '/providers', label: 'Providers' },
-  { to: '/skills', label: 'Skills' },
-  { to: '/agents', label: 'Agents' },
-  { to: '/runtime', label: 'Ruflo & Runtime' },
-  { to: '/secrets', label: 'Secrets' },
-  { to: '/database', label: 'Database' },
-  { to: '/stack', label: 'Stack & Machines' },
-  { to: '/local-repos', label: 'Local Repos' },
-  { to: '/versioning', label: 'Versioning' },
-  { to: '/settings', label: 'Settings' },
-  { to: '/admin/rbac', label: 'Admin RBAC' },
-  { to: '/chat/$threadId', label: 'Chat', params: { threadId: 'thread-1' } }
+  { to: '/', label: 'Dashboard', group: 'core', tier: 'primary' },
+  { to: '/projects', label: 'Projects', group: 'core', tier: 'primary' },
+  { to: '/chat/$threadId', label: 'Chat', group: 'core', tier: 'primary', params: { threadId: 'thread-1' } },
+  { to: '/brainstorming', label: 'Brainstorming', group: 'core', tier: 'secondary' },
+  { to: '/approvals', label: 'Approvals', group: 'ops', tier: 'primary' },
+  { to: '/agents', label: 'Agents', group: 'ops', tier: 'primary' },
+  { to: '/runtime', label: 'Ruflo & Runtime', group: 'ops', tier: 'secondary' },
+  { to: '/memory', label: 'Memory', group: 'ops', tier: 'secondary' },
+  { to: '/retrieval/$runId', label: 'Retrieved Context', group: 'ops', tier: 'secondary', params: { runId: 'run-1' } },
+  { to: '/experiments', label: 'AutoResearch', group: 'ops', tier: 'secondary' },
+  { to: '/providers', label: 'Providers', group: 'infra', tier: 'primary' },
+  { to: '/mcp', label: 'MCP', group: 'infra', tier: 'secondary' },
+  { to: '/skills', label: 'Skills', group: 'infra', tier: 'secondary' },
+  { to: '/database', label: 'Database', group: 'infra', tier: 'secondary' },
+  { to: '/local-repos', label: 'Local Repos', group: 'infra', tier: 'secondary' },
+  { to: '/versioning', label: 'Versioning', group: 'infra', tier: 'secondary' },
+  { to: '/settings', label: 'Settings', group: 'infra', tier: 'secondary' },
+  { to: '/secrets', label: 'Secrets', group: 'admin', tier: 'primary' },
+  { to: '/stack', label: 'Stack & Machines', group: 'admin', tier: 'primary' },
+  { to: '/admin/rbac', label: 'Admin RBAC', group: 'admin', tier: 'secondary' }
 ] as const;
 
 export function AppShell() {
@@ -60,6 +74,7 @@ export function AppShell() {
   const runningTasks = state.tasks.filter((task) => task.state === 'running').length;
   const isLoginRoute = Boolean(matchRoute({ to: '/login' }));
   const isAdmin = auth.enabled && Boolean(auth.principal?.roles.includes('admin'));
+  const showMcpNav = mcpFeatureEnabled();
 
   useEffect(() => {
     if (!auth.enabled || !auth.required || isLoginRoute) return;
@@ -80,43 +95,71 @@ export function AppShell() {
     return Boolean(matchRoute({ to: item.to as any, fuzzy: true }));
   }, [matchRoute]);
 
+  const groupedNavItems = useMemo(() => {
+    const allowed = navItems.filter((item) => {
+      if (item.to === '/admin/rbac' && !isAdmin) return false;
+      if (item.to === '/skills' && !auth.enabled) return false;
+      if (item.to === '/mcp' && (!auth.enabled || !isAdmin || !showMcpNav)) return false;
+      if (item.to === '/secrets' && (!auth.enabled || !isAdmin)) return false;
+      if (item.to === '/stack' && (!auth.enabled || !isAdmin)) return false;
+      return true;
+    });
+
+    const groups: { key: ShellNavItem['group']; label: string; items: ShellNavItem[] }[] = [
+      { key: 'core', label: 'Core Commands', items: [] },
+      { key: 'ops', label: 'Operations', items: [] },
+      { key: 'infra', label: 'Infrastructure', items: [] },
+      { key: 'admin', label: 'Admin Controls', items: [] }
+    ];
+
+    for (const item of allowed) {
+      const target = groups.find((group) => group.key === item.group);
+      if (target) target.items.push(item);
+    }
+    return groups.filter((group) => group.items.length > 0);
+  }, [auth.enabled, isAdmin, showMcpNav]);
+
   return (
-    <div className="min-h-screen text-slate-100">
-      <div className="matrix-canvas grid min-h-screen w-full gap-5 p-4 lg:grid-cols-[270px_minmax(0,1fr)] xl:grid-cols-[270px_minmax(0,1fr)_320px] xl:p-6">
+    <div className="min-h-screen text-[color:var(--text)]">
+      <div className="matrix-canvas grid min-h-screen w-full gap-5 p-4 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_320px] xl:p-6">
         <aside className="shell-panel flex flex-col gap-4 p-4">
           <div>
             <div className="label">Control Plane</div>
-            <div className="mt-2 font-display text-3xl font-semibold leading-none text-white">Command Center</div>
-            <p className="mt-3 text-sm leading-6 text-slate-400">
-              Multi-agent execution, memory, providers, roadmap, and verification in one pane.
+            <div className="mt-2 text-2xl font-semibold leading-tight text-[color:var(--text)]" style={{ fontFamily: '"Sora", "Manrope", sans-serif' }}>
+              Command Center
+            </div>
+            <p className="mt-2 text-xs leading-5 text-[color:var(--muted)]">
+              Real-time multi-agent operations, verifications, memory and routing from a single cockpit.
             </p>
           </div>
-          <nav className="space-y-1">
-            {navItems.map((item) => (
-              ((item.to === '/admin/rbac' && !isAdmin) ||
-              (item.to === '/skills' && !auth.enabled) ||
-              (item.to === '/secrets' && (!auth.enabled || !isAdmin)) ||
-              (item.to === '/stack' && (!auth.enabled || !isAdmin))) ? null : (
-              <Link
-                key={item.to}
-                to={item.to as any}
-                {...(item.params ? { params: item.params as any } : {})}
-                className={`flex items-center justify-between rounded-xl border px-3 py-2 text-sm transition ${
-                  isActive(item)
-                    ? 'border-cyan-400/30 bg-cyan-400/10 text-cyan-100'
-                    : 'border-transparent text-slate-300 hover:border-white/10 hover:bg-white/5'
-                }`}
-              >
-                {item.label}
-                {item.to === '/approvals' && openApprovals ? <Pill tone="warn">{openApprovals}</Pill> : null}
-              </Link>
-              )
+          <nav className="space-y-3">
+            {groupedNavItems.map((group) => (
+              <div key={group.key} className="space-y-1.5">
+                <div className="nav-group-title">{group.label}</div>
+                {group.items.map((item) => (
+                  <Link
+                    key={item.to}
+                    to={item.to as any}
+                    {...(item.params ? { params: item.params as any } : {})}
+                    aria-label={item.label}
+                    className={`nav-link ${item.tier === 'primary' ? 'nav-link-priority' : 'nav-link-secondary-tier'} ${isActive(item) ? 'nav-link-active' : ''}`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span aria-hidden="true" className="inline-flex h-5 w-5 items-center justify-center rounded border border-[color:var(--line)] bg-black/20 text-[10px] font-semibold">
+                        {item.label.slice(0, 2).toUpperCase()}
+                      </span>
+                      {item.label}
+                    </span>
+                    {item.to === '/approvals' && openApprovals ? <Pill tone="warn">{openApprovals}</Pill> : null}
+                  </Link>
+                ))}
+              </div>
             ))}
           </nav>
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+          <div className="surface-muted rounded border p-3 text-sm">
             <div className="label">Theme</div>
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <span className="text-slate-300">{themeMode === 'dark' ? 'Dark Matrix' : 'Light'}</span>
+            <div className="mt-1.5 flex items-center justify-between gap-3">
+              <span className="text-[color:var(--text)]">{themeMode === 'dark' ? 'Dark Matrix' : 'Light Mode'}</span>
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -129,12 +172,12 @@ export function AppShell() {
             </div>
           </div>
           {auth.enabled ? (
-            <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+            <div className="surface-muted rounded border p-3 text-sm">
               <div className="label">Session</div>
               {auth.principal ? (
                 <div className="mt-2 space-y-2">
-                  <div className="text-white">Logged in as {auth.principal.displayName}</div>
-                  <div className="text-slate-400">{auth.principal.email}</div>
+                  <div className="text-[color:var(--text)]">Logged in as {auth.principal.displayName}</div>
+                  <div className="text-[color:var(--muted)]">{auth.principal.email}</div>
                   <div className="flex flex-wrap gap-1">
                     {auth.principal.roles.map((role) => (
                       <Pill key={role} tone="accent">{role}</Pill>
@@ -143,9 +186,9 @@ export function AppShell() {
                   <Button variant="secondary" onClick={() => void authActions.logout()}>Log out</Button>
                 </div>
               ) : (
-                <div className="mt-2 space-y-2 text-slate-300">
+                <div className="mt-2 space-y-2 text-[color:var(--muted)]">
                   <div>No active session</div>
-                  <Link to="/login" className="text-cyan-300 underline underline-offset-4">Sign in</Link>
+                  <Link to="/login" className="text-[color:var(--accent-2)] underline underline-offset-4">Sign in</Link>
                 </div>
               )}
             </div>
@@ -158,7 +201,7 @@ export function AppShell() {
 
         <main className="space-y-5">
           {auth.enabled && auth.error && !isLoginRoute ? (
-            <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
+            <div className="rounded-xl border p-3 text-sm" style={{ borderColor: 'color-mix(in oklab, var(--warn) 40%, transparent)', background: 'color-mix(in oklab, var(--warn) 12%, transparent)', color: 'var(--warn)' }}>
               {auth.error}
             </div>
           ) : null}

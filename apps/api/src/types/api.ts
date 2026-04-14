@@ -1,5 +1,7 @@
 import type {
   AgentConfig,
+  BrainstormPlan,
+  BrainstormSession,
   AuditEvent,
   Approval,
   Artifact,
@@ -8,9 +10,12 @@ import type {
   DelegatedPermission,
   MemoryChunk,
   MemoryEntry,
+  McpConnection,
+  McpDelegationRun,
   OidcAuthState,
   ProviderCapability,
   ProviderConfig,
+  ProviderDiscoveryLog,
   ProviderHealthcheck,
   ProviderModel,
   Project,
@@ -29,6 +34,7 @@ import type {
   RoadmapItem,
   Session,
   Skill,
+  Subprompt,
   Task,
   TaskRun,
   User,
@@ -66,6 +72,7 @@ export interface ApiSeedData {
   providerModels: ProviderModel[];
   providerBindings: ProjectProviderBinding[];
   providerHealthchecks: ProviderHealthcheck[];
+  providerDiscoveryLogs: ProviderDiscoveryLog[];
   experiments: AutoResearchExperiment[];
   experimentRuns: AutoResearchRun[];
   users: User[];
@@ -78,6 +85,11 @@ export interface ApiSeedData {
   delegatedPermissions: DelegatedPermission[];
   oidcAuthStates: OidcAuthState[];
   skills: Skill[];
+  subprompts: Subprompt[];
+  brainstormSessions: BrainstormSession[];
+  brainstormPlans: BrainstormPlan[];
+  mcpConnections: McpConnection[];
+  mcpDelegationRuns: McpDelegationRun[];
   secrets: SecretConfig[];
   schemaDocs: SchemaDoc[];
   environments: Environment[];

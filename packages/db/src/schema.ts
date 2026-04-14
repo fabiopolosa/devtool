@@ -825,3 +825,113 @@ export const versionSnapshots = pgTable(
     index("idx_version_snapshots_trigger").on(table.trigger)
   ]
 );
+
+export const providerDiscoveryLogs = pgTable(
+  "provider_discovery_logs",
+  {
+    id: text("id").primaryKey(),
+    source: text("source").notNull(),
+    queries: jsonb("queries").$type<string[]>().notNull(),
+    discoveredProviders: jsonb("discovered_providers").$type<string[]>().notNull(),
+    discoveredModels: jsonb("discovered_models").$type<string[]>().notNull(),
+    status: text("status").notNull(),
+    searchStartedAt: timestamp("search_started_at", { withTimezone: true, mode: "string" }).notNull(),
+    searchFinishedAt: timestamp("search_finished_at", { withTimezone: true, mode: "string" }).notNull(),
+    notes: text("notes"),
+    rawResults: jsonb("raw_results").$type<Record<string, unknown>>(),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_provider_discovery_logs_status").on(table.status),
+    index("idx_provider_discovery_logs_finished").on(table.searchFinishedAt)
+  ]
+);
+
+export const subprompts = pgTable(
+  "subprompts",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    category: text("category").notNull(),
+    summary: text("summary").notNull(),
+    prompt: text("prompt").notNull(),
+    tags: jsonb("tags").$type<string[]>().notNull(),
+    sourcePath: text("source_path").notNull(),
+    enabled: boolean("enabled").notNull()
+  },
+  (table) => [index("idx_subprompts_category").on(table.category), index("idx_subprompts_enabled").on(table.enabled)]
+);
+
+export const brainstormSessions = pgTable(
+  "brainstorm_sessions",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id"),
+    projectId: text("project_id"),
+    status: text("status").notNull(),
+    projectIntent: text("project_intent").notNull(),
+    selectedSubpromptIds: jsonb("selected_subprompt_ids").$type<string[]>().notNull(),
+    questions: jsonb("questions").$type<Record<string, unknown>[]>().notNull(),
+    answers: jsonb("answers").$type<Record<string, string>>().notNull(),
+    planId: text("plan_id"),
+    approvedAt: timestamp("approved_at", { withTimezone: true, mode: "string" }),
+    appliedAt: timestamp("applied_at", { withTimezone: true, mode: "string" }),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_brainstorm_sessions_status").on(table.status),
+    index("idx_brainstorm_sessions_project").on(table.projectId),
+    index("idx_brainstorm_sessions_thread").on(table.threadId)
+  ]
+);
+
+export const brainstormPlans = pgTable(
+  "brainstorm_plans",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull(),
+    title: text("title").notNull(),
+    executiveSummary: text("executive_summary").notNull(),
+    plan: jsonb("plan").$type<Record<string, unknown>>().notNull(),
+    ...auditColumns
+  },
+  (table) => [index("idx_brainstorm_plans_session").on(table.sessionId)]
+);
+
+export const mcpConnections = pgTable(
+  "mcp_connections",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    baseUrl: text("base_url").notNull(),
+    authSecretRef: text("auth_secret_ref"),
+    enabled: boolean("enabled").notNull(),
+    status: text("status").notNull(),
+    capabilities: jsonb("capabilities").$type<string[]>().notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull(),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true, mode: "string" }),
+    ...auditColumns
+  },
+  (table) => [index("idx_mcp_connections_status").on(table.status)]
+);
+
+export const mcpDelegationRuns = pgTable(
+  "mcp_delegation_runs",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull(),
+    operation: text("operation").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    status: text("status").notNull(),
+    response: jsonb("response").$type<Record<string, unknown>>(),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "string" }),
+    endedAt: timestamp("ended_at", { withTimezone: true, mode: "string" }),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_mcp_delegation_runs_connection").on(table.connectionId),
+    index("idx_mcp_delegation_runs_status").on(table.status),
+    index("idx_mcp_delegation_runs_operation").on(table.operation)
+  ]
+);

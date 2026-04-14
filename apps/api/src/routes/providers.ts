@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { apiStore } from "../services/api-store.js";
+import { runProviderAutoDiscovery } from "../services/provider-discovery-service.js";
 
 export const providersRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get("/providers", { schema: { tags: ["providers"], summary: "List provider configs" } }, async () => ({
@@ -21,4 +22,21 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get("/providers/health", { schema: { tags: ["providers"], summary: "List provider healthchecks" } }, async () => ({
     items: await apiStore.listProviderHealthchecks()
   }));
+
+  fastify.get(
+    "/providers/discovery/logs",
+    { schema: { tags: ["providers"], summary: "List provider auto-discovery logs" } },
+    async () => ({
+      items: await apiStore.listProviderDiscoveryLogs()
+    })
+  );
+
+  fastify.post(
+    "/providers/discovery/update",
+    { schema: { tags: ["providers"], summary: "Run provider auto-discovery and update registry tables" } },
+    async () => {
+      const item = await runProviderAutoDiscovery("manual");
+      return { item };
+    }
+  );
 };

@@ -5,7 +5,16 @@ const providerEnvKeyMap: Record<ProviderName, string> = {
   anthropic: "ANTHROPIC_API_KEY",
   gemini: "GEMINI_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
-  kie_ai: "KIE_AI_API_KEY"
+  kie_ai: "KIE_AI_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  cohere: "COHERE_API_KEY",
+  ai21: "AI21_API_KEY",
+  zhipu: "ZHIPU_API_KEY",
+  meta_llama: "META_LLAMA_API_KEY",
+  databricks_dbrx: "DATABRICKS_API_KEY",
+  xai: "XAI_API_KEY",
+  amazon_bedrock: "AWS_BEDROCK_API_KEY",
+  aleph_alpha: "ALEPH_ALPHA_API_KEY"
 };
 
 export interface SecretResolver {

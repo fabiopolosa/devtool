@@ -8,6 +8,7 @@ import {
   KieAIImageEditingProvider,
   KieAIImageGenerationProvider,
   KieAIVisionProvider,
+  createEmergingCatalogProviders,
   OpenAIChatProvider,
   OpenAICodingProvider,
   OpenAIEmbeddingProvider,
@@ -38,7 +39,8 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
     new OpenRouterCodingProvider(),
     new KieAIImageGenerationProvider(),
     new KieAIImageEditingProvider(),
-    new KieAIVisionProvider()
+    new KieAIVisionProvider(),
+    ...createEmergingCatalogProviders()
   ]);
   return registry;
 }

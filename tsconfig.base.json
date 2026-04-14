@@ -32,7 +32,10 @@
       "@cp/schema-docs": ["packages/schema-docs/src/index.ts"],
       "@cp/environments": ["packages/environments/src/index.ts"],
       "@cp/local-repos": ["packages/local-repos/src/index.ts"],
-      "@cp/versioning": ["packages/versioning/src/index.ts"]
+      "@cp/versioning": ["packages/versioning/src/index.ts"],
+      "@cp/subprompts": ["packages/subprompts/src/index.ts"],
+      "@cp/brainstorming": ["packages/brainstorming/src/index.ts"],
+      "@cp/mcp": ["packages/mcp/src/index.ts"]
     }
   }
 }

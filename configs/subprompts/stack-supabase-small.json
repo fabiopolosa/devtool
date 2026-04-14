@@ -1,0 +1,9 @@
+{
+  "id": "stack_supabase_small",
+  "title": "Stack: Supabase for small projects",
+  "category": "stack",
+  "summary": "Lean stack for rapid delivery with managed auth/database and low ops overhead.",
+  "prompt": "For small projects, recommend Supabase PostgreSQL, Node.js Fastify API, React TypeScript frontend, and a single primary provider with one fallback.",
+  "tags": ["stack", "supabase", "small", "rapid"],
+  "enabled": true
+}

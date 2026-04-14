@@ -3,6 +3,7 @@ import { createDefaultProviderRegistry } from "./registry/default-provider-regis
 import { ModelRegistry } from "./models/model-registry.js";
 import { ProjectProviderBindingService } from "./bindings/project-binding.js";
 import { RoutingPolicyHelper } from "./routing/routing-policy.js";
+import { ProviderAutoDiscoveryService } from "./discovery/provider-auto-discovery.js";
 
 describe("providers unit", () => {
   it("resolves provider keys from env and auth refs", () => {
@@ -27,6 +28,25 @@ describe("providers unit", () => {
     expect(registry.get("anthropic", "coding")).toBeDefined();
     expect(registry.get("gemini", "vision_analysis")).toBeDefined();
     expect(registry.get("kie_ai", "image_editing")).toBeDefined();
+    expect(registry.get("mistral", "chat_reasoning")).toBeDefined();
+    expect(registry.get("xai", "coding")).toBeDefined();
+  });
+
+  it("auto-discovers providers from web search excerpts with resilient fallback", async () => {
+    const service = new ProviderAutoDiscoveryService({
+      queries: ["popular llm providers 2026"],
+      fetchImpl: (async () =>
+        new Response(
+          "Top providers include OpenAI, Anthropic, Gemini, Mistral, Cohere, AI21, xAI Grok, and Amazon Bedrock.",
+          { status: 200 }
+        )) as typeof fetch
+    });
+
+    const result = await service.run();
+    expect(result.status).toBe("success");
+    expect(result.discoveredProviders).toContain("openai");
+    expect(result.discoveredProviders).toContain("mistral");
+    expect(result.discoveredProviders).toContain("amazon_bedrock");
   });
 
   it("selects routing with binding + fallback using health", () => {

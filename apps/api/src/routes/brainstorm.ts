@@ -1,0 +1,165 @@
+import type { FastifyPluginAsync } from "fastify";
+import {
+  applyBrainstormPlan,
+  approveBrainstormPlan,
+  getBrainstormPlan,
+  getBrainstormSession,
+  listBrainstormPlans,
+  listBrainstormSessions,
+  startBrainstormSession
+} from "../services/brainstorming-service.js";
+
+interface StartBrainstormBody {
+  projectIntent: string;
+  threadId?: string;
+  projectId?: string;
+  selectedSubpromptIds?: string[];
+  guidedAnswers?: Record<string, string>;
+  actor?: string;
+  generatePlan?: boolean;
+}
+
+interface ApplyPlanBody {
+  actor?: string;
+  projectName?: string;
+  projectKey?: string;
+  description?: string;
+  repositoryIds?: string[];
+  repositoryUrls?: string[];
+}
+
+export const brainstormRoutes: FastifyPluginAsync = async (fastify) => {
+  fastify.get<{
+    Querystring: { threadId?: string; projectId?: string; status?: "collecting" | "planned" | "approved" | "applied" | "archived" };
+  }>(
+    "/brainstorm",
+    {
+      schema: { tags: ["brainstorm"], summary: "List brainstorming sessions" }
+    },
+    async (request) => {
+      const items = await listBrainstormSessions({
+        ...(request.query.threadId ? { threadId: request.query.threadId } : {}),
+        ...(request.query.projectId ? { projectId: request.query.projectId } : {}),
+        ...(request.query.status ? { status: request.query.status } : {})
+      });
+      return { items };
+    }
+  );
+
+  fastify.post<{ Body: StartBrainstormBody }>(
+    "/brainstorm",
+    {
+      schema: { tags: ["brainstorm"], summary: "Start a brainstorming session and optionally generate a plan" }
+    },
+    async (request, reply) => {
+      const body = request.body;
+      if (!body?.projectIntent?.trim()) {
+        return reply.code(400).send({
+          error: "invalid_request",
+          message: "projectIntent is required"
+        });
+      }
+
+      const item = await startBrainstormSession({
+        projectIntent: body.projectIntent,
+        ...(body.threadId ? { threadId: body.threadId } : {}),
+        ...(body.projectId ? { projectId: body.projectId } : {}),
+        ...(Array.isArray(body.selectedSubpromptIds)
+          ? { selectedSubpromptIds: body.selectedSubpromptIds }
+          : {}),
+        ...(body.guidedAnswers ? { guidedAnswers: body.guidedAnswers } : {}),
+        ...(body.actor ? { actor: body.actor } : {}),
+        ...(typeof body.generatePlan === "boolean" ? { generatePlan: body.generatePlan } : {})
+      });
+
+      return { item };
+    }
+  );
+
+  fastify.get<{ Params: { sessionId: string } }>(
+    "/brainstorm/:sessionId",
+    {
+      schema: { tags: ["brainstorm"], summary: "Get brainstorming session with associated plans" }
+    },
+    async (request, reply) => {
+      const session = await getBrainstormSession(request.params.sessionId);
+      if (!session) {
+        return reply.code(404).send({ item: null });
+      }
+      const plans = await listBrainstormPlans(session.id);
+      return {
+        item: {
+          session,
+          plans
+        }
+      };
+    }
+  );
+
+  fastify.get<{ Params: { planId: string } }>(
+    "/brainstorm/plan/:planId",
+    {
+      schema: { tags: ["brainstorm"], summary: "Get final brainstorm plan by id" }
+    },
+    async (request, reply) => {
+      const item = await getBrainstormPlan(request.params.planId);
+      if (!item) {
+        return reply.code(404).send({ item: null });
+      }
+      return { item };
+    }
+  );
+
+  fastify.post<{ Params: { planId: string }; Body?: { actor?: string } }>(
+    "/brainstorm/plan/:planId/approve",
+    {
+      schema: { tags: ["brainstorm"], summary: "Approve a brainstorm plan and mark session approved" }
+    },
+    async (request, reply) => {
+      try {
+        const item = await approveBrainstormPlan(
+          request.params.planId,
+          request.body?.actor ?? "brainstorming_approval"
+        );
+        return { item };
+      } catch (error) {
+        return reply.code(404).send({
+          error: "not_found",
+          message: error instanceof Error ? error.message : "Plan not found"
+        });
+      }
+    }
+  );
+
+  fastify.post<{ Params: { planId: string }; Body?: ApplyPlanBody }>(
+    "/brainstorm/plan/:planId/create-project",
+    {
+      schema: {
+        tags: ["brainstorm"],
+        summary: "Create project/roadmap/tasks/provider bindings from an approved brainstorm plan"
+      }
+    },
+    async (request, reply) => {
+      try {
+        const result = await applyBrainstormPlan({
+          planId: request.params.planId,
+          ...(request.body?.actor ? { actor: request.body.actor } : {}),
+          ...(request.body?.projectName ? { projectName: request.body.projectName } : {}),
+          ...(request.body?.projectKey ? { projectKey: request.body.projectKey } : {}),
+          ...(request.body?.description ? { description: request.body.description } : {}),
+          ...(Array.isArray(request.body?.repositoryIds) ? { repositoryIds: request.body.repositoryIds } : {}),
+          ...(Array.isArray(request.body?.repositoryUrls)
+            ? { repositoryUrls: request.body.repositoryUrls }
+            : {})
+        });
+        return { item: result };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to apply brainstorm plan";
+        if (message.includes("must be approved")) {
+          return reply.code(409).send({ error: "invalid_state", message });
+        }
+        return reply.code(404).send({ error: "not_found", message });
+      }
+    }
+  );
+};
