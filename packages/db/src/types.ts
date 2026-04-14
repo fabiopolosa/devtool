@@ -1,4 +1,5 @@
 import type {
+  AgentConfig,
   AuditEvent,
   Approval,
   Artifact,
@@ -40,6 +41,7 @@ import type {
 } from "@cp/domain";
 
 export interface DatabaseTables {
+  agents: AgentConfig;
   projects: Project;
   repositories: Repository;
   project_repository_links: ProjectRepositoryLink;

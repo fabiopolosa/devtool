@@ -453,4 +453,5 @@ export interface OidcAuthState extends AuditMetadata {
   userAgent?: string;
 }
 
+export type { AgentConfig, AgentConfigStatus, AgentRuntimeAdapterType } from "./entities/agent.js";
 export type { Skill } from "./entities/skill.js";

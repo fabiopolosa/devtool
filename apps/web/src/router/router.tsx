@@ -17,6 +17,10 @@ import { ProvidersPage } from '@/pages/ProvidersPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { AdminRbacPage } from '@/pages/AdminRbacPage';
 import { SkillsPage } from '@/pages/SkillsPage';
+import { AgentsListPage } from '@/pages/AgentsListPage';
+import { AgentDetailPage } from '@/pages/AgentDetailPage';
+import { AgentCreatePage } from '@/pages/AgentCreatePage';
+import { RuntimePage } from '@/pages/RuntimePage';
 
 const rootRoute = createRootRoute({
   component: AppShell
@@ -112,6 +116,30 @@ const skillsRoute = createRoute({
   component: SkillsPage
 });
 
+const agentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'agents',
+  component: AgentsListPage
+});
+
+const agentCreateRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'agents/new',
+  component: AgentCreatePage
+});
+
+const agentDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'agents/$agentId',
+  component: AgentDetailPage
+});
+
+const runtimeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'runtime',
+  component: RuntimePage
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'login',
@@ -140,6 +168,10 @@ const routeTree = rootRoute.addChildren([
   chatRoute,
   providersRoute,
   skillsRoute,
+  agentsRoute,
+  agentCreateRoute,
+  agentDetailRoute,
+  runtimeRoute,
   loginRoute,
   adminRbacRoute
 ]);

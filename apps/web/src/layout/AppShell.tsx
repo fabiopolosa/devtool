@@ -13,6 +13,8 @@ type ShellNavItem = {
     | '/experiments'
     | '/providers'
     | '/skills'
+    | '/agents'
+    | '/runtime'
     | '/chat/$threadId'
     | '/login'
     | '/admin/rbac';
@@ -29,6 +31,8 @@ const navItems: ShellNavItem[] = [
   { to: '/experiments', label: 'AutoResearch' },
   { to: '/providers', label: 'Providers' },
   { to: '/skills', label: 'Skills' },
+  { to: '/agents', label: 'Agents' },
+  { to: '/runtime', label: 'Ruflo & Runtime' },
   { to: '/admin/rbac', label: 'Admin RBAC' },
   { to: '/chat/$threadId', label: 'Chat', params: { threadId: 'thread-1' } }
 ] as const;

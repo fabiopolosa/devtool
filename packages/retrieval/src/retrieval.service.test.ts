@@ -146,15 +146,38 @@ describe("retrieval service", () => {
           instructions: "Always run lint, test, build before merge.",
           repositoryUrl: "https://github.com/example/skills-checks"
         }
-      ]
+      ],
+      agentContext: {
+        agentId: "agent_001",
+        agentName: "debugger-primary",
+        role: "claude_debugger",
+        runtimeConfig: {
+          timeoutMs: 45000,
+          commandPrefix: "paperclipai"
+        },
+        skillInstructions: [
+          {
+            name: "checks",
+            instructions: "Always run lint, test, build before merge.",
+            repositoryUrl: "https://github.com/example/skills-checks"
+          },
+          {
+            name: "logs",
+            instructions: "Inspect logs before patching.",
+            repositoryUrl: "https://github.com/example/skills-logs"
+          }
+        ]
+      }
     });
 
     expect(packet.role).toBe("claude_debugger");
     expect(packet.chunks).toHaveLength(1);
     expect(packet.sourceChunkIds[0]).toBe("chunk_4");
     expect(packet.compactSummary.toLowerCase()).toContain("debugger context");
-    expect(packet.skillInstructions).toHaveLength(1);
+    expect(packet.skillInstructions).toHaveLength(2);
     expect(packet.skillInstructions[0]?.name).toBe("checks");
     expect(packet.compactSummary.toLowerCase()).toContain("skills:");
+    expect(packet.agentContext?.agentId).toBe("agent_001");
+    expect(packet.compactSummary.toLowerCase()).toContain("agent:");
   });
 });

@@ -81,6 +81,7 @@ export type AppState = {
   projectBindings: ProjectProviderBinding[];
   providerHealthchecks: ProviderHealthcheck[];
   taskSpecSkills: Record<string, string[]>;
+  taskAssignedAgents: Record<string, string | undefined>;
 };
 
 export interface AuthPrincipal {
@@ -127,7 +128,8 @@ type Action =
   | { type: 'linkRepository'; projectId: string; repositoryId: string }
   | { type: 'proposeRoadmapFromChat'; projectId: string; content: string }
   | { type: 'convertRoadmapToTask'; roadmapItemId: string }
-  | { type: 'setTaskSkills'; taskId: string; skills: string[] };
+  | { type: 'setTaskSkills'; taskId: string; skills: string[] }
+  | { type: 'setTaskAssignedAgent'; taskId: string; agentId?: string };
 
 const initialState: AppState = {
   projects: initialProjects,
@@ -155,7 +157,8 @@ const initialState: AppState = {
   providerModels: initialProviderModels,
   projectBindings: initialProjectBindings,
   providerHealthchecks: initialProviderHealthchecks,
-  taskSpecSkills: {}
+  taskSpecSkills: {},
+  taskAssignedAgents: {}
 };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -378,6 +381,10 @@ function reducer(state: AppState, action: Action): AppState {
         taskSpecSkills: {
           ...state.taskSpecSkills,
           [nextTask.id]: []
+        },
+        taskAssignedAgents: {
+          ...state.taskAssignedAgents,
+          [nextTask.id]: undefined
         }
       };
     }
@@ -387,6 +394,14 @@ function reducer(state: AppState, action: Action): AppState {
         taskSpecSkills: {
           ...state.taskSpecSkills,
           [action.taskId]: [...action.skills]
+        }
+      };
+    case 'setTaskAssignedAgent':
+      return {
+        ...state,
+        taskAssignedAgents: {
+          ...state.taskAssignedAgents,
+          [action.taskId]: action.agentId
         }
       };
     default:

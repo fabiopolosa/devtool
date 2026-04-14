@@ -8,6 +8,7 @@ export default defineConfig({
       "@cp/config": path.resolve(__dirname, "../../packages/config/src/index.ts"),
       "@cp/db": path.resolve(__dirname, "../../packages/db/src/index.ts"),
       "@cp/auth": path.resolve(__dirname, "../../packages/auth/src/index.ts"),
+      "@cp/agents": path.resolve(__dirname, "../../packages/agents/src/index.ts"),
       "@cp/skills": path.resolve(__dirname, "../../packages/skills/src/index.ts")
     }
   },

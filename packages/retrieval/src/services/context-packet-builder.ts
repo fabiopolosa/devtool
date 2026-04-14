@@ -42,6 +42,20 @@ const compactSummaryForRole = (role: AgentRoleName, chunks: RetrievedChunk[]): s
 const summarizeSkillInstruction = (name: string, instructions: string): string =>
   `${name}: ${truncate(normalizeText(instructions), 180)}`;
 
+const summarizeRuntimeConfig = (runtimeConfig: Record<string, unknown>): string => {
+  const entries = Object.entries(runtimeConfig).slice(0, 6);
+  if (entries.length === 0) {
+    return "No runtime overrides.";
+  }
+  const parts = entries.map(([key, value]) => {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return `${key}=${String(value)}`;
+    }
+    return `${key}=[complex]`;
+  });
+  return `Runtime: ${parts.join(", ")}`;
+};
+
 export class DefaultContextPacketBuilder implements ContextPacketBuilder {
   async build(role: AgentRoleName, query: RetrievalQuery, chunks: RetrievedChunk[]): Promise<ContextPacket> {
     const ordered = this.orderForRole(role, chunks);
@@ -56,20 +70,31 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
       tokenEstimate: chunk.tokenEstimate
     }));
     const sourceChunkIds = uniqueBy(ordered, (chunk) => chunk.chunkId).map((chunk) => chunk.chunkId);
-    const skillInstructions = (query.skillInstructions ?? []).map((skill) => ({
+    const mergedSkillInstructions = uniqueBy(
+      [...(query.skillInstructions ?? []), ...(query.agentContext?.skillInstructions ?? [])],
+      (skill) => `${skill.name.trim().toLowerCase()}::${skill.repositoryUrl ?? ""}`
+    );
+    const skillInstructions = mergedSkillInstructions.map((skill) => ({
       name: skill.name,
       instructions: summarizeSkillInstruction(skill.name, skill.instructions),
       ...(skill.repositoryUrl ? { repositoryUrl: skill.repositoryUrl } : {}),
       tokenEstimate: estimateTokens(skill.instructions)
     }));
+    const runtimeSummary = query.agentContext
+      ? summarizeRuntimeConfig(query.agentContext.runtimeConfig)
+      : undefined;
     const tokenBudgetUsed =
       packetChunks.reduce((sum, chunk) => sum + chunk.tokenEstimate, 0) +
       skillInstructions.reduce((sum, skill) => sum + skill.tokenEstimate, 0) +
+      (runtimeSummary ? estimateTokens(runtimeSummary) : 0) +
       estimateTokens(query.query);
     const skillSummary =
       skillInstructions.length > 0
         ? ` | Skills: ${skillInstructions.map((skill) => skill.instructions).join(" | ")}`
         : "";
+    const agentSummary = query.agentContext
+      ? ` | Agent: ${query.agentContext.agentName} (${query.agentContext.role}) ${runtimeSummary}`
+      : "";
 
     return {
       packetId: newId(),
@@ -79,7 +104,19 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
       query: query.query,
       chunks: packetChunks,
       skillInstructions,
-      compactSummary: `${compactSummaryForRole(role, ordered)}${skillSummary}`,
+      ...(query.agentContext
+        ? {
+            agentContext: {
+              agentId: query.agentContext.agentId,
+              agentName: query.agentContext.agentName,
+              role: query.agentContext.role,
+              runtimeConfig: { ...query.agentContext.runtimeConfig },
+              runtimeSummary: runtimeSummary ?? "No runtime overrides.",
+              desiredSkills: mergedSkillInstructions.map((skill) => skill.name)
+            }
+          }
+        : {}),
+      compactSummary: `${compactSummaryForRole(role, ordered)}${skillSummary}${agentSummary}`,
       sourceChunkIds,
       tokenBudgetUsed,
       generatedAt: new Date().toISOString()

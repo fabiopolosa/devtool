@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cp/agents": "workspace:*",
     "@cp/auth": "workspace:*",
     "@cp/db": "workspace:*",
     "@cp/domain": "workspace:*",

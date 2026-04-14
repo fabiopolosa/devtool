@@ -4,7 +4,8 @@ import {
   InMemoryRunEventLogger,
   InMemoryWorkflowStore,
   RufloOrchestrationService,
-  WorkflowLoader
+  WorkflowLoader,
+  resolveTaskExecutionRouting
 } from "../index.js";
 
 describe("Ruflo workflow dry-run", () => {
@@ -146,5 +147,51 @@ describe("Ruflo workflow dry-run", () => {
     };
 
     await expect(service.transitionTask(task, "running")).rejects.toThrow(/Invalid task transition/);
+  });
+
+  it("prefers explicit task agent assignment when agentId is present", async () => {
+    const decision = resolveTaskExecutionRouting({
+      taskSpec: {
+        agentId: "agent_001",
+        proposedRouting: {
+          primaryRole: "codex_builder",
+          supportingRoles: [],
+          capabilityNeeds: ["coding"]
+        }
+      },
+      availableAgents: [
+        {
+          id: "agent_001",
+          name: "builder-primary",
+          role: "codex_builder",
+          status: "active",
+          runtimeConfig: { commandPrefix: "paperclipai" },
+          desiredSkills: ["checks"]
+        }
+      ]
+    });
+
+    expect(decision.source).toBe("task_agent_override");
+    expect(decision.selectedAgentId).toBe("agent_001");
+    expect(decision.selectedRole).toBe("codex_builder");
+    expect(decision.desiredSkills).toContain("checks");
+  });
+
+  it("falls back to proposed routing when explicit agent is missing", async () => {
+    const decision = resolveTaskExecutionRouting({
+      taskSpec: {
+        agentId: "agent_missing",
+        proposedRouting: {
+          primaryRole: "claude_debugger",
+          supportingRoles: [],
+          capabilityNeeds: ["chat_reasoning", "coding"]
+        }
+      },
+      availableAgents: []
+    });
+
+    expect(decision.source).toBe("proposed_routing");
+    expect(decision.selectedRole).toBe("claude_debugger");
+    expect(decision.selectedAgentId).toBeUndefined();
   });
 });

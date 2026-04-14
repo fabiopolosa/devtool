@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { AgentRoleName, CapabilityClass } from "@cp/domain";
+export * from "./service.js";
 
 export interface AgentRoleDefinition {
   role: AgentRoleName;

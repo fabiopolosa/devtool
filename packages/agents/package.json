@@ -9,10 +9,15 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src --ext .ts",
-    "test": "echo \"No tests yet for @cp/agents\""
+    "test": "vitest run"
   },
   "dependencies": {
+    "bullmq": "^5.43.0",
+    "ioredis": "^5.5.0",
     "@cp/domain": "workspace:*",
     "@cp/config": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
   }
 }

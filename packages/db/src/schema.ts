@@ -699,3 +699,23 @@ export const skills = pgTable(
     uniqueIndex("ux_skills_repository_name").on(table.repositoryUrl, table.name)
   ]
 );
+
+export const agents = pgTable(
+  "agents",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    role: text("role").notNull(),
+    icon: text("icon").notNull(),
+    description: text("description").notNull(),
+    adapterType: text("adapter_type").notNull(),
+    desiredSkills: jsonb("desired_skills").$type<string[]>().notNull(),
+    reportTo: text("report_to"),
+    runtimeConfig: jsonb("runtime_config").$type<Record<string, unknown>>().notNull(),
+    capabilities: jsonb("capabilities").$type<string[]>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull(),
+    status: text("status").notNull()
+  },
+  (table) => [index("idx_agents_role").on(table.role), index("idx_agents_status").on(table.status)]
+);

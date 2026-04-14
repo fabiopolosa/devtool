@@ -1,4 +1,5 @@
 import type {
+  AgentConfig,
   AuditEvent,
   Approval,
   Artifact,
@@ -36,6 +37,7 @@ import type {
 } from "@cp/domain";
 
 export interface ApiSeedData {
+  agents: AgentConfig[];
   projects: Project[];
   repositories: Repository[];
   roadmap: RoadmapItem[];

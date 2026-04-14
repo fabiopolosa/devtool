@@ -16,6 +16,7 @@ import {
   memoryRoutes,
   providersRoutes,
   skillsRoutes,
+  agentsRoutes,
   projectsRoutes,
   repositoriesRoutes,
   retrievalRoutes,
@@ -69,6 +70,7 @@ export async function buildApp() {
   await app.register(experimentsRoutes);
   await app.register(providersRoutes);
   await app.register(skillsRoutes);
+  await app.register(agentsRoutes);
   await app.register(chatRoutes);
   await app.register(authRoutes);
   await app.register(adminRoutes);

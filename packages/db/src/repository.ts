@@ -3,6 +3,7 @@ import type { AnyPgTable } from "drizzle-orm/pg-core";
 import type { DrizzleDatabase, PostgresClient } from "./client.js";
 import { createPostgresClient } from "./client.js";
 import {
+  agents,
   auditEvents,
   approvals,
   artifacts,
@@ -58,6 +59,7 @@ export interface DatabasePort {
 }
 
 const tableMap: Record<TableName, AnyPgTable> = {
+  agents,
   projects,
   repositories,
   project_repository_links: projectRepositoryLinks,

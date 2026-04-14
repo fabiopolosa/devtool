@@ -11,6 +11,7 @@ import {
   type TableName
 } from "@cp/db";
 import type {
+  AgentConfig,
   AuditEvent,
   Approval,
   Artifact,
@@ -115,6 +116,13 @@ export class ApiStore {
   }
 
   async listProjects(): Promise<Project[]> { return this.repo("projects").list(); }
+  async listAgents(): Promise<AgentConfig[]> { return this.repo("agents").list(); }
+  async getAgent(agentId: string): Promise<AgentConfig | null> { return this.repo("agents").getById(agentId); }
+  async createAgent(agent: AgentConfig): Promise<AgentConfig> { return this.repo("agents").create(agent); }
+  async updateAgent(agentId: string, patch: Partial<AgentConfig>): Promise<AgentConfig> {
+    return this.repo("agents").update(agentId, patch);
+  }
+  async deleteAgent(agentId: string): Promise<void> { await this.repo("agents").delete(agentId); }
   async getProject(projectId: string): Promise<Project | null> { return this.repo("projects").getById(projectId); }
   async createProject(project: Project): Promise<Project> { return this.repo("projects").create(project); }
   async updateProject(projectId: string, patch: Partial<Project>): Promise<Project> {
@@ -258,6 +266,7 @@ export class ApiStore {
   }
 
   private async seedIfEmpty(): Promise<void> {
+    await this.seedTable("agents", this.seed.agents);
     await this.seedTable("projects", this.seed.projects);
     await this.seedTable("repositories", this.seed.repositories);
     await this.seedTable("roadmap_items", this.seed.roadmap);

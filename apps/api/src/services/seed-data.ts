@@ -1,5 +1,6 @@
 import {
   approvalStatuses,
+  type AgentConfig,
   type AuditEvent,
   type Approval,
   type Artifact,
@@ -633,7 +634,28 @@ const availableSkill: Skill = {
   updatedBy: "system"
 };
 
+const builderAgent: AgentConfig = {
+  id: "agent_001",
+  name: "codex-builder-primary",
+  role: "codex_builder",
+  icon: "🛠️",
+  description: "Primary implementation agent with deterministic verification discipline.",
+  adapterType: "paperclip_cli",
+  desiredSkills: ["checks"],
+  reportTo: "planner",
+  runtimeConfig: {
+    commandPrefix: "paperclipai",
+    maxRetries: 2,
+    heartbeatTimeoutMs: 30000
+  },
+  capabilities: ["coding"],
+  createdAt: now,
+  updatedAt: now,
+  status: "active"
+};
+
 export const seedData: ApiSeedData = {
+  agents: [builderAgent],
   projects: [project],
   repositories: [repository],
   roadmap: [roadmapItem],

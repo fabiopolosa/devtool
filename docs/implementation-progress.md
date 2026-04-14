@@ -319,3 +319,66 @@ Implemented:
 Validation:
 - New skills migration is included in normal migration path.
 - API/UI test coverage for skills routes and UI smoke is active.
+
+## Phase I — Agent Management UI and CLI Parity
+Status: implemented
+
+Implemented:
+- Added `AgentConfig` domain contract and schema:
+  - `packages/domain/src/entities/agent.ts`
+  - `packages/domain/src/schemas/agent.schema.ts`
+  - exports wired through entity/schema barrels
+- Added persistence for agents with additive migration:
+  - `packages/db/migrations/007_agents.sql`
+  - table wiring in `packages/db/src/schema.ts`, `repository.ts`, `types.ts`
+  - API seed includes default `builderAgent`
+- Added `@cp/agents` service package capabilities:
+  - CRUD operations (`listAgents`, `getAgent`, `createAgent`, `updateAgent`, `deleteAgent`)
+  - runtime actions (`runHeartbeat`, `diagnoseAgent`, `getRuntimeJob`)
+  - runtime scheduling abstraction with BullMQ and in-memory fallback implementations
+- Added API routes in `apps/api`:
+  - `GET /agents`
+  - `POST /agents`
+  - `GET /agents/:agentId`
+  - `PUT /agents/:agentId`
+  - `DELETE /agents/:agentId`
+  - `POST /agents/:agentId/heartbeat`
+  - `POST /agents/:agentId/diagnose`
+  - `GET /agents/runtime/workflows`
+  - `GET /agents/:agentId/jobs/:jobId`
+  - `GET /agents/:agentId/jobs/:jobId/events` (SSE + snapshot mode for deterministic tests)
+- Added worker support for async CLI parity jobs:
+  - BullMQ queue `agent-runtime-jobs`
+  - command execution bridge for heartbeat/diagnose flows with captured stdout/stderr metadata
+- Added dashboard pages and navigation:
+  - `/agents` (`AgentsListPage.tsx`)
+  - `/agents/new` (`AgentCreatePage.tsx`)
+  - `/agents/:agentId` (`AgentDetailPage.tsx`)
+  - `/runtime` (`RuntimePage.tsx`)
+  - sidebar links in app shell
+- Integrated task/orchestration/retrieval flow:
+  - `TaskSpec.agentId` optional assignment field
+  - routing helper prefers explicit `agentId` before default builder role
+  - context packet builder merges `agentContext.runtimeConfig` and selected skill instructions
+  - planner prompt guidance updated for agent-specific context behavior
+
+Key files:
+- `packages/domain/src/entities/agent.ts`
+- `packages/domain/src/schemas/agent.schema.ts`
+- `packages/db/migrations/007_agents.sql`
+- `packages/agents/src/service.ts`
+- `apps/api/src/routes/agents.ts`
+- `apps/worker/src/index.ts`
+- `apps/web/src/pages/AgentsListPage.tsx`
+- `apps/web/src/pages/AgentCreatePage.tsx`
+- `apps/web/src/pages/AgentDetailPage.tsx`
+- `apps/web/src/pages/RuntimePage.tsx`
+- `packages/orchestration-ruflo/src/orchestrator/task-routing.ts`
+- `packages/retrieval/src/services/context-packet-builder.ts`
+
+Validation:
+- `pnpm db:migrate` passed (`7 migrations tracked`).
+- `pnpm typecheck` passed.
+- `pnpm lint` passed.
+- `pnpm test` passed (including new agents API/service/web smoke suites).
+- `pnpm build` passed.

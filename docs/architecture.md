@@ -252,6 +252,47 @@ This section tracks post-stabilization implementation progress while preserving 
   - refresh-token-backed session continuation
   - scoped bindings/delegation management on `/admin/rbac`
 
+### Step 10 — Agent Management UI + CLI Parity (Phase I)
+- Added `AgentConfig` as a first-class domain contract and persistence model:
+  - entity + schema in `packages/domain` (`agent.ts`, `agent.schema.ts`)
+  - migration `007_agents.sql` introduces dedicated `agents` table (additive only)
+- Added agent management service in `@cp/agents` with:
+  - CRUD (`list/get/create/update/delete`)
+  - runtime jobs (`runHeartbeat`, `diagnoseAgent`)
+  - scheduler abstraction:
+    - BullMQ-backed runtime scheduler for async CLI execution
+    - in-memory scheduler fallback for local/test mode
+- Added API endpoints under `/agents` (additive, existing routes unchanged):
+  - `GET /agents`
+  - `POST /agents`
+  - `GET /agents/:agentId`
+  - `PUT /agents/:agentId`
+  - `DELETE /agents/:agentId`
+  - `POST /agents/:agentId/heartbeat`
+  - `POST /agents/:agentId/diagnose`
+  - `GET /agents/runtime/workflows`
+  - `GET /agents/:agentId/jobs/:jobId`
+  - `GET /agents/:agentId/jobs/:jobId/events` (SSE snapshot/stream)
+- Added worker runtime execution parity for Paperclip-style CLI diagnostics:
+  - queue `agent-runtime-jobs`
+  - async command execution (`paperclipai heartbeat run`, `paperclipai doctor run`) with structured log capture
+- Added command-center UI surface:
+  - `/agents` list view with filtering and quick actions
+  - `/agents/new` guided create flow (icon, role, manager, skills, adapter, runtime options, capabilities)
+  - `/agents/:agentId` detail/edit view with installed-skill assignment
+  - `/runtime` Ruflo & Runtime panel with workflow parameter inspection and diagnostics controls
+  - sidebar navigation entries for Agents and Ruflo & Runtime
+- Task/orchestration/retrieval integration:
+  - `TaskSpec.agentId` optional field for explicit task-to-agent binding
+  - orchestration routing honors explicit agent assignment before default role fallback
+  - retrieval context packet can include `agentContext` (runtime config + selected skill instructions)
+  - planner prompt now includes explicit instruction to factor selected agent/runtime constraints in planning
+- Validation coverage:
+  - `packages/agents/src/agents.service.test.ts`
+  - `apps/api/src/__tests__/agents.contract.test.ts`
+  - `apps/web/src/__tests__/agents.smoke.test.tsx`
+  - orchestration and retrieval tests updated for routing/context behavior
+
 ### Operational Notes
 - Local developer defaults use Postgres host port `56432` in `.env.example` and `docker-compose.yml` to reduce host collision risk.
 - Auth runtime is feature-flagged (`AUTH_ENABLED`) and disabled by default for single-tenant compatibility.

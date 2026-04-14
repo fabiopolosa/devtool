@@ -7,6 +7,14 @@ export interface SkillInstruction {
   repositoryUrl?: string;
 }
 
+export interface AgentRuntimeContext {
+  agentId: string;
+  agentName: string;
+  role: string;
+  runtimeConfig: Record<string, unknown>;
+  skillInstructions?: SkillInstruction[];
+}
+
 export interface RetrievalFilters {
   projectId: string;
   repositoryId?: string;
@@ -24,6 +32,7 @@ export interface RetrievalQuery {
   topK: number;
   filters: RetrievalFilters;
   skillInstructions?: SkillInstruction[];
+  agentContext?: AgentRuntimeContext;
 }
 
 export interface RetrievedChunk {

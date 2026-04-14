@@ -35,6 +35,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@cp/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@cp/auth':
         specifier: workspace:*
         version: link:../../packages/auth
@@ -139,6 +142,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@cp/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@cp/autoresearch':
         specifier: workspace:*
         version: link:../../packages/autoresearch
@@ -181,6 +187,16 @@ importers:
       '@cp/domain':
         specifier: workspace:*
         version: link:../domain
+      bullmq:
+        specifier: ^5.43.0
+        version: 5.73.5
+      ioredis:
+        specifier: ^5.5.0
+        version: 5.10.1
+    devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
 
   packages/auth:
     dependencies:
