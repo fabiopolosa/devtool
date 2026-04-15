@@ -65,6 +65,7 @@ export interface BrainstormPlanPayload {
 
 export interface BrainstormPlan {
   id: string;
+  tenantId: string;
   sessionId: string;
   title: string;
   executiveSummary: string;
@@ -142,6 +143,7 @@ export const normalizeBrainstormPlan = (
 
 export interface BrainstormSession {
   id: string;
+  tenantId: string;
   threadId?: string;
   projectId?: string;
   status: BrainstormSessionStatus;

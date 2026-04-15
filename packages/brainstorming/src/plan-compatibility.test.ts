@@ -5,6 +5,7 @@ describe("BrainstormPlan canonical contract", () => {
   it("reads canonical nested payload from plan.*", () => {
     const canonical = normalizeBrainstormPlan({
       id: "bp_1",
+      tenantId: "tenant_default",
       sessionId: "bs_1",
       title: "Plan",
       executiveSummary: "Summary",
@@ -45,6 +46,7 @@ describe("BrainstormPlan canonical contract", () => {
     expect(() =>
       getBrainstormPlanPayload({
         id: "legacy_bp",
+        tenantId: "tenant_default",
         sessionId: "legacy_bs",
         title: "Legacy plan",
         executiveSummary: "Legacy summary",
@@ -61,5 +63,21 @@ describe("BrainstormPlan canonical contract", () => {
         updatedBy: "legacy"
       })
     ).toThrow(/Legacy top-level plan fields are not supported/);
+  });
+
+  it("throws when canonical plan payload is missing", () => {
+    expect(() =>
+      getBrainstormPlanPayload({
+        id: "missing_plan_bp",
+        tenantId: "tenant_default",
+        sessionId: "missing_plan_bs",
+        title: "Missing plan payload",
+        executiveSummary: "Missing plan summary",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdBy: "test",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        updatedBy: "test"
+      })
+    ).toThrow(/Invalid or missing canonical plan payload/);
   });
 });

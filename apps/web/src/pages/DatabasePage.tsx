@@ -1,31 +1,33 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { SchemaDoc } from '@cp/domain';
-import { Button, Input, Panel, Pill, SectionHeading } from '@/components/common';
-import { useAppStore } from '@/store/app-store';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouterState } from "@tanstack/react-router";
+import type { SchemaDoc } from "@cp/domain";
+import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
+import { SchemasGraphPage } from "./SchemasGraphPage";
+import { useAppStore } from "@/store/app-store";
 
 const defaultConventions = [
-  { key: 'Naming', value: 'snake_case tables, snake_case columns' },
-  { key: 'Primary keys', value: 'UUID text keys' },
-  { key: 'Stack', value: 'Fastify + Drizzle + PostgreSQL + BullMQ' }
+  { key: "Naming", value: "snake_case tables, snake_case columns" },
+  { key: "Primary keys", value: "UUID text keys" },
+  { key: "Stack", value: "Fastify + Drizzle + PostgreSQL + BullMQ" }
 ];
 
-export function DatabasePage() {
+function DatabasePlatformPage() {
   const { auth, authActions } = useAppStore();
   const [schemaDocs, setSchemaDocs] = useState<SchemaDoc[]>([]);
-  const [selectedDocId, setSelectedDocId] = useState<string>('');
-  const [title, setTitle] = useState('Control-plane schema');
-  const [description, setDescription] = useState('Operational schema snapshot and conventions.');
+  const [selectedDocId, setSelectedDocId] = useState<string>("");
+  const [title, setTitle] = useState("Control-plane schema");
+  const [description, setDescription] = useState("Operational schema snapshot and conventions.");
   const [loading, setLoading] = useState(false);
   const [runningIntrospection, setRunningIntrospection] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
-  const isAdmin = auth.enabled && Boolean(auth.principal?.roles.includes('admin'));
+  const isAdmin = auth.enabled && Boolean(auth.principal?.roles.includes("admin"));
 
   const loadDocs = useCallback(async () => {
     setLoading(true);
     setError(undefined);
     try {
-      const response = await authActions.apiFetch('/schema-docs');
+      const response = await authActions.apiFetch("/schema-docs");
       const body = (await response.json()) as { items?: SchemaDoc[]; message?: string };
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to load schema docs (HTTP ${response.status})`);
@@ -36,7 +38,7 @@ export function DatabasePage() {
         setSelectedDocId(docs[0]!.id);
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load schema docs');
+      setError(loadError instanceof Error ? loadError.message : "Unable to load schema docs");
     } finally {
       setLoading(false);
     }
@@ -60,10 +62,10 @@ export function DatabasePage() {
         title,
         description,
         conventions: selectedDoc?.conventions?.length ? selectedDoc.conventions : defaultConventions,
-        stackNotes: selectedDoc?.stackNotes?.length ? selectedDoc.stackNotes : ['Control-plane operational stack']
+        stackNotes: selectedDoc?.stackNotes?.length ? selectedDoc.stackNotes : ["Control-plane operational stack"]
       };
-      const response = await authActions.apiFetch('/schema-docs/introspect', {
-        method: 'POST',
+      const response = await authActions.apiFetch("/schema-docs/introspect", {
+        method: "POST",
         body: JSON.stringify(payload)
       });
       const body = (await response.json()) as { item?: SchemaDoc; message?: string };
@@ -73,7 +75,7 @@ export function DatabasePage() {
       await loadDocs();
       setSelectedDocId(body.item.id);
     } catch (introspectionError) {
-      setError(introspectionError instanceof Error ? introspectionError.message : 'Unable to introspect schema');
+      setError(introspectionError instanceof Error ? introspectionError.message : "Unable to introspect schema");
     } finally {
       setRunningIntrospection(false);
     }
@@ -87,7 +89,7 @@ export function DatabasePage() {
           subtitle="Schema docs, ER overview and conventions"
           action={
             <Button variant="secondary" onClick={() => void loadDocs()}>
-              {loading ? 'Refreshing...' : 'Refresh'}
+              {loading ? "Refreshing..." : "Refresh"}
             </Button>
           }
         />
@@ -104,10 +106,10 @@ export function DatabasePage() {
           <Input value={description} onChange={setDescription} placeholder="Schema description" />
         </div>
         <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-400">
-          <span>Selected snapshot: {selectedDoc?.title ?? 'none'}</span>
+          <span>Selected snapshot: {selectedDoc?.title ?? "none"}</span>
           {isAdmin ? (
             <Button variant="primary" onClick={() => void introspect()}>
-              {runningIntrospection ? 'Running introspection...' : 'Run introspection'}
+              {runningIntrospection ? "Running introspection..." : "Run introspection"}
             </Button>
           ) : (
             <Pill tone="warn">Admin required to introspect</Pill>
@@ -125,8 +127,8 @@ export function DatabasePage() {
                 onClick={() => setSelectedDocId(doc.id)}
                 className={`w-full rounded-xl border px-3 py-2 text-left text-sm transition ${
                   selectedDoc?.id === doc.id
-                    ? 'border-cyan-400/30 bg-cyan-400/10 text-cyan-100'
-                    : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                    ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-100"
+                    : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
                 }`}
               >
                 <div className="font-medium">{doc.title}</div>
@@ -138,12 +140,15 @@ export function DatabasePage() {
         </Panel>
 
         <Panel>
-          <SectionHeading title="ER Diagram" subtitle={selectedDoc ? `${selectedDoc.tables.length} tables` : 'No data'} />
+          <SectionHeading title="ER Diagram" subtitle={selectedDoc ? `${selectedDoc.tables.length} tables` : "No data"} />
           {selectedDoc ? (
             <div className="space-y-4">
               <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
                 {selectedDoc.tables.map((table) => (
-                  <div key={`${table.schemaName}.${table.tableName}`} className="rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-3">
+                  <div
+                    key={`${table.schemaName}.${table.tableName}`}
+                    className="rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-3"
+                  >
                     <div className="font-medium text-emerald-200">{table.schemaName}.{table.tableName}</div>
                     <div className="mt-2 space-y-1 text-xs text-slate-300">
                       {table.columns.slice(0, 8).map((column) => (
@@ -158,7 +163,7 @@ export function DatabasePage() {
                     </div>
                     {table.primaryKeyColumns.length > 0 ? (
                       <div className="mt-2 text-[11px] text-emerald-300">
-                        PK: {table.primaryKeyColumns.join(', ')}
+                        PK: {table.primaryKeyColumns.join(", ")}
                       </div>
                     ) : null}
                   </div>
@@ -170,7 +175,10 @@ export function DatabasePage() {
                   <div className="label">Project Conventions</div>
                   <div className="mt-2 space-y-2 text-sm">
                     {(selectedDoc.conventions.length > 0 ? selectedDoc.conventions : defaultConventions).map((convention) => (
-                      <div key={`${convention.key}:${convention.value}`} className="rounded-lg border border-white/10 bg-slate-950/40 p-2">
+                      <div
+                        key={`${convention.key}:${convention.value}`}
+                        className="rounded-lg border border-white/10 bg-slate-950/40 p-2"
+                      >
                         <div className="font-medium text-white">{convention.key}</div>
                         <div className="text-slate-400">{convention.value}</div>
                       </div>
@@ -180,11 +188,13 @@ export function DatabasePage() {
                 <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                   <div className="label">Stack Notes</div>
                   <ul className="mt-2 space-y-2 text-sm text-slate-300">
-                    {(selectedDoc.stackNotes.length > 0 ? selectedDoc.stackNotes : ['No stack notes documented.']).map((note, index) => (
-                      <li key={`${note}:${index}`} className="rounded-lg border border-white/10 bg-slate-950/40 px-2 py-1.5">
-                        {note}
-                      </li>
-                    ))}
+                    {(selectedDoc.stackNotes.length > 0 ? selectedDoc.stackNotes : ["No stack notes documented."]).map(
+                      (note, index) => (
+                        <li key={`${note}:${index}`} className="rounded-lg border border-white/10 bg-slate-950/40 px-2 py-1.5">
+                          {note}
+                        </li>
+                      )
+                    )}
                   </ul>
                 </div>
               </div>
@@ -196,4 +206,15 @@ export function DatabasePage() {
       </div>
     </div>
   );
+}
+
+export function DatabasePage() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const isProjectSchemaRoute = pathname.startsWith("/project/") && pathname.endsWith("/schemas");
+
+  if (isProjectSchemaRoute) {
+    return <SchemasGraphPage />;
+  }
+
+  return <DatabasePlatformPage />;
 }

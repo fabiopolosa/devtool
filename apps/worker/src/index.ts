@@ -1,9 +1,12 @@
 import { spawn } from "node:child_process";
-import { Job, Queue, Worker } from "bullmq";
+import { Queue, Worker, Job, type QueueOptions } from "bullmq";
 import { Redis } from "ioredis";
+import { DEFAULT_TENANT_ID } from "@cp/db";
 import { loadEnv } from "@cp/config";
 import type { AgentRuntimeJobData } from "@cp/agents";
 import type { LocalRepoJobData } from "@cp/local-repos";
+import { BullMqJobExecutionQueue, DagRunner, InMemoryProviderRateLimiter } from "@cp/runner";
+import { DagWorkerJobStore } from "./dag-job-store.js";
 
 const env = loadEnv();
 const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
@@ -12,6 +15,9 @@ const orchestrationQueueName = "orchestration-runs";
 const autoresearchQueueName = "autoresearch-runs";
 const agentRuntimeQueueName = "agent-runtime-jobs";
 const localRepoQueueName = "local-repo-jobs";
+const dagQueuePrefix = "dag-job-execution";
+
+const queueConnection: QueueOptions["connection"] = connection;
 
 export const orchestrationQueue = new Queue(orchestrationQueueName, { connection });
 export const autoresearchQueue = new Queue(autoresearchQueueName, { connection });
@@ -172,7 +178,64 @@ const localRepoWorker = new Worker<LocalRepoJobData>(
   { connection }
 );
 
+const jobStore = new DagWorkerJobStore();
+const providerRateLimiter = new InMemoryProviderRateLimiter({
+  resolveLimits: async (tenantId, provider) => jobStore.getProviderRateLimits(tenantId, provider)
+});
+const dagRunners = new Map<string, DagRunner>();
+let tenantRefreshTimer: NodeJS.Timeout | null = null;
+
+const startTenantRunner = async (tenantId: string): Promise<void> => {
+  if (dagRunners.has(tenantId)) return;
+  const queue = new BullMqJobExecutionQueue({
+    queueName: `${dagQueuePrefix}:${tenantId}`,
+    connection: queueConnection
+  });
+  const runner = new DagRunner({
+    tenantId,
+    store: jobStore,
+    queue,
+    maxConcurrent: 5,
+    pollIntervalMs: 1000,
+    jobTimeoutMs: 10 * 60_000,
+    rateLimiter: providerRateLimiter
+  });
+  await runner.start();
+  dagRunners.set(tenantId, runner);
+  console.log("[worker] dag runner started", { tenantId });
+};
+
+const ensureTenantRunners = async (): Promise<void> => {
+  const tenants = await jobStore.listTenants();
+  const tenantIds = new Set<string>([DEFAULT_TENANT_ID, ...tenants.map((tenant) => tenant.id)]);
+  for (const tenantId of tenantIds) {
+    await startTenantRunner(tenantId);
+  }
+};
+
+const startDagRunners = async (): Promise<void> => {
+  await ensureTenantRunners();
+  tenantRefreshTimer = setInterval(() => {
+    void ensureTenantRunners().catch((error) => {
+      console.error("[worker] tenant runner refresh failed", error);
+    });
+  }, 30_000);
+};
+
+const stopDagRunners = async (): Promise<void> => {
+  if (tenantRefreshTimer) {
+    clearInterval(tenantRefreshTimer);
+    tenantRefreshTimer = null;
+  }
+
+  for (const [tenantId, runner] of dagRunners.entries()) {
+    await runner.stop();
+    dagRunners.delete(tenantId);
+  }
+};
+
 const shutdown = async () => {
+  await stopDagRunners();
   await Promise.all([
     orchestrationWorker.close(),
     autoresearchWorker.close(),
@@ -185,10 +248,22 @@ const shutdown = async () => {
     agentRuntimeQueue.close(),
     localRepoQueue.close()
   ]);
+  await jobStore.close();
   await connection.quit();
 };
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => {
+  void shutdown();
+});
+process.on("SIGTERM", () => {
+  void shutdown();
+});
 
-console.log("[worker] started");
+void startDagRunners()
+  .then(() => {
+    console.log("[worker] started");
+  })
+  .catch((error) => {
+    console.error("[worker] startup failed", error);
+    process.exitCode = 1;
+  });

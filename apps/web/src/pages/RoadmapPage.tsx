@@ -14,6 +14,7 @@ export function RoadmapPage() {
   const items = state.roadmapItems
     .filter((item) => item.projectId === project.id)
     .sort((left, right) => left.orderIndex - right.orderIndex);
+  const firstProjectTask = state.tasks.find((task) => task.projectId === project.id);
 
   return (
     <div className="space-y-5">
@@ -65,10 +66,14 @@ export function RoadmapPage() {
           </table>
         </div>
         <div className="mt-3 text-xs text-slate-400">Converted tasks can be inspected in task detail pages.</div>
-        {state.tasks[0] ? (
+        {firstProjectTask ? (
           <div className="mt-3">
-            <Link to="/tasks/$taskId" params={{ taskId: state.tasks[0].id }} className="pill border border-white/10">
-              Open task {state.tasks[0].id}
+            <Link
+              to="/project/$projectId/tasks/$taskId"
+              params={{ projectId: project.id, taskId: firstProjectTask.id }}
+              className="pill border border-white/10"
+            >
+              Open task {firstProjectTask.id}
             </Link>
           </div>
         ) : null}

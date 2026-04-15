@@ -59,8 +59,9 @@ export function LocalReposPage() {
     setLoading(true);
     setError(undefined);
     try {
-      const response = await authActions.apiFetch('/local-repos');
-      const body = (await response.json()) as { items?: LocalRepository[]; message?: string };
+      const { response, body } = await authActions.apiFetchJson<{ items?: LocalRepository[]; message?: string }>(
+        '/local-repos'
+      );
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to load local repositories (HTTP ${response.status})`);
       }
@@ -77,10 +78,9 @@ export function LocalReposPage() {
   }, [authActions, selectedRepoId]);
 
   const loadFiles = useCallback(async (repoId: string, pathValue: string) => {
-    const response = await authActions.apiFetch(
+    const { response, body } = await authActions.apiFetchJson<{ items?: LocalRepoFileEntry[]; message?: string }>(
       `/local-repos/${repoId}/files?path=${encodeURIComponent(pathValue || '.')}`
     );
-    const body = (await response.json()) as { items?: LocalRepoFileEntry[]; message?: string };
     if (!response.ok) {
       throw new Error(body.message ?? `Unable to load files (HTTP ${response.status})`);
     }
@@ -88,8 +88,9 @@ export function LocalReposPage() {
   }, [authActions]);
 
   const loadHistory = useCallback(async (repoId: string) => {
-    const response = await authActions.apiFetch(`/local-repos/${repoId}/history`);
-    const body = (await response.json()) as { items?: LocalRepoCommitEntry[]; message?: string };
+    const { response, body } = await authActions.apiFetchJson<{ items?: LocalRepoCommitEntry[]; message?: string }>(
+      `/local-repos/${repoId}/history`
+    );
     if (!response.ok) {
       throw new Error(body.message ?? `Unable to load history (HTTP ${response.status})`);
     }
@@ -97,8 +98,9 @@ export function LocalReposPage() {
   }, [authActions]);
 
   const loadSnapshots = useCallback(async (repoId: string) => {
-    const response = await authActions.apiFetch(`/versioning/snapshots?localRepositoryId=${encodeURIComponent(repoId)}`);
-    const body = (await response.json()) as { items?: VersionSnapshot[]; message?: string };
+    const { response, body } = await authActions.apiFetchJson<{ items?: VersionSnapshot[]; message?: string }>(
+      `/versioning/snapshots?localRepositoryId=${encodeURIComponent(repoId)}`
+    );
     if (!response.ok) {
       throw new Error(body.message ?? `Unable to load snapshots (HTTP ${response.status})`);
     }
@@ -150,13 +152,12 @@ export function LocalReposPage() {
     if (!selectedRepoId) return;
     setError(undefined);
     try {
-      const response = await authActions.apiFetch(
-        `/local-repos/${selectedRepoId}/file?path=${encodeURIComponent(pathValue)}`
-      );
-      const body = (await response.json()) as {
+      const { response, body } = await authActions.apiFetchJson<{
         item?: { content: string; truncated: boolean };
         message?: string;
-      };
+      }>(
+        `/local-repos/${selectedRepoId}/file?path=${encodeURIComponent(pathValue)}`
+      );
       if (!response.ok || !body.item) {
         throw new Error(body.message ?? `Unable to open file (HTTP ${response.status})`);
       }
@@ -175,7 +176,7 @@ export function LocalReposPage() {
     }
     setError(undefined);
     try {
-      const response = await authActions.apiFetch('/local-repos', {
+      const { response, body } = await authActions.apiFetchJson<{ item?: LocalRepository; message?: string }>('/local-repos', {
         method: 'POST',
         body: JSON.stringify({
           name: newRepoName,
@@ -183,7 +184,6 @@ export function LocalReposPage() {
           ...(newRepoDescription.trim() ? { description: newRepoDescription } : {})
         })
       });
-      const body = (await response.json()) as { item?: LocalRepository; message?: string };
       if (!response.ok || !body.item) {
         throw new Error(body.message ?? `Unable to create local repository (HTTP ${response.status})`);
       }
@@ -204,8 +204,9 @@ export function LocalReposPage() {
       const endpoint = scheduled
         ? `/local-repos/${selectedRepoId}/scan/schedule`
         : `/local-repos/${selectedRepoId}/scan`;
-      const response = await authActions.apiFetch(endpoint, { method: 'POST' });
-      const body = (await response.json()) as { message?: string };
+      const { response, body } = await authActions.apiFetchJson<{ message?: string }>(endpoint, {
+        method: 'POST'
+      });
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to trigger scan (HTTP ${response.status})`);
       }
@@ -223,10 +224,9 @@ export function LocalReposPage() {
     }
     setError(undefined);
     try {
-      const response = await authActions.apiFetch(
+      const { response, body } = await authActions.apiFetchJson<{ item?: SnapshotDiffResult; message?: string }>(
         `/versioning/diff?leftSnapshotId=${encodeURIComponent(selectedLeftSnapshotId)}&rightSnapshotId=${encodeURIComponent(selectedRightSnapshotId)}`
       );
-      const body = (await response.json()) as { item?: SnapshotDiffResult; message?: string };
       if (!response.ok || !body.item) {
         throw new Error(body.message ?? `Unable to diff snapshots (HTTP ${response.status})`);
       }

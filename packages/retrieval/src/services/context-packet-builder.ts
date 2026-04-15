@@ -76,6 +76,9 @@ const summarizeVersionSnapshot = (
   snapshot: NonNullable<RetrievalQuery["versionSnapshots"]>[number]
 ): string => `${snapshot.label} (${snapshot.trigger})`;
 
+const summarizeContextNote = (note: NonNullable<RetrievalQuery["contextNotes"]>[number]): string =>
+  `${note.title}: ${truncate(normalizeText(note.excerpt), 180)}`;
+
 export class DefaultContextPacketBuilder implements ContextPacketBuilder {
   async build(role: AgentRoleName, query: RetrievalQuery, chunks: RetrievedChunk[]): Promise<ContextPacket> {
     const ordered = this.orderForRole(role, chunks);
@@ -132,6 +135,18 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
       localRepositoryId: snapshot.localRepositoryId,
       ...(snapshot.taskId ? { taskId: snapshot.taskId } : {})
     }));
+    const contextNotes = uniqueBy(
+      query.contextNotes ?? [],
+      (note) => `${note.noteId}:${note.path}:${note.title}`
+    ).map((note) => ({
+      noteId: note.noteId,
+      path: note.path,
+      title: note.title,
+      scope: note.scope,
+      excerpt: note.excerpt,
+      score: note.score,
+      ...(note.sourceType ? { sourceType: note.sourceType } : {})
+    }));
     const secretSummary =
       secretReferences.length > 0
         ? ` | Secrets: ${secretReferences
@@ -145,6 +160,10 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
       versionSnapshots.length > 0
         ? ` | Snapshots: ${versionSnapshots.map((snapshot) => summarizeVersionSnapshot(snapshot)).join(", ")}`
         : "";
+    const contextNoteSummary =
+      contextNotes.length > 0
+        ? ` | Context notes: ${contextNotes.map((note) => summarizeContextNote(note)).join(" | ")}`
+        : "";
     const tokenBudgetUsed =
       packetChunks.reduce((sum, chunk) => sum + chunk.tokenEstimate, 0) +
       skillInstructions.reduce((sum, skill) => sum + skill.tokenEstimate, 0) +
@@ -153,6 +172,7 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
         0
       ) +
       versionSnapshots.reduce((sum, snapshot) => sum + estimateTokens(summarizeVersionSnapshot(snapshot)), 0) +
+      contextNotes.reduce((sum, note) => sum + estimateTokens(summarizeContextNote(note)), 0) +
       (environmentContext ? estimateTokens(summarizeEnvironmentContext(environmentContext)) : 0) +
       (runtimeSummary ? estimateTokens(runtimeSummary) : 0) +
       estimateTokens(query.query);
@@ -187,7 +207,8 @@ export class DefaultContextPacketBuilder implements ContextPacketBuilder {
       secretReferences,
       ...(environmentContext ? { environmentContext } : {}),
       versionSnapshots,
-      compactSummary: `${compactSummaryForRole(role, ordered)}${skillSummary}${agentSummary}${secretSummary}${environmentSummary}${snapshotSummary}`,
+      contextNotes,
+      compactSummary: `${compactSummaryForRole(role, ordered)}${skillSummary}${agentSummary}${secretSummary}${environmentSummary}${snapshotSummary}${contextNoteSummary}`,
       sourceChunkIds,
       tokenBudgetUsed,
       generatedAt: new Date().toISOString()

@@ -36,7 +36,10 @@
       "@cp/subprompts": ["packages/subprompts/src/index.ts"],
       "@cp/brainstorming": ["packages/brainstorming/src/index.ts"],
       "@cp/mcp": ["packages/mcp/src/index.ts"],
-      "@cp/prompt-builder": ["packages/prompt-builder/src/index.ts"]
+      "@cp/prompt-builder": ["packages/prompt-builder/src/index.ts"],
+      "@cp/runner": ["packages/runner/src/index.ts"],
+      "@cp/knowledge": ["packages/knowledge/src/index.ts"],
+      "@cp/context": ["packages/context/src/index.ts"]
     }
   }
 }

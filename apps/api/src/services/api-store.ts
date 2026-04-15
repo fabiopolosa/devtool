@@ -15,6 +15,7 @@ import type {
   AgentConfig,
   BrainstormPlan,
   BrainstormSession,
+  CodingWorkflow,
   AuditEvent,
   Approval,
   Artifact,
@@ -22,8 +23,11 @@ import type {
   AutoResearchRun,
   ChatMessage,
   ChatThread,
+  ContextNote,
   DelegatedPermission,
   Environment,
+  KnowledgeConfig,
+  KnowledgeNode,
   LocalRepository,
   MemoryChunk,
   MemoryEntry,
@@ -31,6 +35,7 @@ import type {
   McpConnection,
   McpDelegationRun,
   Policy,
+  PromptRegistryEntry,
   OidcAuthState,
   ProviderCapability,
   ProviderConfig,
@@ -52,6 +57,9 @@ import type {
   RoutingRule,
   RoadmapItem,
   Session,
+  Tenant,
+  UserTenant,
+  Job,
   Skill,
   Task,
   TaskRun,
@@ -87,6 +95,29 @@ const resolveDefaultMigrationsDir = (): string => {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   return path.resolve(moduleDir, "../../../../packages/db/migrations");
 };
+
+const normalizePostgresDateTime = (value: unknown): string => {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return trimmed;
+
+  let normalized = trimmed.includes("T") ? trimmed : trimmed.replace(" ", "T");
+  if (/[+-]\d{2}$/.test(normalized)) {
+    normalized = `${normalized}:00`;
+  } else if (/[+-]\d{4}$/.test(normalized)) {
+    normalized = `${normalized.slice(0, -2)}:${normalized.slice(-2)}`;
+  }
+
+  return normalized;
+};
+
+const normalizeBrainstormPlanRecord = (plan: BrainstormPlan): BrainstormPlan =>
+  normalizeBrainstormPlan({
+    ...plan,
+    createdAt: normalizePostgresDateTime(plan.createdAt),
+    updatedAt: normalizePostgresDateTime(plan.updatedAt)
+  });
 
 export class ApiStore {
   private readonly seed: ApiSeedData;
@@ -130,6 +161,36 @@ export class ApiStore {
   }
 
   async listProjects(): Promise<Project[]> { return this.repo("projects").list(); }
+  async listTenants(): Promise<Tenant[]> { return this.repo("tenants").list(); }
+  async getTenant(tenantId: string): Promise<Tenant | null> { return this.repo("tenants").getById(tenantId); }
+  async createTenant(tenant: Tenant): Promise<Tenant> { return this.repo("tenants").create(tenant); }
+  async listUserTenants(filters?: { userId?: string; tenantId?: string; role?: UserTenant["role"] }): Promise<UserTenant[]> {
+    return this.repo("user_tenants").list(filters);
+  }
+  async createUserTenant(userTenant: UserTenant): Promise<UserTenant> {
+    return this.repo("user_tenants").create(userTenant);
+  }
+  async listJobs(filters?: {
+    type?: Job["type"];
+    status?: Job["status"];
+    actionRequired?: boolean;
+    actionType?: Job["actionType"];
+    resourceType?: string;
+    resourceId?: string;
+    ready?: boolean;
+    projectId?: string;
+  }): Promise<Job[]> {
+    return this.repo("jobs").list(filters);
+  }
+  async getJob(jobId: string): Promise<Job | null> {
+    return this.repo("jobs").getById(jobId);
+  }
+  async createJob(job: Job): Promise<Job> {
+    return this.repo("jobs").create(job);
+  }
+  async updateJob(jobId: string, patch: Partial<Job>): Promise<Job> {
+    return this.repo("jobs").update(jobId, patch);
+  }
   async listSecrets(scope?: SecretConfig["scope"]): Promise<SecretConfig[]> {
     return this.repo("secrets").list(scope ? { scope } : undefined);
   }
@@ -230,6 +291,78 @@ export class ApiStore {
   async listArtifacts(runId?: string): Promise<Artifact[]> { return this.repo("artifacts").list(runId ? { runId } : undefined); }
   async listVerificationResults(runId?: string): Promise<VerificationResult[]> { return this.repo("verification_results").list(runId ? { runId } : undefined); }
   async listVerificationSteps(runId?: string): Promise<VerificationStep[]> { return this.repo("verification_steps").list(runId ? { runId } : undefined); }
+  async listKnowledgeNodes(filters?: {
+    tenantId?: string;
+    projectId?: string;
+    scope?: KnowledgeNode["scope"];
+    path?: string;
+  }): Promise<KnowledgeNode[]> {
+    return this.repo("knowledge_nodes").list(filters);
+  }
+  async getKnowledgeNode(knowledgeNodeId: string): Promise<KnowledgeNode | null> {
+    return this.repo("knowledge_nodes").getById(knowledgeNodeId);
+  }
+  async findKnowledgeNodeByScopePath(
+    scope: KnowledgeNode["scope"],
+    nodePath: string
+  ): Promise<KnowledgeNode | null> {
+    const rows = await this.repo("knowledge_nodes").list({ scope, path: nodePath });
+    return rows[0] ?? null;
+  }
+  async createKnowledgeNode(node: KnowledgeNode): Promise<KnowledgeNode> {
+    return this.repo("knowledge_nodes").create(node);
+  }
+  async updateKnowledgeNode(knowledgeNodeId: string, patch: Partial<KnowledgeNode>): Promise<KnowledgeNode> {
+    return this.repo("knowledge_nodes").update(knowledgeNodeId, patch);
+  }
+  async deleteKnowledgeNode(knowledgeNodeId: string): Promise<void> {
+    await this.repo("knowledge_nodes").delete(knowledgeNodeId);
+  }
+  async listContextNotes(filters?: {
+    tenantId?: string;
+    projectId?: string;
+    path?: string;
+  }): Promise<ContextNote[]> {
+    return this.repo("context_notes").list(filters);
+  }
+  async getContextNote(contextNoteId: string): Promise<ContextNote | null> {
+    return this.repo("context_notes").getById(contextNoteId);
+  }
+  async findContextNoteByProjectPath(
+    tenantId: string,
+    projectId: string,
+    notePath: string
+  ): Promise<ContextNote | null> {
+    const rows = await this.repo("context_notes").list({ tenantId, projectId, path: notePath });
+    return rows[0] ?? null;
+  }
+  async createContextNote(note: ContextNote): Promise<ContextNote> {
+    return this.repo("context_notes").create(note);
+  }
+  async updateContextNote(contextNoteId: string, patch: Partial<ContextNote>): Promise<ContextNote> {
+    return this.repo("context_notes").update(contextNoteId, patch);
+  }
+  async deleteContextNote(contextNoteId: string): Promise<void> {
+    await this.repo("context_notes").delete(contextNoteId);
+  }
+  async listKnowledgeConfigs(filters?: {
+    scope?: KnowledgeConfig["scope"];
+    projectId?: string;
+  }): Promise<KnowledgeConfig[]> {
+    return this.repo("knowledge_configs").list(filters);
+  }
+  async getKnowledgeConfig(knowledgeConfigId: string): Promise<KnowledgeConfig | null> {
+    return this.repo("knowledge_configs").getById(knowledgeConfigId);
+  }
+  async createKnowledgeConfig(config: KnowledgeConfig): Promise<KnowledgeConfig> {
+    return this.repo("knowledge_configs").create(config);
+  }
+  async updateKnowledgeConfig(
+    knowledgeConfigId: string,
+    patch: Partial<KnowledgeConfig>
+  ): Promise<KnowledgeConfig> {
+    return this.repo("knowledge_configs").update(knowledgeConfigId, patch);
+  }
   async listMemoryEntries(projectId?: string): Promise<MemoryEntry[]> { return this.repo("memory_entries").list(projectId ? { projectId } : undefined); }
   async listMemoryChunks(projectId?: string): Promise<MemoryChunk[]> { return this.repo("memory_chunks").list(projectId ? { projectId } : undefined); }
   async listRetrievalLogs(projectId?: string): Promise<RetrievalQueryLog[]> { return this.repo("retrieval_query_logs").list(projectId ? { projectId } : undefined); }
@@ -238,12 +371,26 @@ export class ApiStore {
   async listRoutingRules(): Promise<RoutingRule[]> { return this.repo("routing_rules").list(); }
   async listThreads(projectId?: string): Promise<ChatThread[]> { return this.repo("chat_threads").list(projectId ? { projectId } : undefined); }
   async listMessages(threadId?: string): Promise<ChatMessage[]> { return this.repo("chat_messages").list(threadId ? { threadId } : undefined); }
-  async listProviderConfigs(): Promise<ProviderConfig[]> { return this.repo("provider_configs").list(); }
+  async listProviderConfigs(): Promise<ProviderConfig[]> {
+    return (await this.repo("provider_configs").list()).map((item) => ({
+      ...item,
+      providerId: item.providerId ?? item.provider,
+      validationStatus: item.validationStatus ?? "unknown"
+    }));
+  }
   async createProviderConfig(config: ProviderConfig): Promise<ProviderConfig> {
-    return this.repo("provider_configs").create(config);
+    return this.repo("provider_configs").create({
+      ...config,
+      providerId: config.providerId ?? config.provider,
+      validationStatus: config.validationStatus ?? "unknown"
+    });
   }
   async updateProviderConfig(providerConfigId: string, patch: Partial<ProviderConfig>): Promise<ProviderConfig> {
-    return this.repo("provider_configs").update(providerConfigId, patch);
+    const normalizedPatch: Partial<ProviderConfig> = { ...patch };
+    if (normalizedPatch.provider && !normalizedPatch.providerId) {
+      normalizedPatch.providerId = normalizedPatch.provider;
+    }
+    return this.repo("provider_configs").update(providerConfigId, normalizedPatch);
   }
   async listProviderCapabilities(): Promise<ProviderCapability[]> { return this.repo("provider_capabilities").list(); }
   async createProviderCapability(capability: ProviderCapability): Promise<ProviderCapability> {
@@ -288,6 +435,25 @@ export class ApiStore {
   async createProviderDiscoveryLog(log: ProviderDiscoveryLog): Promise<ProviderDiscoveryLog> {
     return this.repo("provider_discovery_logs").create(log);
   }
+  async listPromptRegistry(filters?: {
+    tenantId?: string;
+    projectId?: string;
+    scope?: PromptRegistryEntry["scope"];
+    type?: string;
+    target?: string;
+    status?: PromptRegistryEntry["status"];
+  }): Promise<PromptRegistryEntry[]> {
+    return this.repo("prompt_registry").list(filters);
+  }
+  async getPromptRegistry(promptId: string): Promise<PromptRegistryEntry | null> {
+    return this.repo("prompt_registry").getById(promptId);
+  }
+  async createPromptRegistry(prompt: PromptRegistryEntry): Promise<PromptRegistryEntry> {
+    return this.repo("prompt_registry").create(prompt);
+  }
+  async updatePromptRegistry(promptId: string, patch: Partial<PromptRegistryEntry>): Promise<PromptRegistryEntry> {
+    return this.repo("prompt_registry").update(promptId, patch);
+  }
   async listSubprompts(filters?: { category?: Subprompt["category"]; enabled?: boolean }): Promise<Subprompt[]> {
     return this.repo("subprompts").list(filters);
   }
@@ -321,11 +487,11 @@ export class ApiStore {
   }
   async listBrainstormPlans(filters?: { sessionId?: string }): Promise<BrainstormPlan[]> {
     const items = await this.repo("brainstorm_plans").list(filters);
-    return items.map((item) => normalizeBrainstormPlan(item));
+    return items.map((item) => normalizeBrainstormPlanRecord(item));
   }
   async getBrainstormPlan(planId: string): Promise<BrainstormPlan | null> {
     const item = await this.repo("brainstorm_plans").getById(planId);
-    return item ? normalizeBrainstormPlan(item) : null;
+    return item ? normalizeBrainstormPlanRecord(item) : null;
   }
   async createBrainstormPlan(plan: BrainstormPlan): Promise<BrainstormPlan> {
     const normalized = normalizeBrainstormPlan(plan);
@@ -343,6 +509,18 @@ export class ApiStore {
       }
     );
     return this.repo("brainstorm_plans").update(planId, merged);
+  }
+  async listCodingWorkflows(filters?: { projectId?: string; state?: CodingWorkflow["state"] }): Promise<CodingWorkflow[]> {
+    return this.repo("coding_workflows").list(filters);
+  }
+  async getCodingWorkflow(workflowId: string): Promise<CodingWorkflow | null> {
+    return this.repo("coding_workflows").getById(workflowId);
+  }
+  async createCodingWorkflow(workflow: CodingWorkflow): Promise<CodingWorkflow> {
+    return this.repo("coding_workflows").create(workflow);
+  }
+  async updateCodingWorkflow(workflowId: string, patch: Partial<CodingWorkflow>): Promise<CodingWorkflow> {
+    return this.repo("coding_workflows").update(workflowId, patch);
   }
   async listMcpConnections(): Promise<McpConnection[]> {
     return this.repo("mcp_connections").list();
@@ -496,6 +674,8 @@ export class ApiStore {
     await this.seedTable("artifacts", this.seed.artifacts);
     await this.seedTable("verification_results", this.seed.verificationResults);
     await this.seedTable("verification_steps", this.seed.verificationSteps);
+    await this.seedTable("knowledge_nodes", this.seed.knowledgeNodes);
+    await this.seedTable("knowledge_configs", this.seed.knowledgeConfigs);
     await this.seedTable("memory_entries", this.seed.memoryEntries);
     await this.seedTable("memory_chunks", this.seed.memoryChunks);
     await this.seedTable("retrieval_query_logs", this.seed.retrievalLogs);
@@ -515,6 +695,9 @@ export class ApiStore {
     await this.seedTable("users", this.seed.users);
     await this.seedTable("roles", this.seed.roles);
     await this.seedTable("user_roles", this.seed.userRoles);
+    await this.seedTable("tenants", this.seed.tenants);
+    await this.seedTable("user_tenants", this.seed.userTenants);
+    await this.seedTable("jobs", this.seed.jobs);
     await this.seedTable("sessions", this.seed.sessions);
     await this.seedTable("audit_events", this.seed.auditEvents);
     await this.seedTable("project_role_bindings", this.seed.projectRoleBindings);

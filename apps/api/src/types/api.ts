@@ -33,6 +33,11 @@ import type {
   RetrievalQueryLog,
   RoadmapItem,
   Session,
+  Tenant,
+  UserTenant,
+  Job,
+  KnowledgeConfig,
+  KnowledgeNode,
   Skill,
   Subprompt,
   Task,
@@ -96,6 +101,11 @@ export interface ApiSeedData {
   machines: Machine[];
   localRepositories: LocalRepository[];
   versionSnapshots: VersionSnapshot[];
+  tenants: Tenant[];
+  userTenants: UserTenant[];
+  jobs: Job[];
+  knowledgeNodes: KnowledgeNode[];
+  knowledgeConfigs: KnowledgeConfig[];
 }
 
 export interface RunEvent {

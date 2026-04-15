@@ -218,6 +218,37 @@ Validation:
 - `pnpm db:migrate` passed with explicit env values:
   - `DATABASE_URL`
   - `REDIS_URL`
+
+## Phase G — Legacy Route Deprecation and Context-Scoped Navigation
+Status: implemented
+
+Implemented:
+- Enforced context-scoped route model:
+  - `global`: `/`, `/projects`
+  - `project`: `/project/:projectId/*`
+  - `platform`: `/settings/*`
+- Removed legacy unscoped routes from the web router.
+- Kept only canonical scoped paths for project and platform modules.
+- Updated internal links to scoped paths only.
+- Replaced deprecation redirect coverage with scoped routing smoke coverage:
+  - `apps/web/src/__tests__/routing.scoped.smoke.test.tsx`
+
+Key files:
+- `apps/web/src/router/router.tsx`
+- `apps/web/src/layout/AppShell.tsx`
+- `apps/web/src/pages/DashboardPage.tsx`
+- `apps/web/src/pages/RuntimePage.tsx`
+- `apps/web/src/pages/AgentsListPage.tsx`
+- `apps/web/src/pages/AgentCreatePage.tsx`
+- `apps/web/src/pages/AgentDetailPage.tsx`
+- `apps/web/src/pages/ProjectDetailPage.tsx`
+- `apps/web/src/__tests__/routing.scoped.smoke.test.tsx`
+
+Validation:
+- `pnpm --filter @cp/web typecheck` passed
+- `pnpm --filter @cp/web lint` passed
+- `pnpm --filter @cp/web test` passed
+- `pnpm --filter @cp/web build` passed
   - `SECRETS_MASTER_KEY`
 
 ## Remaining Work (Next Iteration)
@@ -557,3 +588,370 @@ Validation:
 - `pnpm test` passed.
 - `pnpm build` passed.
 - `pnpm db:migrate` blocked by missing env vars (`DATABASE_URL`, `REDIS_URL`, `SECRETS_MASTER_KEY`) in current execution context.
+
+## Phase M — Multi-Tenant Core + Fixed RBAC Roles + Jobs Tracking
+Status: implemented (application/runtime); migration execution environment-blocked in current shell
+
+Implemented:
+- Added tenant and membership domain contracts:
+  - `Tenant`
+  - `UserTenant`
+  - `TenantRole` (`owner`, `admin`, `manager`, `user`, `guest`)
+  - `TenantPermissions` capability map
+- Added jobs tracking domain contract:
+  - `Job`
+  - `JobStatus` (`idle`, `running`, `waiting_user`, `done`, `error`)
+- Added additive migration `013_multi_tenant_rbac_jobs.sql`:
+  - creates `tenants`, `user_tenants`, `jobs`
+  - adds `tenant_id` to tenant-scoped operational tables
+  - backfills default tenant (`tenant_default`) and baseline user memberships
+- Added tenant-aware DB context and enforcement in repositories:
+  - per-request tenant context via async local storage
+  - tenant auto-injection on create for scoped tables
+  - tenant filtering on list/get/update/delete for scoped tables
+- Added API tenant runtime middleware:
+  - resolves `tenantId` from `x-tenant-id` header (MVP) with auth-based fallback
+  - resolves effective tenant role and permissions
+  - attaches `tenantId`, `tenantRole`, and `tenantPermissions` to request context
+- Added backend RBAC helper and permission enforcement:
+  - centralized `getPermissions(role)` mapping
+  - backend-side checks (`canView`, `canEdit`, `canApprove`, etc.) in new tenant-sensitive routes
+- Added additive jobs API surface:
+  - `GET /jobs`
+  - `GET /jobs/:jobId`
+  - `PATCH /jobs/:jobId/status`
+  - all tenant-scoped and permission-checked
+- Integrated jobs into brainstorming lifecycle:
+  - start/update of brainstorm session emits job records
+  - waiting-for-input transitions set `waiting_user`
+  - completion/update paths set `done` or `error`
+
+Key files:
+- `packages/domain/src/entities/tenant.ts`
+- `packages/domain/src/entities/job.ts`
+- `packages/domain/src/schemas/tenant.schema.ts`
+- `packages/domain/src/schemas/job.schema.ts`
+- `packages/db/migrations/013_multi_tenant_rbac_jobs.sql`
+- `packages/db/src/tenant-context.ts`
+- `packages/db/src/repository.ts`
+- `packages/db/src/schema.ts`
+- `apps/api/src/tenant/runtime.ts`
+- `apps/api/src/tenant/rbac.ts`
+- `apps/api/src/services/jobs-service.ts`
+- `apps/api/src/routes/jobs.ts`
+- `apps/api/src/services/brainstorming-service.ts`
+- `apps/api/src/__tests__/tenant-rbac-jobs.contract.test.ts`
+
+Validation:
+- `pnpm typecheck` passed.
+- `pnpm lint` passed.
+- `pnpm test` passed.
+- `pnpm build` passed.
+- `pnpm db:migrate` failed in current execution context because required env vars were not set (`DATABASE_URL`, `REDIS_URL`, `SECRETS_MASTER_KEY`).
+
+## Phase N — Job DAG Orchestration Baseline
+Status: implemented (application/runtime); migration execution environment-blocked in current shell
+
+Implemented:
+- Evolved `jobs` from flat tracking to dependency-aware DAG execution:
+  - new job fields: `dependencies`, `dependsOnCount`, `ready`, `startedAt`, `completedAt`
+  - semantic `JobType` values for routing/UI (`ingestion`, `processing`, `generation`, `review`, `deployment`, plus existing control-plane types)
+- Added additive migration `015_jobs_dag_fields.sql`:
+  - introduces DAG columns on `jobs`
+  - backfills defaults and dependency counts
+  - adds readiness/dependency indexes
+- Implemented DAG orchestration logic in jobs service:
+  - cycle detection (`validateDAG`)
+  - dependency existence validation
+  - readiness recomputation (`applyReadiness`)
+  - transition guard: a job cannot move to `running` unless dependencies are complete
+  - executable queue query (`getExecutableJobs`)
+- Added additive jobs API endpoints:
+  - `POST /jobs` (create DAG job nodes)
+  - `GET /jobs/executable` (tenant-scoped ready+idle jobs)
+  - existing endpoints unchanged (`GET /jobs`, `GET /jobs/:jobId`, `PATCH /jobs/:jobId/status`)
+- Updated command-center jobs sidebar for DAG observability:
+  - explicit stage labels (`ready`, `waiting_dependencies`, `running`, `waiting_user`, `done`, `error`)
+  - dependency counts and selected-job dependency metadata
+  - action-required prioritization preserved
+- Added tests for DAG behavior:
+  - service-level cycle/validity checks (`jobs.dag.service.test.ts`)
+  - contract tests for executable jobs, blocked transitions on pending dependencies, and parallel runnable branches.
+
+Key files:
+- `packages/domain/src/entities/job.ts`
+- `packages/domain/src/schemas/job.schema.ts`
+- `packages/db/src/schema.ts`
+- `packages/db/migrations/015_jobs_dag_fields.sql`
+- `apps/api/src/services/api-store.ts`
+- `apps/api/src/services/jobs-service.ts`
+- `apps/api/src/routes/jobs.ts`
+- `apps/api/src/__tests__/jobs.dag.service.test.ts`
+- `apps/api/src/__tests__/tenant-rbac-jobs.contract.test.ts`
+- `apps/web/src/layout/AppShell.tsx`
+- `apps/web/src/__tests__/dashboard.smoke.test.tsx`
+
+Validation:
+- `pnpm typecheck` passed.
+- `pnpm lint` passed.
+- `pnpm test` passed.
+- `pnpm build` passed.
+- `pnpm db:migrate` failed in current execution context because required env vars were not set (`DATABASE_URL`, `REDIS_URL`, `SECRETS_MASTER_KEY`).
+
+## Phase O — Provider Config Production Hardening
+Status: implemented (application/runtime); migration execution environment-blocked in current shell
+
+Implemented:
+- Provider config schema hardening with additive migration:
+  - `021_provider_config_hardening.sql`
+  - new fields: `secret_ref`, `validation_status`, `last_validated_at`, `validation_error`, `requests_per_minute`, `tokens_per_minute`
+  - legacy `api_key` values scrubbed (`NULL`) to stop plaintext persistence in `provider_configs`.
+- Secure provider credential flow in API:
+  - raw `apiKey` input can be encrypted into `secrets` and rewritten to `secret://provider/<provider>/<configId>/api-key`
+  - env/secret references remain supported (`env://`, `secret://`)
+  - provider config responses now expose masked values only (`apiKeyMasked`), never clear API keys.
+- Validation-on-save for provider config writes:
+  - `POST /providers/config`
+  - `PATCH /providers/config/:id`
+  - each write performs provider connectivity validation and persists:
+    - `validationStatus`
+    - `lastValidatedAt`
+    - `validationError`
+- Owner-level audit enrichment:
+  - provider config create/update actions are logged with redacted before/after payload diff metadata.
+- Model discovery strict-mode contract alignment:
+  - `/models` now returns canonical `source` + `models`
+  - source normalized to `live|mock`
+  - backward-compatible aliases (`items`, `meta`) preserved.
+- Tenant-aware model discovery cache:
+  - cache key scoped by tenant
+  - cache invalidated on provider config writes and manual discovery refresh.
+- Runner provider throttling:
+  - introduced in-memory RPM/TPM limiter (`@cp/runner`)
+  - enforced before generation provider calls
+  - limits loaded from tenant provider config (`requestsPerMinute`, `tokensPerMinute`).
+- Providers UI updates:
+  - model source fallback banner when `/models.source = mock`
+  - owner provider settings include validation visibility + RPM/TPM fields.
+
+Key files:
+- `packages/db/migrations/021_provider_config_hardening.sql`
+- `packages/db/src/schema.ts`
+- `packages/domain/src/entities.ts`
+- `apps/api/src/services/provider-config-service.ts`
+- `apps/api/src/routes/providers.ts`
+- `apps/api/src/routes/models.ts`
+- `packages/providers/src/models/model-discovery.ts`
+- `packages/runner/src/rate-limit.ts`
+- `packages/runner/src/handlers/generation-handler.ts`
+- `apps/worker/src/dag-job-store.ts`
+- `apps/worker/src/index.ts`
+- `apps/web/src/pages/ProvidersPage.tsx`
+- `apps/web/src/pages/SettingsProvidersPage.tsx`
+
+Validation:
+- `pnpm typecheck` passed.
+- `pnpm lint` passed.
+- `pnpm test` passed.
+- `pnpm build` passed.
+- `pnpm db:migrate` failed in current execution context because required env vars were not set (`DATABASE_URL`, `REDIS_URL`, `SECRETS_MASTER_KEY`).
+
+## Phase P — Knowledge System (LLMWIKI + pgvector-ready baseline)
+Status: implemented (application/runtime); migration execution depends on environment DB variables
+
+Implemented:
+- Added knowledge domain model and schema:
+  - `KnowledgeNode` with scope (`system|tenant|project`), markdown content, optional embedding vector.
+  - exported via `@cp/domain` schemas/entities.
+- Added additive DB migration:
+  - `022_knowledge_system.sql`
+  - creates `knowledge_nodes` + indexes.
+- Introduced `@cp/knowledge` package:
+  - filesystem markdown sync from `knowledge/` tree
+  - CRUD service for canonical node storage
+  - lexical + semantic search path (semantic enabled only when embedding provider is configured)
+  - compact generation context builder for runner pipelines.
+- Added markdown knowledge tree seeds:
+  - `knowledge/system/*`
+  - `knowledge/tenants/tenant_default/*`
+  - `knowledge/projects/proj_001/*`
+- API integration (additive routes):
+  - `GET /knowledge`
+  - `GET /knowledge/:knowledgeNodeId`
+  - `POST /knowledge`
+  - `PATCH /knowledge/:knowledgeNodeId`
+  - `DELETE /knowledge/:knowledgeNodeId`
+  - `POST /knowledge/sync`
+  - `GET /knowledge/context/search`
+- Startup sync:
+  - API startup now runs knowledge sync (`syncKnowledgeFromFilesystem`) with non-blocking fallback.
+- Runner integration:
+  - generation jobs enrich prompt context with scoped knowledge snippets.
+  - optional insight capture persists compact decision notes when `payload.captureKnowledge=true`.
+- UI integration:
+  - new project route `/project/:projectId/knowledge`
+  - knowledge page supports list/search/create/edit/delete + filesystem sync.
+  - AppShell project navigation includes `Knowledge`.
+- Tests added:
+  - API contract tests for knowledge routes (`knowledge.contract.test.ts`)
+  - web smoke test for knowledge page (`knowledge.smoke.test.tsx`)
+  - package tests for `@cp/knowledge` service behavior.
+
+Key files:
+- `packages/domain/src/entities/knowledge.ts`
+- `packages/domain/src/schemas/knowledge.schema.ts`
+- `packages/db/migrations/022_knowledge_system.sql`
+- `packages/knowledge/src/service.ts`
+- `apps/api/src/services/knowledge-service.ts`
+- `apps/api/src/routes/knowledge.ts`
+- `apps/worker/src/dag-job-store.ts`
+- `packages/runner/src/executor.ts`
+- `apps/web/src/pages/KnowledgePage.tsx`
+- `apps/web/src/router/router.tsx`
+
+Validation:
+- Pending in this execution block until final run:
+  - `pnpm typecheck`
+  - `pnpm lint`
+  - `pnpm test`
+  - `pnpm build`
+- `pnpm db:migrate` must run only when `DATABASE_URL` is available.
+
+## Phase Q — Knowledge Configuration Layer
+Status: implemented (application/runtime); migration execution depends on environment DB variables
+
+Implemented:
+- Added knowledge policy domain contract:
+  - `KnowledgeConfig` in domain entities.
+  - zod schema `knowledge-config.schema.ts` with create/update variants.
+- Added additive DB migration:
+  - `023_knowledge_config.sql`
+  - creates `knowledge_configs` with tenant/project scope, capture/retrieval/mutation controls and constraints.
+- Wired DB schema/repository/types:
+  - `knowledge_configs` table in Drizzle schema.
+  - repository mapping + tenant-aware table enforcement.
+- API seed/runtime integration:
+  - seeded tenant-level default config in API seed data.
+  - `ApiStore` CRUD methods for `knowledge_configs`.
+- Added knowledge config service:
+  - effective policy resolution with precedence `project -> tenant -> system -> default`.
+  - scoped list/create/patch flows with canonical payloads.
+  - patch supports scoped upsert behavior.
+- Extended knowledge API routes (additive):
+  - `GET /knowledge/config`
+  - `POST /knowledge/config`
+  - `PATCH /knowledge/config`
+  - write operations protected by tenant permission `canManageUsers`.
+- Retrieval path alignment:
+  - `/knowledge/context/search` now applies effective `maxNodes` + `relevanceThreshold` defaults when query overrides are absent.
+- Runner alignment:
+  - worker store resolves effective config per tenant/project.
+  - generation context retrieval uses configured node limits + threshold.
+  - insight persistence respects config:
+    - auto-capture by policy (`autoCapture` + `captureModes`)
+    - skips write when `requireApproval` or `requireReview` is enabled
+    - writes to configured scope (`system|tenant|project`).
+- UI platform settings:
+  - new page `/settings/knowledge` for capture/scope/retrieval/mutation controls.
+  - added platform nav entry `Knowledge Config`.
+- Tests added:
+  - API contract test: `knowledge-config.contract.test.ts`
+  - web smoke test: `settings-knowledge.smoke.test.tsx`
+
+Key files:
+- `packages/domain/src/entities.ts`
+- `packages/domain/src/schemas/knowledge-config.schema.ts`
+- `packages/db/migrations/023_knowledge_config.sql`
+- `packages/db/src/schema.ts`
+- `packages/db/src/repository.ts`
+- `apps/api/src/services/seed-data.ts`
+- `apps/api/src/services/api-store.ts`
+- `apps/api/src/services/knowledge-config-service.ts`
+- `apps/api/src/routes/knowledge.ts`
+- `apps/worker/src/dag-job-store.ts`
+- `packages/runner/src/types.ts`
+- `packages/runner/src/executor.ts`
+- `apps/web/src/pages/SettingsKnowledgePage.tsx`
+- `apps/web/src/router/router.tsx`
+- `apps/web/src/layout/AppShell.tsx`
+
+Validation:
+- Executed in this phase:
+  - `pnpm --filter @cp/api typecheck` ✅
+  - `pnpm --filter @cp/web typecheck` ✅
+  - `pnpm --filter @cp/worker typecheck` ✅
+  - `pnpm --filter @cp/runner typecheck` ✅
+  - `pnpm --filter @cp/api test -- --run src/__tests__/knowledge-config.contract.test.ts` ✅
+  - `pnpm --filter @cp/web test -- --run src/__tests__/settings-knowledge.smoke.test.tsx` ✅
+- Full monorepo gates to be run at end of integration block:
+  - `pnpm typecheck`
+  - `pnpm lint`
+  - `pnpm test`
+  - `pnpm build`
+- `pnpm db:migrate` remains environment-dependent on:
+  - `DATABASE_URL`
+  - `REDIS_URL`
+  - `SECRETS_MASTER_KEY`
+
+## Step 16 — Alpha Operability Blocks (Prompt Registry, Coding HITL, Schemas Graph, Context, Memory)
+Status: implemented and integrated
+
+Implemented:
+- Prompt registry governance:
+  - new domain entity/schema for prompt records with scope/version/status targeting.
+  - additive migration `024_prompt_registry.sql`.
+  - API CRUD + activation/deprecation under `/prompts`.
+  - platform UI page `/settings/prompts` with filtering by scope/status and edit lifecycle.
+  - brainstorming prompt composition now resolves active role instructions from prompt registry before fallback to role files.
+- Internal coding workflow (HITL):
+  - additive migration `025_coding_workflow.sql`.
+  - project-scoped service + API routes in `/coding-workflow`.
+  - approvals flow supports approve/reject/revise/finalize actions.
+  - UI page `/project/:projectId/coding` added to project operations.
+- Schemas graph observability:
+  - project route `/project/:projectId/schemas` renders a node-based canvas with:
+    - Data Model
+    - API Contracts
+    - System Structure
+  - node detail panel updates on selection and keeps project context scoping.
+- Context module (Obsidian-like notes):
+  - additive migration `026_context_notes.sql`.
+  - new package `@cp/context` with CRUD/search service.
+  - API routes `/context` and `/context/:contextId`.
+  - UI page `/project/:projectId/context` with notes list, markdown editor, reader view and search.
+- Advanced memory integration:
+  - retrieval and context packet composition consume effective knowledge config (`maxNodes`, `relevanceThreshold`).
+  - runner/coding-generation paths inject compact scoped knowledge context.
+  - noisy/low-signal outputs are skipped for auto-capture; meaningful outputs produce compact insight notes.
+
+Key files:
+- `packages/domain/src/entities/prompt.ts`
+- `packages/domain/src/schemas/prompt.schema.ts`
+- `packages/db/migrations/024_prompt_registry.sql`
+- `apps/api/src/services/prompt-registry-service.ts`
+- `apps/api/src/routes/prompts.ts`
+- `packages/domain/src/entities/coding-workflow.ts`
+- `packages/domain/src/schemas/coding-workflow.schema.ts`
+- `packages/db/migrations/025_coding_workflow.sql`
+- `apps/api/src/services/coding-workflow-service.ts`
+- `apps/api/src/routes/coding-workflow.ts`
+- `apps/web/src/pages/CodingWorkflowPage.tsx`
+- `apps/web/src/pages/SchemasGraphPage.tsx`
+- `apps/web/src/components/schemas/*`
+- `packages/domain/src/entities/context-note.ts`
+- `packages/domain/src/schemas/context-note.schema.ts`
+- `packages/db/migrations/026_context_notes.sql`
+- `packages/context/src/service.ts`
+- `apps/api/src/services/context-service.ts`
+- `apps/api/src/routes/context.ts`
+- `apps/web/src/pages/ContextPage.tsx`
+- `packages/retrieval/src/services/context-packet-builder.ts`
+- `packages/knowledge/src/service.ts`
+- `packages/runner/src/executor.ts`
+
+Validation:
+- `pnpm typecheck` ✅
+- `pnpm lint` ✅
+- `pnpm test` ✅
+- `pnpm build` ✅
+- `pnpm db:migrate` ❌ environment-blocked in this execution context (`DATABASE_URL`, `REDIS_URL`, `SECRETS_MASTER_KEY` missing).

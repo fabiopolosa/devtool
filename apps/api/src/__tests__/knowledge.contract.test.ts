@@ -1,0 +1,125 @@
+import type { FastifyInstance } from "fastify";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+describe("Knowledge API contract", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    process.env.API_STORE_MODE = "in_memory";
+    process.env.AUTH_ENABLED = "0";
+
+    const { buildApp } = await import("../app.js");
+    app = await buildApp();
+  });
+
+  afterAll(async () => {
+    if (app) {
+      await app.close();
+    }
+  });
+
+  it("lists seeded system/tenant/project knowledge nodes", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/knowledge?projectId=proj_001"
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { items: Array<{ id: string; scope: string; path: string }> };
+    expect(Array.isArray(body.items)).toBe(true);
+    expect(body.items.length).toBeGreaterThan(0);
+    expect(body.items.some((item) => item.scope === "system")).toBe(true);
+    expect(body.items.some((item) => item.scope === "project")).toBe(true);
+  });
+
+  it("supports create/update/delete lifecycle", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/knowledge",
+      payload: {
+        scope: "project",
+        projectId: "proj_001",
+        path: "/projects/proj_001/notes/runtime-insight.md",
+        content: "# Runtime Insight\n\nExecution succeeded with deterministic retries."
+      }
+    });
+    expect(created.statusCode).toBe(200);
+    const createdBody = created.json() as { item: { id: string; path: string } };
+    expect(createdBody.item.path).toBe("/projects/proj_001/notes/runtime-insight.md");
+
+    const knowledgeNodeId = createdBody.item.id;
+    const detail = await app.inject({
+      method: "GET",
+      url: `/knowledge/${knowledgeNodeId}?projectId=proj_001`
+    });
+    expect(detail.statusCode).toBe(200);
+
+    const updated = await app.inject({
+      method: "PATCH",
+      url: `/knowledge/${knowledgeNodeId}?projectId=proj_001`,
+      payload: {
+        content: "# Runtime Insight\n\nRetry budget remained within configured limits."
+      }
+    });
+    expect(updated.statusCode).toBe(200);
+    expect((updated.json() as { item: { content: string } }).item.content).toContain("Retry budget");
+
+    const removed = await app.inject({
+      method: "DELETE",
+      url: `/knowledge/${knowledgeNodeId}?projectId=proj_001`
+    });
+    expect(removed.statusCode).toBe(200);
+  });
+
+  it("supports semantic/lexical search and context endpoint", async () => {
+    const search = await app.inject({
+      method: "GET",
+      url: "/knowledge?projectId=proj_001&query=dag%20execution"
+    });
+    expect(search.statusCode).toBe(200);
+    const searchBody = search.json() as {
+      items: Array<{ id: string }>;
+      hits?: Array<{ score: number; source: string }>;
+    };
+    expect(searchBody.items.length).toBeGreaterThan(0);
+    expect(Array.isArray(searchBody.hits)).toBe(true);
+
+    const context = await app.inject({
+      method: "GET",
+      url: "/knowledge/context/search?projectId=proj_001&query=retry%20semantics&limit=3"
+    });
+    expect(context.statusCode).toBe(200);
+    const contextBody = context.json() as {
+      item: Array<{ path: string; title: string; scope: string; excerpt: string; score: number; sourceType?: string }>;
+    };
+    expect(Array.isArray(contextBody.item)).toBe(true);
+  });
+
+  it("merges project context notes into compact knowledge context", async () => {
+    const createdNote = await app.inject({
+      method: "POST",
+      url: "/context",
+      payload: {
+        projectId: "proj_001",
+        path: "/projects/proj_001/context/strategy.md",
+        title: "Strategy",
+        content: "# Strategy\n\nPrefer compact knowledge injection for workflows.",
+        tags: ["strategy"],
+        linkRefs: [],
+        pinned: true
+      }
+    });
+    expect(createdNote.statusCode).toBe(200);
+
+    const context = await app.inject({
+      method: "GET",
+      url: "/knowledge/context/search?projectId=proj_001&query=compact%20knowledge%20injection&limit=5"
+    });
+    expect(context.statusCode).toBe(200);
+    const contextBody = context.json() as {
+      item: Array<{ path: string; title: string; scope: string; excerpt: string; score: number; sourceType?: string }>;
+    };
+    expect(contextBody.item.some((entry) => entry.scope === "context-notes")).toBe(true);
+    expect(contextBody.item.some((entry) => entry.sourceType === "context-note")).toBe(true);
+  });
+});

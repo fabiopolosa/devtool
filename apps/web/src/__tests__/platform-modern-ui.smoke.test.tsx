@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { RouterProvider } from '@tanstack/react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { router } from '../router/router';
 import { AppStoreProvider } from '../store/app-store';
 
@@ -142,14 +142,19 @@ const installFetchMock = () => {
 };
 
 describe('Modern platform pages smoke', () => {
+  beforeEach(() => {
+    window.localStorage.setItem('cp_owner_mode', '1');
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   it('renders Secrets page guard when auth is disabled', async () => {
     installFetchMock();
-    window.history.pushState({}, '', '/secrets');
-    await router.navigate({ to: '/secrets' });
+    window.history.pushState({}, '', '/settings/secrets');
+    await router.navigate({ to: '/settings/secrets' });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>
@@ -163,8 +168,8 @@ describe('Modern platform pages smoke', () => {
 
   it('renders Database page', async () => {
     installFetchMock();
-    window.history.pushState({}, '', '/database');
-    await router.navigate({ to: '/database' });
+    window.history.pushState({}, '', '/settings/database');
+    await router.navigate({ to: '/settings/database' });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>
@@ -178,8 +183,8 @@ describe('Modern platform pages smoke', () => {
 
   it('renders Stack page guard when auth is disabled', async () => {
     installFetchMock();
-    window.history.pushState({}, '', '/stack');
-    await router.navigate({ to: '/stack' });
+    window.history.pushState({}, '', '/settings/stack');
+    await router.navigate({ to: '/settings/stack' });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>
@@ -193,8 +198,8 @@ describe('Modern platform pages smoke', () => {
 
   it('renders Local Repos page', async () => {
     installFetchMock();
-    window.history.pushState({}, '', '/local-repos');
-    await router.navigate({ to: '/local-repos' });
+    window.history.pushState({}, '', '/settings/local-repos');
+    await router.navigate({ to: '/settings/local-repos' });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>
@@ -208,8 +213,8 @@ describe('Modern platform pages smoke', () => {
 
   it('renders Versioning page', async () => {
     installFetchMock();
-    window.history.pushState({}, '', '/versioning');
-    await router.navigate({ to: '/versioning' });
+    window.history.pushState({}, '', '/settings/versioning');
+    await router.navigate({ to: '/settings/versioning' });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>

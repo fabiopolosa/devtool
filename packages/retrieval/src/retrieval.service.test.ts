@@ -175,6 +175,17 @@ describe("retrieval service", () => {
           description: "Primary provider key"
         }
       ],
+      contextNotes: [
+        {
+          noteId: "ctx_001",
+          path: "/projects/proj_001/context/operating-model.md",
+          title: "Operating model",
+          scope: "context-notes",
+          excerpt: "Use Obsidian-style linked notes for strategy and decisions.",
+          score: 0.98,
+          sourceType: "context-note"
+        }
+      ],
       environmentContext: {
         environmentId: "env_001",
         name: "staging",
@@ -213,10 +224,13 @@ describe("retrieval service", () => {
     expect(packet.agentContext?.agentId).toBe("agent_001");
     expect(packet.compactSummary.toLowerCase()).toContain("agent:");
     expect(packet.secretReferences).toHaveLength(1);
+    expect(packet.contextNotes).toHaveLength(1);
+    expect(packet.contextNotes[0]?.scope).toBe("context-notes");
     expect(packet.environmentContext?.environmentId).toBe("env_001");
     expect(packet.versionSnapshots).toHaveLength(1);
     expect(packet.compactSummary.toLowerCase()).toContain("secrets:");
     expect(packet.compactSummary.toLowerCase()).toContain("environment:");
     expect(packet.compactSummary.toLowerCase()).toContain("snapshots:");
+    expect(packet.compactSummary.toLowerCase()).toContain("context notes:");
   });
 });

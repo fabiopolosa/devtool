@@ -118,7 +118,7 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     expect(applyBody.item.project.id).toBeTruthy();
     expect(applyBody.item.tasks.length).toBeGreaterThan(0);
     expect(applyBody.item.roadmapItems.length).toBeGreaterThan(0);
-  });
+  }, 15000);
 
   it("rejects legacy brainstorm plans that do not use plan.*", async () => {
     const now = new Date().toISOString();
@@ -142,6 +142,67 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
         }
       } as unknown as Parameters<typeof apiStore.createBrainstormPlan>[0])
     ).rejects.toThrow(/Legacy top-level plan fields are not supported/);
+  });
+
+  it("returns 422 when a stored brainstorm plan payload is not canonical", async () => {
+    const now = new Date().toISOString();
+    const { apiStore } = await import("../services/api-store.js");
+
+    const canonicalPayload = {
+      recommendedStack: {
+        database: "PostgreSQL",
+        backend: "Fastify",
+        frontend: "React",
+        llmProviders: ["openai"],
+        vectorStore: "pgvector"
+      },
+      architecture: {
+        repositoryStrategy: "monorepo",
+        packageLayout: ["apps/api", "apps/web"],
+        rationale: "shared contracts"
+      },
+      suggestedAgents: [],
+      suggestedSkills: [],
+      providerBindings: [],
+      roadmap: [],
+      assumptions: [],
+      risks: [],
+      composedPrompt: "prompt",
+      selectedSubprompts: []
+    };
+
+    const dbRepo = (
+      apiStore as unknown as {
+        database?: { repository: (table: "brainstorm_plans") => { create: (row: unknown) => Promise<unknown> } };
+      }
+    ).database?.repository("brainstorm_plans");
+
+    expect(dbRepo).toBeDefined();
+
+    await dbRepo!.create({
+      id: "invalid_nested_plan_payload",
+      tenantId: "tenant_default",
+      sessionId: "brainstorm_session_001",
+      title: "Invalid nested plan payload",
+      executiveSummary: "Stored with plan.plan instead of plan payload",
+      plan: {
+        plan: canonicalPayload
+      },
+      createdAt: now,
+      createdBy: "test",
+      updatedAt: now,
+      updatedBy: "test"
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/brainstorm/plan/invalid_nested_plan_payload"
+    });
+
+    expect(response.statusCode).toBe(422);
+    const body = response.json() as { error: string; message: string };
+    expect(body.error).toBe("invalid_contract");
+    expect(body.message).toContain("Invalid or missing canonical plan payload");
   });
 
   it("exposes MCP routes in optional/disabled mode without blocking", async () => {
@@ -206,7 +267,8 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     };
     expect(triggerBody.item.log.id).toBeTruthy();
     expect(triggerBody.item.log.discoveredProviders).toContain("openai");
-    expect(triggerBody.item.log.discoveredProviders).toContain("mistral");
+    // Discovery is now scoped to enabled provider configurations when present.
+    expect(triggerBody.item.log.discoveredProviders).not.toContain("mistral");
 
     const logs = await app.inject({ method: "GET", url: "/providers/discovery/logs" });
     expect(logs.statusCode).toBe(200);

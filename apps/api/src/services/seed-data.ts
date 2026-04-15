@@ -12,7 +12,9 @@ import {
   type ChatThread,
   type DelegatedPermission,
   type Environment,
+  type KnowledgeConfig,
   type LocalRepository,
+  type KnowledgeNode,
   type MemoryChunk,
   type MemoryEntry,
   type Machine,
@@ -38,6 +40,9 @@ import {
   type RoutingRule,
   type RoadmapItem,
   type Session,
+  type Tenant,
+  type UserTenant,
+  type Job,
   type Skill,
   type Subprompt,
   type Task,
@@ -51,9 +56,17 @@ import {
 import type { ApiSeedData, RunEvent } from "../types/api.js";
 
 const now = "2026-04-14T12:00:00.000Z";
+const defaultTenantId = "tenant_default";
+
+const defaultTenant: Tenant = {
+  id: defaultTenantId,
+  name: "Default Tenant",
+  createdAt: now
+};
 
 const project: Project = {
   id: "proj_001",
+  tenantId: defaultTenantId,
   key: "control-plane",
   name: "AI Control Plane",
   description: "Centralized multi-agent development platform",
@@ -67,6 +80,7 @@ const project: Project = {
 
 const repository: Repository = {
   id: "repo_001",
+  tenantId: defaultTenantId,
   name: "control-plane",
   url: "git@github.com:example/control-plane.git",
   vcsProvider: "github",
@@ -81,6 +95,7 @@ const repository: Repository = {
 
 const roadmapItem: RoadmapItem = {
   id: "roadmap_001",
+  tenantId: defaultTenantId,
   projectId: project.id,
   title: "Bootstrap API control plane",
   description: "Create Fastify backend, structured routes, and deterministic service stubs.",
@@ -95,6 +110,7 @@ const roadmapItem: RoadmapItem = {
 
 const task: Task = {
   id: "task_001",
+  tenantId: defaultTenantId,
   projectId: project.id,
   roadmapItemId: roadmapItem.id,
   title: "Implement API scaffold",
@@ -119,6 +135,7 @@ const task: Task = {
 
 const run: TaskRun = {
   id: "run_001",
+  tenantId: defaultTenantId,
   taskId: task.id,
   workflowId: "task_execute",
   status: "running",
@@ -135,6 +152,7 @@ const run: TaskRun = {
 
 const approval: Approval = {
   id: "approval_001",
+  tenantId: defaultTenantId,
   subjectType: "task",
   subjectId: task.id,
   status: approvalStatuses[0],
@@ -148,6 +166,7 @@ const approval: Approval = {
 
 const artifact: Artifact = {
   id: "artifact_001",
+  tenantId: defaultTenantId,
   runId: run.id,
   taskId: task.id,
   type: "context_packet",
@@ -310,9 +329,13 @@ const chatMessage: ChatMessage = {
 
 const providerConfig: ProviderConfig = {
   id: "provider_001",
+  tenantId: defaultTenantId,
   provider: "openai",
+  providerId: "openai",
   endpoint: "https://api.openai.com/v1",
-  authRef: "secret://openai/api-key",
+  authRef: "env://OPENAI_API_KEY",
+  secretRef: "env://OPENAI_API_KEY",
+  validationStatus: "unknown",
   enabled: true,
   timeoutMs: 30000,
   metadata: { defaultFor: ["chat_reasoning", "embedding"] },
@@ -425,6 +448,7 @@ const architectureSubprompt: Subprompt = {
 
 const brainstormSession: BrainstormSession = {
   id: "brainstorm_session_001",
+  tenantId: defaultTenantId,
   threadId: chatThread.id,
   projectId: project.id,
   status: "planned",
@@ -449,6 +473,7 @@ const brainstormSession: BrainstormSession = {
 
 const brainstormPlan: BrainstormPlan = {
   id: "brainstorm_plan_001",
+  tenantId: defaultTenantId,
   sessionId: brainstormSession.id,
   title: "Initial platform execution plan",
   executiveSummary:
@@ -698,6 +723,22 @@ const viewerUserRole: UserRole = {
   updatedBy: "system"
 };
 
+const adminUserTenant: UserTenant = {
+  id: "user_tenant_admin_001",
+  userId: adminUser.id,
+  tenantId: defaultTenantId,
+  role: "owner",
+  createdAt: now
+};
+
+const viewerUserTenant: UserTenant = {
+  id: "user_tenant_viewer_001",
+  userId: viewerUser.id,
+  tenantId: defaultTenantId,
+  role: "user",
+  createdAt: now
+};
+
 const scopedProjectRoleBinding: ProjectRoleBinding = {
   id: "prb_001",
   userId: viewerUser.id,
@@ -929,6 +970,87 @@ const versionSnapshot: VersionSnapshot = {
   updatedBy: "system"
 };
 
+const systemKnowledgeNode: KnowledgeNode = {
+  id: "knowledge_system_001",
+  scope: "system",
+  path: "/system/architecture/dev-vs-ops-separation.md",
+  content: [
+    "# Dev vs Ops Separation",
+    "",
+    "## Principle",
+    "Development defines deterministic contracts, operations executes verified pipelines.",
+    "",
+    "## Decision",
+    "Keep orchestration explicit and inspectable through Ruflo workflows and contract-typed artifacts.",
+    "",
+    "## Implications",
+    "- Project navigation is scoped; platform settings stay owner-only.",
+    "- Job execution state is persisted and auditable."
+  ].join("\n"),
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const tenantKnowledgeNode: KnowledgeNode = {
+  id: "knowledge_tenant_001",
+  tenantId: defaultTenantId,
+  scope: "tenant",
+  path: `/tenants/${defaultTenantId}/standards/coding-conventions.md`,
+  content: [
+    "# Coding Conventions",
+    "",
+    "- Keep APIs additive and backwards-compatible.",
+    "- Validate payloads with Zod schemas before persistence.",
+    "- Emit structured artifacts for every significant workflow transition."
+  ].join("\n"),
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const projectKnowledgeNode: KnowledgeNode = {
+  id: "knowledge_project_001",
+  tenantId: defaultTenantId,
+  projectId: project.id,
+  scope: "project",
+  path: `/projects/${project.id}/decisions/runner-dag-execution.md`,
+  content: [
+    "# Runner DAG Execution",
+    "",
+    "## Decision",
+    "Use scheduler + executor separation with optimistic claim and retry semantics.",
+    "",
+    "## Pattern",
+    "- Scheduler claims executable jobs ordered by priority.",
+    "- Executor performs typed handler dispatch and telemetry emission.",
+    "- Failed jobs retry deterministically before terminal error."
+  ].join("\n"),
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const tenantKnowledgeConfig: KnowledgeConfig = {
+  id: "knowledge_cfg_tenant_001",
+  tenantId: defaultTenantId,
+  scope: "tenant",
+  autoCapture: false,
+  captureModes: ["generation_output"],
+  requireApproval: false,
+  maxNodes: 8,
+  relevanceThreshold: 0.2,
+  versioning: true,
+  requireReview: false,
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
 const builderAgent: AgentConfig = {
   id: "agent_001",
   name: "codex-builder-primary",
@@ -947,6 +1069,30 @@ const builderAgent: AgentConfig = {
   createdAt: now,
   updatedAt: now,
   status: "active"
+};
+
+const brainstormJob: Job = {
+  id: "job_brainstorm_seed_001",
+  tenantId: defaultTenantId,
+  type: "brainstorm",
+  title: "Seed brainstorming orchestration",
+  status: "done",
+  priority: 10,
+  retryCount: 0,
+  maxRetries: 3,
+  actionRequired: false,
+  resourceType: "brainstorm",
+  resourceId: "plan_001",
+  payload: {
+    source: "seed"
+  },
+  dependencies: [],
+  dependsOnCount: 0,
+  ready: false,
+  completedAt: now,
+  createdBy: "system",
+  createdAt: now,
+  updatedAt: now
 };
 
 export const seedData: ApiSeedData = {
@@ -968,6 +1114,8 @@ export const seedData: ApiSeedData = {
   verificationSteps: [verificationStep],
   memoryEntries: [memoryEntry],
   memoryChunks: [memoryChunk],
+  knowledgeNodes: [systemKnowledgeNode, tenantKnowledgeNode, projectKnowledgeNode],
+  knowledgeConfigs: [tenantKnowledgeConfig],
   retrievalLogs: [retrievalLog],
   researchNotes: [researchNote],
   policies: [policy],
@@ -982,9 +1130,12 @@ export const seedData: ApiSeedData = {
   providerDiscoveryLogs: [providerDiscoveryLog],
   experiments: [experiment],
   experimentRuns: [experimentRun],
+  tenants: [defaultTenant],
   users: [adminUser, viewerUser],
   roles: [adminRole, editorRole, operatorRole, viewerRole],
   userRoles: [adminUserRole, viewerUserRole],
+  userTenants: [adminUserTenant, viewerUserTenant],
+  jobs: [brainstormJob],
   sessions: [seededSession],
   auditEvents: [auditEvent],
   projectRoleBindings: [scopedProjectRoleBinding],

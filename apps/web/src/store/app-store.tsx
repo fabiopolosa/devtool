@@ -113,7 +113,20 @@ const parseFlag = (value: string | undefined, defaultValue: boolean): boolean =>
 };
 
 const authEnabledFromEnv = (): boolean => parseFlag(import.meta.env.VITE_AUTH_ENABLED, false);
-const apiBaseUrlFromEnv = (): string => (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '');
+const apiBaseUrlFromEnv = (): string => {
+  const configured = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '');
+  if (configured) return configured;
+  if (import.meta.env.DEV) {
+    // Resilient local default when Vite does not load repository-level .env.
+    return 'http://localhost:4000';
+  }
+  return '';
+};
+
+const isJsonResponse = (response: Response): boolean =>
+  (response.headers.get('content-type') ?? '').toLowerCase().includes('application/json');
+
+const summarizeResponseText = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, 240);
 
 type Action =
   | { type: 'approveRoadmap'; roadmapItemId: string }
@@ -253,12 +266,14 @@ function reducer(state: AppState, action: Action): AppState {
       const now = new Date().toISOString();
       const project: Project = {
         ...(state.projects[0] ?? {
+          tenantId: 'tenant_default',
           createdAt: now,
           createdBy: 'you',
           updatedAt: now,
           updatedBy: 'you'
         }),
         id: `proj-${state.projects.length + 1}`,
+        tenantId: (state.projects[0]?.tenantId ?? 'tenant_default'),
         key: action.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
         name: action.name,
         description: action.description,
@@ -275,12 +290,14 @@ function reducer(state: AppState, action: Action): AppState {
       const now = new Date().toISOString();
       const link: ProjectRepositoryLink = {
         ...(state.projectRepositoryLinks[0] ?? {
+          tenantId: 'tenant_default',
           createdAt: now,
           createdBy: 'you',
           updatedAt: now,
           updatedBy: 'you'
         }),
         id: `prl-${state.projectRepositoryLinks.length + 1}`,
+        tenantId: (state.projectRepositoryLinks[0]?.tenantId ?? 'tenant_default'),
         projectId: action.projectId,
         repositoryId: action.repositoryId,
         role: 'secondary',
@@ -296,12 +313,14 @@ function reducer(state: AppState, action: Action): AppState {
       const now = new Date().toISOString();
       const nextRoadmap: RoadmapItem = {
         ...(state.roadmapItems[0] ?? {
+          tenantId: 'tenant_default',
           createdAt: now,
           createdBy: 'planner',
           updatedAt: now,
           updatedBy: 'planner'
         }),
         id: `rm-${state.roadmapItems.length + 1}`,
+        tenantId: (state.roadmapItems[0]?.tenantId ?? 'tenant_default'),
         projectId: action.projectId,
         title: `Proposal from chat #${state.roadmapItems.length + 1}`,
         description: action.content,
@@ -315,12 +334,14 @@ function reducer(state: AppState, action: Action): AppState {
       };
       const nextApproval: Approval = {
         ...(state.approvals[0] ?? {
+          tenantId: 'tenant_default',
           createdAt: now,
           createdBy: 'planner',
           updatedAt: now,
           updatedBy: 'planner'
         }),
         id: `app-${state.approvals.length + 1}`,
+        tenantId: (state.approvals[0]?.tenantId ?? 'tenant_default'),
         subjectType: 'roadmap_item',
         subjectId: nextRoadmap.id,
         status: 'pending',
@@ -343,12 +364,14 @@ function reducer(state: AppState, action: Action): AppState {
       const now = new Date().toISOString();
       const nextTask: Task = {
         ...(state.tasks[0] ?? {
+          tenantId: 'tenant_default',
           createdAt: now,
           createdBy: 'planner',
           updatedAt: now,
           updatedBy: 'planner'
         }),
         id: `task-${state.tasks.length + 1}`,
+        tenantId: (state.tasks[0]?.tenantId ?? 'tenant_default'),
         projectId: item.projectId,
         roadmapItemId: item.id,
         title: item.title,
@@ -449,6 +472,7 @@ const AppStoreContext = createContext<{
     logout: () => Promise<void>;
     clearError: () => void;
     apiFetch: (path: string, init?: RequestInit) => Promise<Response>;
+    apiFetchJson: <T>(path: string, init?: RequestInit) => Promise<{ response: Response; body: T }>;
   };
 } | null>(null);
 
@@ -637,6 +661,31 @@ export function AppStoreProvider({
       return response;
     },
     [auth.enabled, auth.token, refreshAccessSession, toUrl]
+  );
+
+  const apiFetchJson = useCallback(
+    async <T,>(path: string, init: RequestInit = {}): Promise<{ response: Response; body: T }> => {
+      const response = await apiFetch(path, init);
+      if (!isJsonResponse(response)) {
+        const raw = await response.text();
+        const responseUrl = response.url || toUrl(path);
+        const preview = summarizeResponseText(raw);
+        console.error('apiFetchJson expected JSON response', {
+          path,
+          responseUrl,
+          status: response.status,
+          contentType: response.headers.get('content-type'),
+          preview
+        });
+        throw new Error(
+          `Expected JSON, received HTML/non-JSON response from ${responseUrl} (HTTP ${response.status}).` +
+            ` Preview: ${preview}`
+        );
+      }
+      const body = (await response.json()) as T;
+      return { response, body };
+    },
+    [apiFetch, toUrl]
   );
 
   const bootstrapSession = useCallback(async () => {
@@ -925,10 +974,11 @@ export function AppStoreProvider({
         completeOidcCallback,
         logout,
         clearError,
-        apiFetch
+        apiFetch,
+        apiFetchJson
       }
     }),
-    [state, auth, login, completeOidcCallback, logout, clearError, apiFetch]
+    [state, auth, login, completeOidcCallback, logout, clearError, apiFetch, apiFetchJson]
   );
 
   return <AppStoreContext.Provider value={value}>{children}</AppStoreContext.Provider>;

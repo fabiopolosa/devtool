@@ -7,6 +7,7 @@ import type {
   AutoResearchRun,
   BrainstormPlan,
   BrainstormSession,
+  CodingWorkflow,
   ChatMessage,
   ChatThread,
   DelegatedPermission,
@@ -21,6 +22,7 @@ import type {
   ModelRoutingPreference,
   OidcAuthState,
   Policy,
+  PromptRegistryEntry,
   Project,
   ProjectProviderBinding,
   ProjectRoleBinding,
@@ -38,9 +40,16 @@ import type {
   RetrievalQueryLog,
   RoadmapItem,
   Session,
+  Tenant,
+  UserTenant,
+  Job,
+  KnowledgeNode,
+  KnowledgeConfig,
+  ContextNote,
   SecretConfig,
   SchemaDoc,
   Skill,
+  UsageEvent,
   Subprompt,
   RoutingRule,
   Task,
@@ -71,11 +80,15 @@ export interface DatabaseTables {
   verification_steps: VerificationStep;
   memory_entries: MemoryEntry;
   memory_chunks: MemoryChunk;
+  knowledge_nodes: KnowledgeNode;
+  knowledge_configs: KnowledgeConfig;
+  context_notes: ContextNote;
   embedding_jobs: EmbeddingJob;
   retrieval_query_logs: RetrievalQueryLog;
   research_notes: ResearchNote;
   policies: Policy;
   prompt_versions: PromptVersion;
+  prompt_registry: PromptRegistryEntry;
   routing_rules: RoutingRule;
   autoresearch_experiments: AutoResearchExperiment;
   autoresearch_runs: AutoResearchRun;
@@ -93,6 +106,7 @@ export interface DatabaseTables {
   user_roles: UserRole;
   sessions: Session;
   audit_events: AuditEvent;
+  usage_events: UsageEvent;
   project_role_bindings: ProjectRoleBinding;
   repository_role_bindings: RepositoryRoleBinding;
   delegated_permissions: DelegatedPermission;
@@ -101,9 +115,13 @@ export interface DatabaseTables {
   provider_discovery_logs: ProviderDiscoveryLog;
   brainstorm_sessions: BrainstormSession;
   brainstorm_plans: BrainstormPlan;
+  coding_workflows: CodingWorkflow;
   mcp_connections: McpConnection;
   mcp_delegation_runs: McpDelegationRun;
   subprompts: Subprompt;
+  tenants: Tenant;
+  user_tenants: UserTenant;
+  jobs: Job;
 }
 
 export type TableName = keyof DatabaseTables;

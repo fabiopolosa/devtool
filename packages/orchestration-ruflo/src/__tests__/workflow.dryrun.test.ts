@@ -75,6 +75,7 @@ describe("Ruflo workflow dry-run", () => {
     const now = new Date().toISOString();
     const task: Task = {
       id: "task_lifecycle_001",
+      tenantId: "tenant_default",
       projectId: "proj_001",
       title: "Lifecycle test",
       type: "feature",
@@ -125,6 +126,7 @@ describe("Ruflo workflow dry-run", () => {
     const now = new Date().toISOString();
     const task: Task = {
       id: "task_invalid_001",
+      tenantId: "tenant_default",
       projectId: "proj_001",
       title: "Invalid lifecycle test",
       type: "feature",

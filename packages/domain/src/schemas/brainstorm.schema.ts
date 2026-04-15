@@ -78,6 +78,7 @@ export const brainstormPlanPayloadSchema = z.object({
 
 export const brainstormPlanSchema = z.object({
   id: idSchema,
+  tenantId: idSchema,
   sessionId: idSchema,
   title: z.string().min(1),
   executiveSummary: z.string().min(1),
@@ -90,6 +91,7 @@ export const brainstormPlanSchema = z.object({
 
 export const brainstormSessionSchema = z.object({
   id: idSchema,
+  tenantId: idSchema,
   threadId: idSchema.optional(),
   projectId: idSchema.optional(),
   status: z.enum(["collecting", "planned", "approved", "applied", "archived"]),

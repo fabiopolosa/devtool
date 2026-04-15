@@ -1,5 +1,5 @@
-import type { ChatReasoningProvider, CodingProvider, ProviderModelDescriptor, ProviderRequestContext } from "@cp/domain";
-import { BaseProviderAdapter } from "./base-provider.js";
+import type { ChatReasoningProvider, CodingProvider, ProviderModelDescriptor, ProviderRequestContext, CapabilityClass } from "@cp/domain";
+import { BaseProviderAdapter, type RequestJsonOptions } from "./base-provider.js";
 
 interface OpenRouterChatResponse {
   model?: string;
@@ -7,12 +7,101 @@ interface OpenRouterChatResponse {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
+interface OpenRouterModelCatalogItem {
+  id?: string;
+  name?: string;
+  context_length?: number;
+  pricing?: { prompt?: number; completion?: number; input?: number; output?: number };
+  architecture?: { modality?: string };
+  top_provider?: { id?: string };
+}
+
+interface OpenRouterModelCatalogResponse {
+  data?: OpenRouterModelCatalogItem[];
+}
+
+const openRouterSupportsCapability = (item: OpenRouterModelCatalogItem, capabilityClass: CapabilityClass): boolean => {
+  const modality = item.architecture?.modality?.toLowerCase();
+  const modelId = (item.id ?? item.name ?? "").toLowerCase();
+
+  if (capabilityClass === "embedding") {
+    return modality?.includes("embedding") ?? modelId.includes("embedding");
+  }
+  if (capabilityClass === "image_generation" || capabilityClass === "image_editing") {
+    return modality?.includes("image") ?? modelId.includes("image");
+  }
+  if (capabilityClass === "vision_analysis") {
+    return modality?.includes("vision") ?? modelId.includes("vision");
+  }
+  return true;
+};
+
+const discoverOpenRouterModels = async (
+  capabilityClass: CapabilityClass,
+  resolveEndpoint: (defaultEndpoint: string, envKey: string) => string,
+  requireApiKey: () => string,
+  requestJson: <T>(url: string, options?: RequestJsonOptions, context?: ProviderRequestContext) => Promise<T>,
+  defaultDescriptor: (modelId: string, metadata?: Record<string, unknown>) => ProviderModelDescriptor,
+  fallbackModelId: string
+): Promise<ProviderModelDescriptor[]> => {
+  try {
+    const endpoint = resolveEndpoint("https://openrouter.ai/api/v1", "OPENROUTER_BASE_URL");
+    const apiKey = requireApiKey();
+    const response = await requestJson<OpenRouterModelCatalogResponse>(`${endpoint}/models`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...(process.env.OPENROUTER_REFERER ? { "HTTP-Referer": process.env.OPENROUTER_REFERER } : {})
+      }
+    });
+
+    const descriptors = (response.data ?? [])
+      .filter((item) => typeof item.id === "string" && item.id.trim().length > 0)
+      .filter((item) => openRouterSupportsCapability(item, capabilityClass))
+      .map((item) => ({
+        ...defaultDescriptor(item.id!, {
+          displayName: item.name ?? item.id,
+          family: capabilityClass,
+          providerDiscovery: "openrouter",
+          ...(item.top_provider?.id ? { topProviderId: item.top_provider.id } : {}),
+          ...(item.pricing
+            ? {
+                pricing: {
+                  input: item.pricing.input ?? item.pricing.prompt,
+                  output: item.pricing.output ?? item.pricing.completion
+                }
+              }
+            : {})
+        }),
+        ...(item.context_length !== undefined ? { contextWindow: item.context_length } : {})
+      }));
+
+    if (descriptors.length > 0) {
+      return descriptors;
+    }
+  } catch (error) {
+    console.warn("OpenRouter model discovery fallback", {
+      capabilityClass,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  return [defaultDescriptor(fallbackModelId, { family: capabilityClass, providerDiscovery: "fallback" })];
+};
+
 export class OpenRouterChatProvider extends BaseProviderAdapter<"chat_reasoning"> implements ChatReasoningProvider {
   provider = "openrouter" as const;
   capabilityClass = "chat_reasoning" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("openrouter-chat-default", { family: "reasoning" })];
+    return discoverOpenRouterModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "openrouter-chat-default"
+    );
   }
 
   async run(request: Parameters<ChatReasoningProvider["run"]>[0], context: ProviderRequestContext) {
@@ -76,7 +165,14 @@ export class OpenRouterCodingProvider extends BaseProviderAdapter<"coding"> impl
   capabilityClass = "coding" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("openrouter-coding-default", { family: "coding" })];
+    return discoverOpenRouterModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "openrouter-coding-default"
+    );
   }
 
   async run(request: Parameters<CodingProvider["run"]>[0], context: ProviderRequestContext) {

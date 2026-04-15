@@ -84,12 +84,14 @@ const installApiFetchMock = () => {
 describe("Agents pages smoke", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   it("renders agents list page", async () => {
     installApiFetchMock();
-    window.history.pushState({}, "", "/agents");
-    await router.navigate({ to: "/agents" });
+    window.localStorage.setItem("cp_owner_mode", "1");
+    window.history.pushState({}, "", "/settings/agents");
+    await router.navigate({ to: "/settings/agents" });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>
@@ -103,8 +105,9 @@ describe("Agents pages smoke", () => {
 
   it("renders agent create page", async () => {
     installApiFetchMock();
-    window.history.pushState({}, "", "/agents/new");
-    await router.navigate({ to: "/agents/new" });
+    window.localStorage.setItem("cp_owner_mode", "1");
+    window.history.pushState({}, "", "/settings/agents/new");
+    await router.navigate({ to: "/settings/agents/new" });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>
@@ -118,8 +121,9 @@ describe("Agents pages smoke", () => {
 
   it("renders runtime diagnostics page", async () => {
     installApiFetchMock();
-    window.history.pushState({}, "", "/runtime");
-    await router.navigate({ to: "/runtime" });
+    window.localStorage.setItem("cp_owner_mode", "1");
+    window.history.pushState({}, "", "/settings/runtime");
+    await router.navigate({ to: "/settings/runtime" });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>

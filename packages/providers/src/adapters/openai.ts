@@ -4,11 +4,12 @@ import type {
   EmbeddingProvider,
   ImageEditingProvider,
   ImageGenerationProvider,
+  CapabilityClass,
   VisionAnalysisProvider,
   ProviderModelDescriptor,
   ProviderRequestContext
 } from "@cp/domain";
-import { BaseProviderAdapter } from "./base-provider.js";
+import { BaseProviderAdapter, type RequestJsonOptions } from "./base-provider.js";
 
 interface OpenAIChatCompletionResponse {
   model?: string;
@@ -25,12 +26,139 @@ interface OpenAIImageResponse {
   data?: Array<{ b64_json?: string }>;
 }
 
+interface OpenAIModelCatalogItem {
+  id?: string;
+  display_name?: string;
+  context_window?: number;
+  max_context_tokens?: number;
+  max_output_tokens?: number;
+  pricing?: { input?: number; output?: number; prompt?: number; completion?: number };
+  input_price?: number;
+  output_price?: number;
+}
+
+interface OpenAIModelCatalogResponse {
+  data?: OpenAIModelCatalogItem[];
+}
+
+const openAIModelHints: Record<string, { contextWindow?: number; maxOutputTokens?: number; displayName?: string; family?: string }> = {
+  "gpt-5.1": { contextWindow: 256000, maxOutputTokens: 16384, family: "reasoning" },
+  "gpt-5.1-codex": { contextWindow: 256000, maxOutputTokens: 16384, family: "coding" },
+  "text-embedding-3-large": { contextWindow: 8192, family: "embedding" },
+  "text-embedding-3-small": { contextWindow: 8192, family: "embedding" },
+  "gpt-image-1": { family: "image_generation" },
+  "gpt-image-1-edit": { family: "image_editing" },
+  "gpt-5.1-vision": { contextWindow: 256000, family: "vision_analysis" }
+};
+
+const matchesOpenAICapability = (modelId: string, capabilityClass: CapabilityClass): boolean => {
+  const normalized = modelId.toLowerCase();
+  switch (capabilityClass) {
+    case "embedding":
+      return normalized.includes("embedding");
+    case "image_generation":
+      return normalized.includes("image");
+    case "image_editing":
+      return normalized.includes("image") || normalized.includes("edit");
+    case "vision_analysis":
+      return normalized.includes("vision") || normalized.includes("4o") || normalized.includes("omni");
+    case "coding":
+      return /codex|code|gpt-5\.1|gpt-4\.1|o\d/.test(normalized) && !normalized.includes("embedding");
+    case "chat_reasoning":
+      return /gpt|claude|o\d|gemini|llama|mistral|command|grok/.test(normalized) && !normalized.includes("embedding") && !normalized.includes("image");
+    default:
+      return true;
+  }
+};
+
+const catalogMetadata = (item: OpenAIModelCatalogItem): Record<string, unknown> => ({
+  ...(item.display_name ? { displayName: item.display_name } : {}),
+  ...(item.pricing
+    ? {
+        pricing: {
+          input: item.pricing.input ?? item.pricing.prompt ?? item.input_price,
+          output: item.pricing.output ?? item.pricing.completion ?? item.output_price
+        }
+      }
+    : item.input_price !== undefined || item.output_price !== undefined
+      ? {
+          pricing: {
+            ...(item.input_price !== undefined ? { input: item.input_price } : {}),
+            ...(item.output_price !== undefined ? { output: item.output_price } : {})
+          }
+        }
+      : {})
+});
+
+const modelDescriptorFromCatalogItem = (
+  capabilityClass: "chat_reasoning" | "coding" | "embedding" | "image_generation" | "image_editing" | "vision_analysis",
+  defaultDescriptor: (modelId: string, metadata?: Record<string, unknown>) => ProviderModelDescriptor,
+  item: OpenAIModelCatalogItem
+): ProviderModelDescriptor | null => {
+  if (!item.id || !matchesOpenAICapability(item.id, capabilityClass)) {
+    return null;
+  }
+
+  const hint = openAIModelHints[item.id] ?? {};
+  const contextWindow = item.context_window ?? item.max_context_tokens ?? hint.contextWindow;
+  const maxOutputTokens = item.max_output_tokens ?? hint.maxOutputTokens;
+  return {
+    ...defaultDescriptor(item.id, {
+      ...catalogMetadata(item),
+      family: hint.family ?? capabilityClass,
+      providerDiscovery: "openai"
+    }),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {})
+  };
+};
+
+const discoverOpenAIModels = async (
+  capabilityClass: "chat_reasoning" | "coding" | "embedding" | "image_generation" | "image_editing" | "vision_analysis",
+  resolveEndpoint: (defaultEndpoint: string, envKey: string) => string,
+  requireApiKey: () => string,
+  requestJson: <T>(url: string, options?: RequestJsonOptions, context?: ProviderRequestContext) => Promise<T>,
+  defaultDescriptor: (modelId: string, metadata?: Record<string, unknown>) => ProviderModelDescriptor,
+  fallbackModelId: string
+): Promise<ProviderModelDescriptor[]> => {
+  try {
+    const endpoint = resolveEndpoint("https://api.openai.com/v1", "OPENAI_BASE_URL");
+    const apiKey = requireApiKey();
+    const response = await requestJson<OpenAIModelCatalogResponse>(`${endpoint}/models`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` }
+    });
+
+    const descriptors = (response.data ?? [])
+      .map((item) => modelDescriptorFromCatalogItem(capabilityClass, defaultDescriptor, item))
+      .filter((item): item is ProviderModelDescriptor => Boolean(item));
+
+    if (descriptors.length > 0) {
+      return descriptors;
+    }
+  } catch (error) {
+    console.warn("OpenAI model discovery fallback", {
+      capabilityClass,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  return [defaultDescriptor(fallbackModelId, { family: capabilityClass, providerDiscovery: "fallback" })];
+};
+
 export class OpenAIChatProvider extends BaseProviderAdapter<"chat_reasoning"> implements ChatReasoningProvider {
   provider = "openai" as const;
   capabilityClass = "chat_reasoning" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("gpt-5.1", { contextWindow: 256000, family: "reasoning" })];
+    return discoverOpenAIModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "gpt-5.1"
+    );
   }
 
   async run(request: Parameters<ChatReasoningProvider["run"]>[0], context: ProviderRequestContext) {
@@ -93,7 +221,14 @@ export class OpenAICodingProvider extends BaseProviderAdapter<"coding"> implemen
   capabilityClass = "coding" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("gpt-5.1-codex", { contextWindow: 256000, family: "coding" })];
+    return discoverOpenAIModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "gpt-5.1-codex"
+    );
   }
 
   async run(request: Parameters<CodingProvider["run"]>[0], context: ProviderRequestContext) {
@@ -157,7 +292,14 @@ export class OpenAIEmbeddingProvider extends BaseProviderAdapter<"embedding"> im
   capabilityClass = "embedding" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("text-embedding-3-large", { dimensions: 3072 })];
+    return discoverOpenAIModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "text-embedding-3-large"
+    );
   }
 
   async embed(request: Parameters<EmbeddingProvider["embed"]>[0], context: ProviderRequestContext) {
@@ -217,7 +359,14 @@ export class OpenAIImageGenerationProvider extends BaseProviderAdapter<"image_ge
   capabilityClass = "image_generation" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("gpt-image-1", { family: "image_generation" })];
+    return discoverOpenAIModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "gpt-image-1"
+    );
   }
 
   async generate(request: Parameters<ImageGenerationProvider["generate"]>[0], context: ProviderRequestContext) {
@@ -272,7 +421,14 @@ export class OpenAIImageEditingProvider extends BaseProviderAdapter<"image_editi
   capabilityClass = "image_editing" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("gpt-image-1-edit", { family: "image_editing" })];
+    return discoverOpenAIModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "gpt-image-1-edit"
+    );
   }
 
   async edit(request: Parameters<ImageEditingProvider["edit"]>[0], context: ProviderRequestContext) {
@@ -326,7 +482,14 @@ export class OpenAIVisionProvider extends BaseProviderAdapter<"vision_analysis">
   capabilityClass = "vision_analysis" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("gpt-5.1-vision", { family: "vision_analysis" })];
+    return discoverOpenAIModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "gpt-5.1-vision"
+    );
   }
 
   async analyze(request: Parameters<VisionAnalysisProvider["analyze"]>[0], context: ProviderRequestContext) {

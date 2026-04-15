@@ -13,6 +13,8 @@ import type {
   RepositoryRoleBinding,
   Role,
   Session,
+  TenantPermissions,
+  TenantRole,
   User,
   UserRole
 } from "@cp/domain";
@@ -25,6 +27,9 @@ declare module "fastify" {
 
   interface FastifyRequest {
     authPrincipal: SessionPrincipal | undefined;
+    tenantId: string | undefined;
+    tenantRole: TenantRole | undefined;
+    tenantPermissions: TenantPermissions | undefined;
   }
 }
 

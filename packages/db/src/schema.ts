@@ -21,6 +21,7 @@ export const projects = pgTable(
   "projects",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     key: text("key").notNull(),
     name: text("name").notNull(),
     description: text("description"),
@@ -35,6 +36,7 @@ export const repositories = pgTable(
   "repositories",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     name: text("name").notNull(),
     url: text("url").notNull(),
     vcsProvider: text("vcs_provider").notNull(),
@@ -50,6 +52,7 @@ export const projectRepositoryLinks = pgTable(
   "project_repository_links",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     projectId: text("project_id").notNull(),
     repositoryId: text("repository_id").notNull(),
     role: text("role").notNull(),
@@ -66,6 +69,7 @@ export const roadmapItems = pgTable(
   "roadmap_items",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     projectId: text("project_id").notNull(),
     title: text("title").notNull(),
     description: text("description").notNull(),
@@ -87,6 +91,7 @@ export const tasks = pgTable(
   "tasks",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     projectId: text("project_id").notNull(),
     roadmapItemId: text("roadmap_item_id"),
     title: text("title").notNull(),
@@ -116,6 +121,7 @@ export const taskRuns = pgTable(
   "task_runs",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     taskId: text("task_id").notNull(),
     workflowId: text("workflow_id").notNull(),
     status: text("status").notNull(),
@@ -134,6 +140,7 @@ export const artifacts = pgTable(
   "artifacts",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     runId: text("run_id").notNull(),
     taskId: text("task_id").notNull(),
     type: text("type").notNull(),
@@ -229,6 +236,55 @@ export const memoryChunks = pgTable(
   ]
 );
 
+export const knowledgeNodes = pgTable(
+  "knowledge_nodes",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id"),
+    projectId: text("project_id"),
+    scope: text("scope").notNull(),
+    path: text("path").notNull(),
+    content: text("content").notNull(),
+    embedding: jsonb("embedding").$type<number[]>(),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("ux_knowledge_nodes_scope_path").on(table.scope, table.path),
+    index("idx_knowledge_nodes_scope").on(table.scope),
+    index("idx_knowledge_nodes_tenant").on(table.tenantId),
+    index("idx_knowledge_nodes_project").on(table.projectId),
+    index("idx_knowledge_nodes_path").on(table.path)
+  ]
+);
+
+export const knowledgeConfigs = pgTable(
+  "knowledge_configs",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    projectId: text("project_id"),
+    scope: text("scope").notNull(),
+    autoCapture: boolean("auto_capture").notNull(),
+    captureModes: jsonb("capture_modes").$type<string[]>().notNull(),
+    requireApproval: boolean("require_approval").notNull(),
+    maxNodes: integer("max_nodes").notNull(),
+    relevanceThreshold: doublePrecision("relevance_threshold").notNull(),
+    versioning: boolean("versioning").notNull(),
+    requireReview: boolean("require_review").notNull(),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("ux_knowledge_configs_tenant_scope_project").on(
+      table.tenantId,
+      table.scope,
+      table.projectId
+    ),
+    index("idx_knowledge_configs_tenant").on(table.tenantId),
+    index("idx_knowledge_configs_project").on(table.projectId),
+    index("idx_knowledge_configs_scope").on(table.scope)
+  ]
+);
+
 export const embeddingJobs = pgTable(
   "embedding_jobs",
   {
@@ -283,6 +339,28 @@ export const researchNotes = pgTable(
   (table) => [index("idx_research_notes_project").on(table.projectId), index("idx_research_notes_task").on(table.taskId)]
 );
 
+export const contextNotes = pgTable(
+  "context_notes",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    projectId: text("project_id").notNull(),
+    path: text("path").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    tags: jsonb("tags").$type<string[]>().notNull(),
+    linkRefs: jsonb("link_refs").$type<string[]>().notNull(),
+    pinned: boolean("pinned").notNull(),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("ux_context_notes_tenant_project_path").on(table.tenantId, table.projectId, table.path),
+    index("idx_context_notes_tenant").on(table.tenantId),
+    index("idx_context_notes_project").on(table.projectId),
+    index("idx_context_notes_path").on(table.path)
+  ]
+);
+
 export const policies = pgTable(
   "policies",
   {
@@ -309,6 +387,30 @@ export const promptVersions = pgTable(
     ...auditColumns
   },
   (table) => [index("idx_prompt_versions_role").on(table.role)]
+);
+
+export const promptRegistry = pgTable(
+  "prompt_registry",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id"),
+    projectId: text("project_id"),
+    type: text("type").notNull(),
+    scope: text("scope").notNull(),
+    target: text("target").notNull(),
+    version: text("version").notNull(),
+    content: text("content").notNull(),
+    status: text("status").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_prompt_registry_tenant").on(table.tenantId),
+    index("idx_prompt_registry_project").on(table.projectId),
+    index("idx_prompt_registry_scope").on(table.scope),
+    index("idx_prompt_registry_status").on(table.status),
+    index("idx_prompt_registry_scope_type_target").on(table.scope, table.type, table.target)
+  ]
 );
 
 export const routingRules = pgTable(
@@ -364,6 +466,7 @@ export const approvals = pgTable(
   "approvals",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     subjectType: text("subject_type").notNull(),
     subjectId: text("subject_id").notNull(),
     status: text("status").notNull(),
@@ -406,15 +509,28 @@ export const providerConfigs = pgTable(
   "provider_configs",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     provider: text("provider").notNull(),
+    providerId: text("provider_id").notNull(),
+    apiKey: text("api_key"),
     endpoint: text("endpoint"),
     authRef: text("auth_ref").notNull(),
+    secretRef: text("secret_ref"),
     enabled: boolean("enabled").notNull(),
     timeoutMs: integer("timeout_ms").notNull(),
+    validationStatus: text("validation_status").notNull(),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true, mode: "string" }),
+    validationError: text("validation_error"),
+    requestsPerMinute: integer("requests_per_minute"),
+    tokensPerMinute: integer("tokens_per_minute"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull(),
     ...auditColumns
   },
-  (table) => [index("idx_provider_configs_provider").on(table.provider)]
+  (table) => [
+    index("idx_provider_configs_tenant").on(table.tenantId),
+    index("idx_provider_configs_provider").on(table.provider),
+    index("idx_provider_configs_provider_id").on(table.providerId)
+  ]
 );
 
 export const providerCapabilities = pgTable(
@@ -581,6 +697,9 @@ export const auditEvents = pgTable(
   "audit_events",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id"),
+    projectId: text("project_id"),
+    jobId: text("job_id"),
     userId: text("user_id"),
     action: text("action").notNull(),
     resourceType: text("resource_type").notNull(),
@@ -591,10 +710,38 @@ export const auditEvents = pgTable(
     ...auditColumns
   },
   (table) => [
+    index("idx_audit_events_tenant").on(table.tenantId),
+    index("idx_audit_events_project").on(table.projectId),
+    index("idx_audit_events_job").on(table.jobId),
     index("idx_audit_events_user").on(table.userId),
     index("idx_audit_events_action").on(table.action),
     index("idx_audit_events_resource").on(table.resourceType, table.resourceId),
     index("idx_audit_events_occurred").on(table.occurredAt)
+  ]
+);
+
+export const usageEvents = pgTable(
+  "usage_events",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    projectId: text("project_id"),
+    jobId: text("job_id"),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    cost: doublePrecision("cost").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull(),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_usage_events_tenant").on(table.tenantId),
+    index("idx_usage_events_project").on(table.projectId),
+    index("idx_usage_events_job").on(table.jobId),
+    index("idx_usage_events_provider").on(table.provider),
+    index("idx_usage_events_model").on(table.model),
+    index("idx_usage_events_created").on(table.createdAt)
   ]
 );
 
@@ -866,6 +1013,7 @@ export const brainstormSessions = pgTable(
   "brainstorm_sessions",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     threadId: text("thread_id"),
     projectId: text("project_id"),
     status: text("status").notNull(),
@@ -889,6 +1037,7 @@ export const brainstormPlans = pgTable(
   "brainstorm_plans",
   {
     id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
     sessionId: text("session_id").notNull(),
     title: text("title").notNull(),
     executiveSummary: text("executive_summary").notNull(),
@@ -933,5 +1082,101 @@ export const mcpDelegationRuns = pgTable(
     index("idx_mcp_delegation_runs_connection").on(table.connectionId),
     index("idx_mcp_delegation_runs_status").on(table.status),
     index("idx_mcp_delegation_runs_operation").on(table.operation)
+  ]
+);
+
+export const tenants = pgTable(
+  "tenants",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull()
+  },
+  (table) => [uniqueIndex("ux_tenants_name").on(table.name)]
+);
+
+export const userTenants = pgTable(
+  "user_tenants",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    tenantId: text("tenant_id").notNull(),
+    role: text("role").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull()
+  },
+  (table) => [
+    index("idx_user_tenants_user").on(table.userId),
+    index("idx_user_tenants_tenant").on(table.tenantId),
+    uniqueIndex("ux_user_tenants_user_tenant").on(table.userId, table.tenantId)
+  ]
+);
+
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    projectId: text("project_id"),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    status: text("status").notNull(),
+    priority: integer("priority").notNull().default(0),
+    retryCount: integer("retry_count").notNull().default(0),
+    maxRetries: integer("max_retries").notNull().default(3),
+    actionRequired: boolean("action_required").notNull().default(false),
+    actionType: text("action_type"),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
+    dependencies: jsonb("dependencies").$type<string[]>().notNull(),
+    dependsOnCount: integer("depends_on_count").notNull().default(0),
+    ready: boolean("ready").notNull().default(false),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "string" }),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "string" }),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull()
+  },
+  (table) => [
+    index("idx_jobs_tenant").on(table.tenantId),
+    index("idx_jobs_project").on(table.projectId),
+    index("idx_jobs_status").on(table.status),
+    index("idx_jobs_type").on(table.type),
+    index("idx_jobs_priority").on(table.priority),
+    index("idx_jobs_action_required").on(table.actionRequired),
+    index("idx_jobs_resource").on(table.resourceType, table.resourceId),
+    index("idx_jobs_ready").on(table.ready),
+    index("idx_jobs_depends_on_count").on(table.dependsOnCount)
+  ]
+);
+
+export const codingWorkflows = pgTable(
+  "coding_workflows",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    projectId: text("project_id").notNull(),
+    title: text("title").notNull(),
+    request: text("request").notNull(),
+    state: text("state").notNull(),
+    planDecision: text("plan_decision").notNull(),
+    patchDecision: text("patch_decision").notNull(),
+    plan: jsonb("plan").$type<Record<string, unknown>>().notNull(),
+    generatedTaskIds: jsonb("generated_task_ids").$type<string[]>().notNull(),
+    actionRequired: boolean("action_required").notNull().default(false),
+    reviewSummary: text("review_summary"),
+    timeline: jsonb("timeline").$type<Record<string, unknown>[]>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull(),
+    createdBy: text("created_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull(),
+    updatedBy: text("updated_by").notNull()
+  },
+  (table) => [
+    index("idx_coding_workflows_tenant").on(table.tenantId),
+    index("idx_coding_workflows_project").on(table.projectId),
+    index("idx_coding_workflows_state").on(table.state),
+    index("idx_coding_workflows_plan_decision").on(table.planDecision),
+    index("idx_coding_workflows_patch_decision").on(table.patchDecision),
+    index("idx_coding_workflows_action_required").on(table.actionRequired)
   ]
 );

@@ -2,11 +2,11 @@ import clsx from 'clsx';
 import type { ReactNode } from 'react';
 
 export function Panel({ children, className }: { children: ReactNode; className?: string }) {
-  return <section className={clsx('shell-panel p-4 md:p-5', className)}>{children}</section>;
+  return <section className={clsx('shell-panel p-3 md:p-4', className)}>{children}</section>;
 }
 
 export function SoftPanel({ children, className }: { children: ReactNode; className?: string }) {
-  return <section className={clsx('shell-panel-soft p-4 md:p-5', className)}>{children}</section>;
+  return <section className={clsx('shell-panel-soft p-3 md:p-4', className)}>{children}</section>;
 }
 
 export function Pill({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'good' | 'warn' | 'bad' | 'accent' }) {
@@ -22,22 +22,12 @@ export function Pill({ children, tone = 'default' }: { children: ReactNode; tone
 
 export function StatCard({ label, value, hint }: { label: string; value: ReactNode; hint?: ReactNode }) {
   return (
-    <Panel className="min-h-[104px]">
+    <Panel className="min-h-[92px]">
       <div className="label">{label}</div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight text-[color:var(--text)]">{value}</div>
-      {hint ? <div className="mt-2 text-sm text-[color:var(--muted)]">{hint}</div> : null}
-      <div className="mt-3 flex items-end gap-1.5">
-        {[32, 52, 44, 67, 58, 74, 64].map((height, index) => (
-          <span
-            key={`${label}-${index}`}
-            className="w-1.5 rounded-full"
-            style={{
-              height: `${height / 4}px`,
-              background: 'linear-gradient(180deg, var(--accent-2), var(--accent))',
-              opacity: 0.5 + index * 0.06
-            }}
-          />
-        ))}
+      <div className="mt-1 text-[28px] font-semibold tracking-[-0.02em] leading-none text-[color:var(--text)]">{value}</div>
+      {hint ? <div className="mt-1 text-xs uppercase tracking-[0.12em] text-[color:var(--muted)]">{hint}</div> : null}
+      <div className="mt-3 h-[2px] w-full bg-[color:var(--line)]">
+        <div className="h-[2px] w-1/3 bg-[color:var(--accent)]" />
       </div>
     </Panel>
   );
@@ -45,10 +35,10 @@ export function StatCard({ label, value, hint }: { label: string; value: ReactNo
 
 export function SectionHeading({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-start justify-between gap-3">
+    <div className="mb-2 flex items-start justify-between gap-3 border-b border-[color:var(--line)] pb-2">
       <div>
         <div className="label">{subtitle}</div>
-        <h2 className="title-lg leading-7">{title}</h2>
+        <h2 className="title-lg leading-6">{title}</h2>
       </div>
       {action}
     </div>

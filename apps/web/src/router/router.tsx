@@ -1,13 +1,17 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { AppShell } from '@/layout/AppShell';
 import { DashboardPage } from '@/pages/DashboardPage';
+import { ActivityPage } from '@/pages/ActivityPage';
 import { ProjectsPage } from '@/pages/ProjectsPage';
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage';
+import { ProjectTasksPage } from '@/pages/ProjectTasksPage';
+import { ProjectPipelinesPage } from '@/pages/ProjectPipelinesPage';
 import { RepositoriesPage } from '@/pages/RepositoriesPage';
 import { RoadmapPage } from '@/pages/RoadmapPage';
 import { TaskDetailPage } from '@/pages/TaskDetailPage';
 import { RunDetailPage } from '@/pages/RunDetailPage';
 import { MemoryPage } from '@/pages/MemoryPage';
+import { KnowledgePage } from '@/pages/KnowledgePage';
 import { RetrievalPage } from '@/pages/RetrievalPage';
 import { ArtifactsPage } from '@/pages/ArtifactsPage';
 import { ApprovalsPage } from '@/pages/ApprovalsPage';
@@ -19,6 +23,7 @@ import { ProvidersPage } from '@/pages/ProvidersPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { AdminRbacPage } from '@/pages/AdminRbacPage';
 import { SkillsPage } from '@/pages/SkillsPage';
+import { AgentsOverviewPage } from '@/pages/AgentsOverviewPage';
 import { AgentsListPage } from '@/pages/AgentsListPage';
 import { AgentDetailPage } from '@/pages/AgentDetailPage';
 import { AgentCreatePage } from '@/pages/AgentCreatePage';
@@ -29,7 +34,13 @@ import { DatabasePage } from '@/pages/DatabasePage';
 import { StackPage } from '@/pages/StackPage';
 import { LocalReposPage } from '@/pages/LocalReposPage';
 import { VersioningPage } from '@/pages/VersioningPage';
+import { CodingWorkflowPage } from '@/pages/CodingWorkflowPage';
+import { ContextPage } from '@/pages/ContextPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { SettingsProvidersPage } from '@/pages/SettingsProvidersPage';
+import { SettingsKnowledgePage } from '@/pages/SettingsKnowledgePage';
+import { SettingsPromptsPage } from '@/pages/SettingsPromptsPage';
+import { HelpPage } from '@/pages/HelpPage';
 
 const rootRoute = createRootRoute({
   component: AppShell
@@ -47,154 +58,154 @@ const projectsRoute = createRoute({
   component: ProjectsPage
 });
 
-const projectRoute = createRoute({
+const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'projects/$projectId',
+  path: 'activity',
+  component: ActivityPage
+});
+
+const projectWorkspaceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId',
   component: ProjectDetailPage
 });
 
-const repositoriesRoute = createRoute({
+const projectTasksListRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'projects/$projectId/repositories',
+  path: 'project/$projectId/tasks',
+  component: ProjectTasksPage
+});
+
+const projectPipelinesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/pipelines',
+  component: ProjectPipelinesPage
+});
+
+const projectAgentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/agents',
+  component: AgentsListPage
+});
+
+const projectMonitoringRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/monitoring',
+  component: RuntimePage
+});
+
+const projectSchemasRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/schemas',
+  component: DatabasePage
+});
+
+const projectObservabilityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/observability',
+  component: RuntimePage
+});
+
+const projectCodingRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/coding',
+  component: CodingWorkflowPage
+});
+
+const projectContextRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/context',
+  component: ContextPage
+});
+
+const projectRepositoriesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/repositories',
   component: RepositoriesPage
 });
 
-const roadmapRoute = createRoute({
+const projectRoadmapRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'projects/$projectId/roadmap',
+  path: 'project/$projectId/roadmap',
   component: RoadmapPage
 });
 
-const taskRoute = createRoute({
+const projectTaskRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'tasks/$taskId',
+  path: 'project/$projectId/tasks/$taskId',
   component: TaskDetailPage
 });
 
-const runRoute = createRoute({
+const projectRunRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'runs/$runId',
+  path: 'project/$projectId/runs/$runId',
   component: RunDetailPage
 });
 
-const memoryRoute = createRoute({
+const projectMemoryRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'memory',
+  path: 'project/$projectId/memory',
   component: MemoryPage
 });
 
-const retrievalRoute = createRoute({
+const projectKnowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'retrieval/$runId',
+  path: 'project/$projectId/knowledge',
+  component: KnowledgePage
+});
+
+const projectRetrievalRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/retrieval/$runId',
   component: RetrievalPage
 });
 
-const artifactsRoute = createRoute({
+const projectArtifactsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'artifacts/$runId',
+  path: 'project/$projectId/artifacts/$runId',
   component: ArtifactsPage
 });
 
-const approvalsRoute = createRoute({
+const projectApprovalsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'approvals',
+  path: 'project/$projectId/approvals',
   component: ApprovalsPage
 });
 
-const experimentsRoute = createRoute({
+const projectExperimentsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'experiments',
+  path: 'project/$projectId/experiments',
   component: ExperimentsPage
 });
 
-const chatRoute = createRoute({
+const projectRufloRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'chat/$threadId',
+  path: 'project/$projectId/ruflo',
+  component: RuntimePage
+});
+
+const projectChatRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/chat/$threadId',
   component: ChatPage
 });
 
-const brainstormingRoute = createRoute({
+const projectBrainstormingRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'brainstorming',
+  path: 'project/$projectId/brainstorming',
   component: BrainstormingPage
 });
 
-const brainstormPlanRoute = createRoute({
+const projectBrainstormPlanRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'brainstorm/$id',
+  path: 'project/$projectId/brainstorm/$id',
   component: BrainstormPlanPage
-});
-
-const providersRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'providers',
-  component: ProvidersPage
-});
-
-const skillsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'skills',
-  component: SkillsPage
 });
 
 const agentsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'agents',
-  component: AgentsListPage
-});
-
-const agentCreateRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'agents/new',
-  component: AgentCreatePage
-});
-
-const agentDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'agents/$agentId',
-  component: AgentDetailPage
-});
-
-const runtimeRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'runtime',
-  component: RuntimePage
-});
-
-const mcpRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'mcp',
-  component: McpPage
-});
-
-const secretsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'secrets',
-  component: SecretsPage
-});
-
-const databaseRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'database',
-  component: DatabasePage
-});
-
-const stackRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'stack',
-  component: StackPage
-});
-
-const localReposRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'local-repos',
-  component: LocalReposPage
-});
-
-const versioningRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'versioning',
-  component: VersioningPage
+  component: AgentsOverviewPage
 });
 
 const settingsRoute = createRoute({
@@ -203,49 +214,196 @@ const settingsRoute = createRoute({
   component: SettingsPage
 });
 
+const settingsProvidersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/providers',
+  component: SettingsProvidersPage
+});
+
+const settingsSkillsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/skills',
+  component: SkillsPage
+});
+
+const settingsAgentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/agents',
+  component: AgentsListPage
+});
+
+const settingsAgentCreateRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/agents/new',
+  component: AgentCreatePage
+});
+
+const settingsAgentDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/agents/$agentId',
+  component: AgentDetailPage
+});
+
+const settingsRuntimeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/runtime',
+  component: RuntimePage
+});
+
+const settingsMcpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/mcp',
+  component: McpPage
+});
+
+const settingsSecretsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/secrets',
+  component: SecretsPage
+});
+
+const settingsDatabaseRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/database',
+  component: DatabasePage
+});
+
+const settingsStackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/stack',
+  component: StackPage
+});
+
+const settingsLocalReposRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/local-repos',
+  component: LocalReposPage
+});
+
+const settingsVersioningRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/versioning',
+  component: VersioningPage
+});
+
+const settingsAuditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/audit',
+  component: AdminRbacPage
+});
+
+const settingsUsageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/usage',
+  component: RuntimePage
+});
+
+const settingsTenantsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/tenants',
+  component: SettingsProvidersPage
+});
+
+const settingsKnowledgeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/knowledge',
+  component: SettingsKnowledgePage
+});
+
+const settingsPromptsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/prompts',
+  component: SettingsPromptsPage
+});
+
+const settingsModelsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/models',
+  component: ProvidersPage
+});
+
+const settingsMachinesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/machines',
+  component: StackPage
+});
+
+const settingsIntegrationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/integrations',
+  component: McpPage
+});
+
+const settingsRbacRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/rbac',
+  component: AdminRbacPage
+});
+
+const helpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'help',
+  component: HelpPage
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'login',
   component: LoginPage
 });
 
-const adminRbacRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'admin/rbac',
-  component: AdminRbacPage
-});
-
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  activityRoute,
   projectsRoute,
-  projectRoute,
-  repositoriesRoute,
-  roadmapRoute,
-  taskRoute,
-  runRoute,
-  memoryRoute,
-  retrievalRoute,
-  artifactsRoute,
-  approvalsRoute,
-  experimentsRoute,
-  chatRoute,
-  brainstormingRoute,
-  brainstormPlanRoute,
-  providersRoute,
-  skillsRoute,
+  projectWorkspaceRoute,
+  projectTasksListRoute,
+  projectPipelinesRoute,
+  projectAgentsRoute,
+  projectMonitoringRoute,
+  projectSchemasRoute,
+  projectObservabilityRoute,
+  projectCodingRoute,
+  projectContextRoute,
+  projectRepositoriesRoute,
+  projectRoadmapRoute,
+  projectTaskRoute,
+  projectRunRoute,
+  projectMemoryRoute,
+  projectKnowledgeRoute,
+  projectRetrievalRoute,
+  projectArtifactsRoute,
+  projectApprovalsRoute,
+  projectExperimentsRoute,
+  projectRufloRoute,
+  projectChatRoute,
+  projectBrainstormingRoute,
+  projectBrainstormPlanRoute,
   agentsRoute,
-  agentCreateRoute,
-  agentDetailRoute,
-  runtimeRoute,
-  mcpRoute,
-  secretsRoute,
-  databaseRoute,
-  stackRoute,
-  localReposRoute,
-  versioningRoute,
   settingsRoute,
-  loginRoute,
-  adminRbacRoute
+  settingsProvidersRoute,
+  settingsSkillsRoute,
+  settingsAgentsRoute,
+  settingsAgentCreateRoute,
+  settingsAgentDetailRoute,
+  settingsRuntimeRoute,
+  settingsMcpRoute,
+  settingsSecretsRoute,
+  settingsDatabaseRoute,
+  settingsStackRoute,
+  settingsLocalReposRoute,
+  settingsVersioningRoute,
+  settingsAuditRoute,
+  settingsUsageRoute,
+  settingsTenantsRoute,
+  settingsKnowledgeRoute,
+  settingsPromptsRoute,
+  settingsModelsRoute,
+  settingsMachinesRoute,
+  settingsIntegrationsRoute,
+  settingsRbacRoute,
+  helpRoute,
+  loginRoute
 ]);
 
 export const router = createRouter({ routeTree });

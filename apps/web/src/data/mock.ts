@@ -27,6 +27,7 @@ import type {
 } from '@cp/domain';
 
 const now = new Date().toISOString();
+const defaultTenantId = 'tenant_default';
 
 const audit = {
   createdAt: now,
@@ -39,6 +40,7 @@ export const projects: Project[] = [
   {
     ...audit,
     id: 'proj-control-plane',
+    tenantId: defaultTenantId,
     key: 'control-plane',
     name: 'AI Development Control-Plane',
     description: 'Core orchestration platform for multi-agent software execution.',
@@ -48,6 +50,7 @@ export const projects: Project[] = [
   {
     ...audit,
     id: 'proj-web-ops',
+    tenantId: defaultTenantId,
     key: 'web-ops',
     name: 'Web Ops Console',
     description: 'Operational UI and workflow oversight workspace.',
@@ -60,6 +63,7 @@ export const repositories: Repository[] = [
   {
     ...audit,
     id: 'repo-control-plane',
+    tenantId: defaultTenantId,
     name: 'control-plane',
     url: 'git@github.com:acme/control-plane.git',
     vcsProvider: 'github',
@@ -70,6 +74,7 @@ export const repositories: Repository[] = [
   {
     ...audit,
     id: 'repo-web-app',
+    tenantId: defaultTenantId,
     name: 'web-app',
     url: 'git@github.com:acme/web-app.git',
     vcsProvider: 'github',
@@ -83,6 +88,7 @@ export const projectRepositoryLinks: ProjectRepositoryLink[] = [
   {
     ...audit,
     id: 'prl-1',
+    tenantId: defaultTenantId,
     projectId: 'proj-control-plane',
     repositoryId: 'repo-control-plane',
     role: 'primary',
@@ -91,6 +97,7 @@ export const projectRepositoryLinks: ProjectRepositoryLink[] = [
   {
     ...audit,
     id: 'prl-2',
+    tenantId: defaultTenantId,
     projectId: 'proj-control-plane',
     repositoryId: 'repo-web-app',
     role: 'secondary',
@@ -102,6 +109,7 @@ export const roadmapItems: RoadmapItem[] = [
   {
     ...audit,
     id: 'rm-1',
+    tenantId: defaultTenantId,
     projectId: 'proj-control-plane',
     title: 'Provider capability registry',
     description: 'Model and route OpenAI, Anthropic, Gemini, OpenRouter, and Kie.ai by capability.',
@@ -112,6 +120,7 @@ export const roadmapItems: RoadmapItem[] = [
   {
     ...audit,
     id: 'rm-2',
+    tenantId: defaultTenantId,
     projectId: 'proj-control-plane',
     title: 'Memory and retrieval stack',
     description: 'Centralized memory, chunking, embeddings, and packet builder.',
@@ -122,6 +131,7 @@ export const roadmapItems: RoadmapItem[] = [
   {
     ...audit,
     id: 'rm-3',
+    tenantId: defaultTenantId,
     projectId: 'proj-web-ops',
     title: 'Dashboard polish pass',
     description: 'Operational panels, run inspection, and provider admin flows.',
@@ -135,6 +145,7 @@ export const tasks: Task[] = [
   {
     ...audit,
     id: 'task-provider-routing',
+    tenantId: defaultTenantId,
     projectId: 'proj-control-plane',
     roadmapItemId: 'rm-1',
     title: 'Implement provider routing and health fallback',
@@ -155,6 +166,7 @@ export const tasks: Task[] = [
   {
     ...audit,
     id: 'task-dashboard-ui',
+    tenantId: defaultTenantId,
     projectId: 'proj-web-ops',
     roadmapItemId: 'rm-3',
     title: 'Dashboard command center',
@@ -178,6 +190,7 @@ export const taskRuns: TaskRun[] = [
   {
     ...audit,
     id: 'run-1',
+    tenantId: defaultTenantId,
     taskId: 'task-provider-routing',
     workflowId: 'task_execute',
     status: 'running',
@@ -190,6 +203,7 @@ export const taskRuns: TaskRun[] = [
   {
     ...audit,
     id: 'run-2',
+    tenantId: defaultTenantId,
     taskId: 'task-dashboard-ui',
     workflowId: 'task_execute',
     status: 'queued',
@@ -204,6 +218,7 @@ export const approvals: Approval[] = [
   {
     ...audit,
     id: 'app-1',
+    tenantId: defaultTenantId,
     subjectType: 'roadmap_item',
     subjectId: 'rm-3',
     status: 'pending',
@@ -216,6 +231,7 @@ export const artifacts: Artifact[] = [
   {
     ...audit,
     id: 'art-1',
+    tenantId: defaultTenantId,
     runId: 'run-1',
     taskId: 'task-provider-routing',
     type: 'planner_output',
@@ -226,6 +242,7 @@ export const artifacts: Artifact[] = [
   {
     ...audit,
     id: 'art-2',
+    tenantId: defaultTenantId,
     runId: 'run-1',
     taskId: 'task-provider-routing',
     type: 'verification_log',

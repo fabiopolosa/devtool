@@ -1,5 +1,5 @@
-import type { ChatReasoningProvider, CodingProvider, ProviderModelDescriptor, ProviderRequestContext } from "@cp/domain";
-import { BaseProviderAdapter } from "./base-provider.js";
+import type { ChatReasoningProvider, CodingProvider, ProviderModelDescriptor, ProviderRequestContext, CapabilityClass } from "@cp/domain";
+import { BaseProviderAdapter, type RequestJsonOptions } from "./base-provider.js";
 
 interface AnthropicMessageResponse {
   model?: string;
@@ -7,12 +7,76 @@ interface AnthropicMessageResponse {
   usage?: { input_tokens?: number; output_tokens?: number };
 }
 
+interface AnthropicModelCatalogItem {
+  id?: string;
+  display_name?: string;
+  context_window?: number;
+  max_tokens?: number;
+  type?: string;
+}
+
+interface AnthropicModelCatalogResponse {
+  data?: AnthropicModelCatalogItem[];
+}
+
+const discoverAnthropicModels = async (
+  capabilityClass: CapabilityClass,
+  resolveEndpoint: (defaultEndpoint: string, envKey: string) => string,
+  requireApiKey: () => string,
+  requestJson: <T>(url: string, options?: RequestJsonOptions, context?: ProviderRequestContext) => Promise<T>,
+  defaultDescriptor: (modelId: string, metadata?: Record<string, unknown>) => ProviderModelDescriptor,
+  fallbackModelId: string
+): Promise<ProviderModelDescriptor[]> => {
+  try {
+    const endpoint = resolveEndpoint("https://api.anthropic.com/v1", "ANTHROPIC_BASE_URL");
+    const apiKey = requireApiKey();
+    const response = await requestJson<AnthropicModelCatalogResponse>(`${endpoint}/models`, {
+      method: "GET",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      }
+    });
+
+    const descriptors = (response.data ?? [])
+      .filter((item) => typeof item.id === "string" && item.id.trim().length > 0)
+      .map((item) => ({
+        ...defaultDescriptor(item.id!, {
+          displayName: item.display_name ?? item.id,
+          family: capabilityClass,
+          providerDiscovery: "anthropic",
+          ...(item.type ? { type: item.type } : {})
+        }),
+        ...(item.context_window !== undefined ? { contextWindow: item.context_window } : {}),
+        ...(item.max_tokens !== undefined ? { maxOutputTokens: item.max_tokens } : {})
+      }));
+
+    if (descriptors.length > 0) {
+      return descriptors;
+    }
+  } catch (error) {
+    console.warn("Anthropic model discovery fallback", {
+      capabilityClass,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  return [defaultDescriptor(fallbackModelId, { family: capabilityClass, providerDiscovery: "fallback" })];
+};
+
 export class AnthropicChatProvider extends BaseProviderAdapter<"chat_reasoning"> implements ChatReasoningProvider {
   provider = "anthropic" as const;
   capabilityClass = "chat_reasoning" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("claude-opus-4.1", { family: "reasoning" })];
+    return discoverAnthropicModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "claude-opus-4.1"
+    );
   }
 
   async run(request: Parameters<ChatReasoningProvider["run"]>[0], context: ProviderRequestContext) {
@@ -81,7 +145,14 @@ export class AnthropicCodingProvider extends BaseProviderAdapter<"coding"> imple
   capabilityClass = "coding" as const;
 
   async discoverModels(): Promise<ProviderModelDescriptor[]> {
-    return [this.defaultDescriptor("claude-sonnet-4.5", { family: "coding" })];
+    return discoverAnthropicModels(
+      this.capabilityClass,
+      this.resolveEndpoint.bind(this),
+      () => this.requireApiKey(),
+      this.requestJson.bind(this),
+      this.defaultDescriptor.bind(this),
+      "claude-sonnet-4.5"
+    );
   }
 
   async run(request: Parameters<CodingProvider["run"]>[0], context: ProviderRequestContext) {

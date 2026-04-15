@@ -25,19 +25,19 @@ import { Button, Panel, Pill, ProgressBar, SectionHeading, SoftPanel } from './c
 
 export function ProjectCard({ project, repoCount, roadmapCount, taskCount }: { project: Project; repoCount: number; roadmapCount: number; taskCount: number }) {
   return (
-    <Panel className="group transition hover:border-cyan-400/20 hover:shadow-glow">
+    <Panel>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="label">Project</div>
-          <h3 className="mt-1 text-xl font-semibold text-white">{project.name}</h3>
-          <p className="mt-2 text-sm text-slate-400">{project.description}</p>
+          <h3 className="mt-1 text-lg font-semibold text-[color:var(--text)]">{project.name}</h3>
+          <p className="mt-1 text-sm text-[color:var(--muted)]">{project.description}</p>
         </div>
         <Pill tone={project.status === 'active' ? 'good' : 'default'}>{project.status}</Pill>
       </div>
-      <div className="mt-4 grid grid-cols-3 gap-2 text-sm text-slate-300">
-        <SoftPanel className="p-3"><div className="label">Repos</div><div className="mt-1 text-lg text-white">{repoCount}</div></SoftPanel>
-        <SoftPanel className="p-3"><div className="label">Roadmap</div><div className="mt-1 text-lg text-white">{roadmapCount}</div></SoftPanel>
-        <SoftPanel className="p-3"><div className="label">Tasks</div><div className="mt-1 text-lg text-white">{taskCount}</div></SoftPanel>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-sm text-[color:var(--muted)]">
+        <SoftPanel className="p-2.5"><div className="label">Repos</div><div className="mt-1 text-base text-[color:var(--text)]">{repoCount}</div></SoftPanel>
+        <SoftPanel className="p-2.5"><div className="label">Roadmap</div><div className="mt-1 text-base text-[color:var(--text)]">{roadmapCount}</div></SoftPanel>
+        <SoftPanel className="p-2.5"><div className="label">Tasks</div><div className="mt-1 text-base text-[color:var(--text)]">{taskCount}</div></SoftPanel>
       </div>
     </Panel>
   );
@@ -49,15 +49,15 @@ export function RepoStatusCard({ repository, linkedProject }: { repository: Repo
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="label">Repository</div>
-          <h3 className="mt-1 text-lg font-semibold text-white">{repository.name}</h3>
-          <p className="mt-2 text-sm text-slate-400">{repository.url}</p>
+          <h3 className="mt-1 text-base font-semibold text-[color:var(--text)]">{repository.name}</h3>
+          <p className="mt-1 text-sm text-[color:var(--muted)]">{repository.url}</p>
         </div>
         <Pill tone={repository.status === 'active' ? 'good' : 'warn'}>{repository.status}</Pill>
       </div>
-      <div className="mt-4 grid gap-2 text-sm text-slate-300">
-        <div className="flex justify-between gap-3"><span className="text-slate-500">Default branch</span><span>{repository.defaultBranch}</span></div>
-        <div className="flex justify-between gap-3"><span className="text-slate-500">Project</span><span>{linkedProject ?? 'Unlinked'}</span></div>
-        <div className="flex justify-between gap-3"><span className="text-slate-500">Local path</span><span className="truncate">{repository.localPath ?? 'n/a'}</span></div>
+      <div className="mt-3 grid gap-2 text-sm text-[color:var(--text)]">
+        <div className="flex justify-between gap-3"><span className="text-[color:var(--muted)]">Default branch</span><span>{repository.defaultBranch}</span></div>
+        <div className="flex justify-between gap-3"><span className="text-[color:var(--muted)]">Project</span><span>{linkedProject ?? 'Unlinked'}</span></div>
+        <div className="flex justify-between gap-3"><span className="text-[color:var(--muted)]">Local path</span><span className="truncate">{repository.localPath ?? 'n/a'}</span></div>
       </div>
     </Panel>
   );
@@ -84,12 +84,12 @@ export function RoadmapItemCard({
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="label">Roadmap item</div>
-          <h3 className="mt-1 text-lg font-semibold text-white">{item.title}</h3>
+          <h3 className="mt-1 text-base font-semibold text-[color:var(--text)]">{item.title}</h3>
         </div>
         <Pill tone={tone as any}>{item.state}</Pill>
       </div>
-      <p className="mt-3 text-sm text-slate-400">{item.description}</p>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <p className="mt-2 text-sm text-[color:var(--muted)]">{item.description}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
         <Button variant="primary" onClick={onApprove}>Approve</Button>
         <Button onClick={onReject}>Reject</Button>
         <Button onClick={onMoveUp}>Up</Button>
@@ -127,13 +127,13 @@ export function TaskTimeline({ task, run }: { task: Task; run?: TaskRun | undefi
       <div className="space-y-3">
         {states.map((state, index) => (
           <div key={state} className="flex items-center gap-3">
-            <div className={`h-3 w-3 rounded-full ${index <= activeIndex ? 'bg-cyan-400' : 'bg-white/15'}`} />
-            <div className="flex-1 text-sm text-slate-300">{state}</div>
-            <div className="text-xs text-slate-500">{index === activeIndex ? 'current' : index < activeIndex ? 'done' : 'next'}</div>
+            <div className={`h-2 w-2 border ${index <= activeIndex ? 'border-[color:var(--accent)] bg-[color:var(--accent)]' : 'border-[color:var(--line)] bg-transparent'}`} />
+            <div className="flex-1 text-sm text-[color:var(--text)]">{state}</div>
+            <div className="text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">{index === activeIndex ? 'current' : index < activeIndex ? 'done' : 'next'}</div>
           </div>
         ))}
       </div>
-      {run ? <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300">Run status: {run.status} · retries {run.retryCount}</div> : null}
+      {run ? <div className="mt-3 border border-[color:var(--line)] bg-[color:var(--panel2)] p-3 text-sm text-[color:var(--text)]">Run status: {run.status} · retries {run.retryCount}</div> : null}
     </Panel>
   );
 }
@@ -145,18 +145,18 @@ export function VerificationSummary({ result, steps }: { result: VerificationRes
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="label">Verification</div>
-          <h3 className="mt-1 text-xl font-semibold text-white">{result.summary}</h3>
+          <h3 className="mt-1 text-lg font-semibold text-[color:var(--text)]">{result.summary}</h3>
         </div>
         <Pill tone={tone as any}>{result.overallStatus}</Pill>
       </div>
-      <div className="mt-4 space-y-3">
+      <div className="mt-3 space-y-2">
         {steps.map((step) => (
-          <div key={step.id} className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+          <div key={step.id} className="border border-[color:var(--line)] bg-[color:var(--panel2)] p-3 text-sm">
             <div className="flex items-center justify-between gap-3">
-              <div className="font-medium text-white">{step.stepType}</div>
+              <div className="font-medium text-[color:var(--text)]">{step.stepType}</div>
               <Pill tone={step.status === 'pass' ? 'good' : step.status === 'fail' ? 'bad' : 'default'}>{step.status}</Pill>
             </div>
-            <div className="mt-1 text-slate-400">{step.command}</div>
+            <div className="mt-1 text-[color:var(--muted)]">{step.command}</div>
           </div>
         ))}
       </div>
@@ -171,7 +171,7 @@ export function AgentRunTable({ runs }: { runs: TaskRun[] }) {
       <SectionHeading title="Agent runs" subtitle="Execution" />
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="text-slate-400">
+          <thead className="text-[color:var(--muted)]">
             <tr>
               <th className="py-2 pr-4 font-medium">Run</th>
               <th className="py-2 pr-4 font-medium">Status</th>
@@ -181,11 +181,11 @@ export function AgentRunTable({ runs }: { runs: TaskRun[] }) {
           </thead>
           <tbody>
             {runs.map((run) => (
-              <tr key={run.id} className="border-t border-white/5">
-                <td className="py-2 pr-4 text-white">{run.id}</td>
+              <tr key={run.id} className="border-t border-[color:var(--line)]">
+                <td className="py-2 pr-4 text-[color:var(--text)]">{run.id}</td>
                 <td className="py-2 pr-4"><Pill tone={run.status === 'completed' ? 'good' : run.status === 'failed' ? 'bad' : 'warn'}>{run.status}</Pill></td>
-                <td className="py-2 pr-4 text-slate-300">{run.retryCount}</td>
-                <td className="py-2 pr-4 text-slate-300">{run.costProxyInputTokens + run.costProxyOutputTokens}</td>
+                <td className="py-2 pr-4 text-[color:var(--text)]">{run.retryCount}</td>
+                <td className="py-2 pr-4 text-[color:var(--text)]">{run.costProxyInputTokens + run.costProxyOutputTokens}</td>
               </tr>
             ))}
           </tbody>
@@ -210,7 +210,7 @@ export function LiveAgentGrid({
   return (
     <Panel className="overflow-hidden">
       <SectionHeading title="Live Agent Mesh" subtitle="Parallel runtime overview" />
-      <div className="mb-3 grid gap-2 rounded-xl border p-3 text-xs md:grid-cols-3" style={{ borderColor: 'color-mix(in oklab, var(--line) 75%, transparent)', background: 'color-mix(in oklab, var(--panel2) 70%, transparent)' }}>
+      <div className="mb-3 grid gap-2 border p-3 text-xs md:grid-cols-3" style={{ borderColor: 'color-mix(in oklab, var(--line) 75%, transparent)', background: 'color-mix(in oklab, var(--panel2) 88%, transparent)' }}>
         <div>
           <div className="label">Active agents</div>
           <div className="mt-1 text-lg font-semibold text-[color:var(--text)]">{agents.length}</div>
@@ -236,12 +236,11 @@ export function LiveAgentGrid({
           return (
             <div
               key={agent.id}
-              className="group relative rounded-2xl border p-3 transition hover:-translate-y-0.5"
+              className="group relative border p-3"
               style={{
-                borderColor: 'color-mix(in oklab, var(--accent) 34%, transparent)',
+                borderColor: 'color-mix(in oklab, var(--line) 82%, transparent)',
                 background:
-                  'linear-gradient(160deg, color-mix(in oklab, var(--panel2) 78%, transparent), color-mix(in oklab, var(--accent) 9%, transparent))',
-                boxShadow: '0 10px 30px color-mix(in oklab, var(--accent) 16%, transparent)'
+                  'linear-gradient(160deg, color-mix(in oklab, var(--panel2) 90%, transparent), color-mix(in oklab, var(--accent) 6%, transparent))'
               }}
             >
               <div
@@ -254,7 +253,7 @@ export function LiveAgentGrid({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="font-medium text-[color:var(--text)]">{agent.name}</div>
-                  <div className="text-xs text-[color:var(--muted)]">{agent.role} · {agent.adapterType}</div>
+                  <div className="text-[11px] uppercase tracking-[0.08em] text-[color:var(--muted)]">{agent.role} · {agent.adapterType}</div>
                 </div>
                 <Pill tone={agent.status === 'active' ? 'good' : agent.status === 'degraded' ? 'warn' : 'bad'}>
                   {agent.status}
@@ -283,7 +282,7 @@ export function LiveAgentGrid({
                   <ProgressBar value={ramLoad} />
                 </div>
               </div>
-              <div className="mt-3 rounded-lg border px-2 py-1.5 text-xs text-[color:var(--text)]" style={{ borderColor: 'color-mix(in oklab, var(--line) 70%, transparent)', background: 'color-mix(in oklab, var(--panel) 75%, transparent)' }}>
+              <div className="mt-3 border px-2 py-1.5 text-xs text-[color:var(--text)]" style={{ borderColor: 'color-mix(in oklab, var(--line) 70%, transparent)', background: 'color-mix(in oklab, var(--panel) 92%, transparent)' }}>
                 Step: {linkedRun ? `${stepHint} · ${linkedRun.id}` : 'idle'}
               </div>
               <div className="mt-1 text-[11px] text-[color:var(--muted)]">

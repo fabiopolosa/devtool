@@ -16,6 +16,7 @@ type SnapshotDiffResult = {
 
 export function TaskDetailPage() {
   const { state, dispatch, auth, authActions } = useAppStore();
+  const projectId = usePathParam(3);
   const taskId = usePathParam(1);
   const task = state.tasks.find((item) => item.id === taskId) ?? state.tasks[0];
   const [installedSkills, setInstalledSkills] = useState<Skill[]>([]);
@@ -324,10 +325,22 @@ export function TaskDetailPage() {
       </div>
 
       <AgentRunTable runs={runs} />
-      {firstRun ? (
+      {firstRun && projectId ? (
         <div className="flex gap-2">
-          <Link to="/runs/$runId" params={{ runId: firstRun.id }} className="pill border border-white/10">Run detail</Link>
-          <Link to="/retrieval/$runId" params={{ runId: firstRun.id }} className="pill border border-white/10">Retrieved context</Link>
+          <Link
+            to="/project/$projectId/runs/$runId"
+            params={{ projectId, runId: firstRun.id }}
+            className="pill border border-white/10"
+          >
+            Run detail
+          </Link>
+          <Link
+            to="/project/$projectId/retrieval/$runId"
+            params={{ projectId, runId: firstRun.id }}
+            className="pill border border-white/10"
+          >
+            Retrieved context
+          </Link>
         </div>
       ) : null}
     </div>

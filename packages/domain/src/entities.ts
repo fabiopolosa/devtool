@@ -11,6 +11,7 @@ import type {
   UserStatus,
   VerificationStatus
 } from "./lifecycle.js";
+export type { ContextNote } from "./entities/context-note.js";
 
 export type ID = string;
 export type Timestamp = string;
@@ -24,6 +25,7 @@ export interface AuditMetadata {
 
 export interface Project extends AuditMetadata {
   id: ID;
+  tenantId: ID;
   key: string;
   name: string;
   description?: string;
@@ -33,6 +35,7 @@ export interface Project extends AuditMetadata {
 
 export interface Repository extends AuditMetadata {
   id: ID;
+  tenantId: ID;
   name: string;
   url: string;
   vcsProvider: "github" | "gitlab" | "bitbucket" | "other";
@@ -43,6 +46,7 @@ export interface Repository extends AuditMetadata {
 
 export interface ProjectRepositoryLink extends AuditMetadata {
   id: ID;
+  tenantId: ID;
   projectId: ID;
   repositoryId: ID;
   role: "primary" | "secondary" | "shared";
@@ -59,6 +63,7 @@ export interface AgentRole extends AuditMetadata {
 
 export interface RoadmapItem extends AuditMetadata {
   id: ID;
+  tenantId: ID;
   projectId: ID;
   title: string;
   description: string;
@@ -79,6 +84,7 @@ export interface TaskBudget {
 
 export interface Task extends AuditMetadata {
   id: ID;
+  tenantId: ID;
   projectId: ID;
   roadmapItemId?: ID;
   title: string;
@@ -99,6 +105,7 @@ export interface Task extends AuditMetadata {
 
 export interface TaskRun extends AuditMetadata {
   id: ID;
+  tenantId: ID;
   taskId: ID;
   workflowId: string;
   status: TaskRunStatus;
@@ -112,6 +119,7 @@ export interface TaskRun extends AuditMetadata {
 
 export interface Artifact extends AuditMetadata {
   id: ID;
+  tenantId: ID;
   runId: ID;
   taskId: ID;
   type:
@@ -191,6 +199,32 @@ export interface MemoryChunk extends AuditMetadata {
   embeddingRef?: string;
 }
 
+export type KnowledgeScope = "system" | "tenant" | "project";
+
+export interface KnowledgeNode extends AuditMetadata {
+  id: ID;
+  tenantId?: ID;
+  projectId?: ID;
+  scope: KnowledgeScope;
+  path: string;
+  content: string;
+  embedding?: number[];
+}
+
+export interface KnowledgeConfig extends AuditMetadata {
+  id: ID;
+  tenantId: ID;
+  projectId?: ID;
+  scope: KnowledgeScope;
+  autoCapture: boolean;
+  captureModes: string[];
+  requireApproval: boolean;
+  maxNodes: number;
+  relevanceThreshold: number;
+  versioning: boolean;
+  requireReview: boolean;
+}
+
 export interface EmbeddingJob extends AuditMetadata {
   id: ID;
   sourceType: "memory_entry" | "roadmap_item" | "task" | "research_note" | "repo_summary";
@@ -225,6 +259,8 @@ export interface ResearchNote extends AuditMetadata {
   breakingChangeRisk: "low" | "medium" | "high";
   caveats: string[];
 }
+
+export * from "./entities/prompt.js";
 
 export interface Policy extends AuditMetadata {
   id: ID;
@@ -282,6 +318,7 @@ export interface AutoResearchRun extends AuditMetadata {
 
 export interface Approval extends AuditMetadata {
   id: ID;
+  tenantId: ID;
   subjectType: "roadmap_item" | "task" | "task_run" | "policy_change";
   subjectId: ID;
   status: ApprovalStatus;
@@ -309,11 +346,21 @@ export interface ChatMessage extends AuditMetadata {
 
 export interface ProviderConfig extends AuditMetadata {
   id: ID;
+  tenantId?: ID;
   provider: ProviderName;
+  providerId?: ProviderName;
+  apiKey?: string;
+  apiKeyMasked?: string;
   endpoint?: string;
   authRef: string;
+  secretRef?: string;
   enabled: boolean;
   timeoutMs: number;
+  validationStatus?: "valid" | "invalid" | "unknown";
+  lastValidatedAt?: Timestamp;
+  validationError?: string;
+  requestsPerMinute?: number;
+  tokensPerMinute?: number;
   metadata: Record<string, unknown>;
 }
 
@@ -404,6 +451,9 @@ export interface Session extends AuditMetadata {
 
 export interface AuditEvent extends AuditMetadata {
   id: ID;
+  tenantId?: ID;
+  projectId?: ID;
+  jobId?: ID;
   userId?: ID;
   action: string;
   resourceType: string;
@@ -454,6 +504,7 @@ export interface OidcAuthState extends AuditMetadata {
 }
 
 export type { AgentConfig, AgentConfigStatus, AgentRuntimeAdapterType } from "./entities/agent.js";
+export type { UsageEvent } from "./entities/usage-event.js";
 export type { SecretConfig, SecretScope } from "./entities/secret.js";
 export type {
   SchemaDoc,
@@ -471,6 +522,18 @@ export type {
 export type { Skill } from "./entities/skill.js";
 export type { ProviderDiscoveryLog, ProviderDiscoveryStatus } from "./entities/provider-discovery-log.js";
 export type { Subprompt, SubpromptCategory } from "./entities/subprompt.js";
+export type { Tenant, TenantPermissions, TenantRole, UserTenant } from "./entities/tenant.js";
+export type { Job, JobStatus as JobRecordStatus, JobActionType, JobType } from "./entities/job.js";
+export type {
+  CodingWorkflow,
+  CodingWorkflowDecisionStatus,
+  CodingWorkflowPatchProposal,
+  CodingWorkflowPlan,
+  CodingWorkflowState,
+  CodingWorkflowTaskDraft,
+  CodingWorkflowTimelineEvent,
+  CodingWorkflowTimelineEventType
+} from "./entities/coding-workflow.js";
 export type {
   BrainstormQuestion,
   BrainstormRoadmapTask,

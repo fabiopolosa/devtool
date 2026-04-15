@@ -9,3 +9,6 @@ coverage
 .DS_Store
 *.log
 artifacts/runtime
+artifacts/screenshots
+artifacts/performance
+artifacts/visual

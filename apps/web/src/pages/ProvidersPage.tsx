@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
+  CapabilityClass,
   ProjectProviderBinding,
   ProviderCapability,
   ProviderConfig,
@@ -7,78 +8,159 @@ import type {
   ProviderHealthcheck,
   ProviderModel
 } from '@cp/domain';
-import { Button, Panel, SectionHeading } from '@/components/common';
+import { Button, Panel, Pill, SectionHeading } from '@/components/common';
 import { ProviderBindingTable, ProviderStatusPanel } from '@/components/panels';
 import { useAppStore } from '@/store/app-store';
+
+type NormalizedProviderModel = {
+  id: string;
+  provider: string;
+  modelId: string;
+  displayName: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  pricing: { input?: number; output?: number };
+  capabilities: CapabilityClass[];
+  enabled: boolean;
+  source: 'live' | 'persisted' | 'fallback';
+};
+
+const formatPricing = (model: NormalizedProviderModel): string => {
+  const input = model.pricing.input;
+  const output = model.pricing.output;
+  if (input === undefined && output === undefined) return 'n/a';
+  const inputText = input !== undefined ? `$${input}` : 'n/a';
+  const outputText = output !== undefined ? `$${output}` : 'n/a';
+  return `${inputText} / ${outputText}`;
+};
+
+const formatContext = (contextWindow?: number): string => {
+  if (!contextWindow) return 'n/a';
+  return `${contextWindow.toLocaleString()} tokens`;
+};
+
+const buildFallbackNormalizedModels = (providers: ProviderConfig[], models: ProviderModel[]): NormalizedProviderModel[] => {
+  const providerByConfigId = new Map(providers.map((provider) => [provider.id, provider.provider]));
+
+  return models.flatMap((model) => {
+    const provider = providerByConfigId.get(model.providerConfigId);
+    if (!provider) return [];
+
+    return [
+      {
+        id: `${provider}:${model.modelId}`,
+        provider,
+        modelId: model.modelId,
+        displayName: model.modelId,
+        ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+        ...(model.maxOutputTokens !== undefined ? { maxOutputTokens: model.maxOutputTokens } : {}),
+        pricing: {
+          ...(typeof model.pricingMeta?.input === 'number' ? { input: model.pricingMeta.input } : {}),
+          ...(typeof model.pricingMeta?.output === 'number' ? { output: model.pricingMeta.output } : {})
+        },
+        capabilities: [model.capabilityClass],
+        enabled: model.enabled,
+        source: 'persisted' as const
+      }
+    ];
+  });
+};
 
 export function ProvidersPage() {
   const { state, authActions } = useAppStore();
   const [providers, setProviders] = useState<ProviderConfig[]>(state.providers);
   const [capabilities, setCapabilities] = useState<ProviderCapability[]>(state.providerCapabilities);
-  const [models, setModels] = useState<ProviderModel[]>(state.providerModels);
+  const [legacyModels, setLegacyModels] = useState<ProviderModel[]>(state.providerModels);
+  const [normalizedModels, setNormalizedModels] = useState<NormalizedProviderModel[]>(
+    buildFallbackNormalizedModels(state.providers, state.providerModels)
+  );
   const [bindings, setBindings] = useState<ProjectProviderBinding[]>(state.projectBindings);
   const [healthchecks, setHealthchecks] = useState<ProviderHealthcheck[]>(state.providerHealthchecks);
   const [discoveryLogs, setDiscoveryLogs] = useState<ProviderDiscoveryLog[]>([]);
+  const [modelSource, setModelSource] = useState<'live' | 'mock' | 'unknown'>('unknown');
+  const [modelsStrictMode, setModelsStrictMode] = useState(false);
   const [runningDiscovery, setRunningDiscovery] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   const loadProviderData = useCallback(async () => {
     setError(undefined);
+
     try {
       const [
         providersResponse,
         capabilitiesResponse,
-        modelsResponse,
+        legacyModelsResponse,
         bindingsResponse,
         healthResponse,
         logsResponse
       ] = await Promise.all([
-        authActions.apiFetch('/providers'),
-        authActions.apiFetch('/providers/capabilities'),
-        authActions.apiFetch('/providers/models'),
-        authActions.apiFetch('/providers/bindings'),
-        authActions.apiFetch('/providers/health'),
-        authActions.apiFetch('/providers/discovery/logs')
+        authActions.apiFetchJson<{ items?: ProviderConfig[]; message?: string }>('/providers'),
+        authActions.apiFetchJson<{ items?: ProviderCapability[]; message?: string }>('/providers/capabilities'),
+        authActions.apiFetchJson<{ items?: ProviderModel[]; message?: string }>('/providers/models'),
+        authActions.apiFetchJson<{ items?: ProjectProviderBinding[]; message?: string }>('/providers/bindings'),
+        authActions.apiFetchJson<{ items?: ProviderHealthcheck[]; message?: string }>('/providers/health'),
+        authActions.apiFetchJson<{ items?: ProviderDiscoveryLog[]; message?: string }>('/providers/discovery/logs')
       ]);
 
-      const providersBody = (await providersResponse.json()) as { items?: ProviderConfig[]; message?: string };
-      const capabilitiesBody = (await capabilitiesResponse.json()) as {
-        items?: ProviderCapability[];
-        message?: string;
-      };
-      const modelsBody = (await modelsResponse.json()) as { items?: ProviderModel[]; message?: string };
-      const bindingsBody = (await bindingsResponse.json()) as {
-        items?: ProjectProviderBinding[];
-        message?: string;
-      };
-      const healthBody = (await healthResponse.json()) as { items?: ProviderHealthcheck[]; message?: string };
-      const logsBody = (await logsResponse.json()) as { items?: ProviderDiscoveryLog[]; message?: string };
-
-      if (!providersResponse.ok) {
-        throw new Error(providersBody.message ?? `Unable to load providers (HTTP ${providersResponse.status})`);
+      if (!providersResponse.response.ok) {
+        throw new Error(providersResponse.body.message ?? `Unable to load providers (HTTP ${providersResponse.response.status})`);
       }
-      if (!capabilitiesResponse.ok) {
-        throw new Error(capabilitiesBody.message ?? `Unable to load capabilities (HTTP ${capabilitiesResponse.status})`);
+      if (!capabilitiesResponse.response.ok) {
+        throw new Error(
+          capabilitiesResponse.body.message ?? `Unable to load capabilities (HTTP ${capabilitiesResponse.response.status})`
+        );
       }
-      if (!modelsResponse.ok) {
-        throw new Error(modelsBody.message ?? `Unable to load model registry (HTTP ${modelsResponse.status})`);
+      if (!legacyModelsResponse.response.ok) {
+        throw new Error(legacyModelsResponse.body.message ?? `Unable to load model registry (HTTP ${legacyModelsResponse.response.status})`);
       }
-      if (!bindingsResponse.ok) {
-        throw new Error(bindingsBody.message ?? `Unable to load provider bindings (HTTP ${bindingsResponse.status})`);
+      if (!bindingsResponse.response.ok) {
+        throw new Error(bindingsResponse.body.message ?? `Unable to load provider bindings (HTTP ${bindingsResponse.response.status})`);
       }
-      if (!healthResponse.ok) {
-        throw new Error(healthBody.message ?? `Unable to load provider healthchecks (HTTP ${healthResponse.status})`);
+      if (!healthResponse.response.ok) {
+        throw new Error(healthResponse.body.message ?? `Unable to load provider healthchecks (HTTP ${healthResponse.response.status})`);
       }
-      if (!logsResponse.ok) {
-        throw new Error(logsBody.message ?? `Unable to load provider discovery logs (HTTP ${logsResponse.status})`);
+      if (!logsResponse.response.ok) {
+        throw new Error(logsResponse.body.message ?? `Unable to load provider discovery logs (HTTP ${logsResponse.response.status})`);
       }
 
-      setProviders(providersBody.items ?? []);
-      setCapabilities(capabilitiesBody.items ?? []);
-      setModels(modelsBody.items ?? []);
-      setBindings(bindingsBody.items ?? []);
-      setHealthchecks(healthBody.items ?? []);
-      setDiscoveryLogs(logsBody.items ?? []);
+      const providerItems = providersResponse.body.items ?? [];
+      const legacyModelItems = legacyModelsResponse.body.items ?? [];
+
+      setProviders(providerItems);
+      setCapabilities(capabilitiesResponse.body.items ?? []);
+      setLegacyModels(legacyModelItems);
+      setBindings(bindingsResponse.body.items ?? []);
+      setHealthchecks(healthResponse.body.items ?? []);
+      setDiscoveryLogs(logsResponse.body.items ?? []);
+
+      try {
+        const liveModelsResponse = await authActions.apiFetchJson<{
+          source?: 'live' | 'mock';
+          models?: NormalizedProviderModel[];
+          items?: NormalizedProviderModel[];
+          meta?: { strictMode?: boolean };
+          message?: string;
+        }>(
+          '/models?refresh=1'
+        );
+        const discoveredModels = Array.isArray(liveModelsResponse.body.models)
+          ? liveModelsResponse.body.models
+          : Array.isArray(liveModelsResponse.body.items)
+            ? liveModelsResponse.body.items
+            : [];
+        if (liveModelsResponse.response.ok && discoveredModels.length > 0) {
+          setNormalizedModels(discoveredModels);
+          setModelSource(liveModelsResponse.body.source ?? 'live');
+          setModelsStrictMode(Boolean(liveModelsResponse.body.meta?.strictMode));
+        } else {
+          setNormalizedModels(buildFallbackNormalizedModels(providerItems, legacyModelItems));
+          setModelSource('mock');
+          setModelsStrictMode(Boolean(liveModelsResponse.body.meta?.strictMode));
+        }
+      } catch {
+        setNormalizedModels(buildFallbackNormalizedModels(providerItems, legacyModelItems));
+        setModelSource('mock');
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load provider panel');
     }
@@ -142,7 +224,10 @@ export function ProvidersPage() {
         <SectionHeading title="Capability list" subtitle="Provider capabilities" />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {capabilities.map((capability) => (
-            <div key={capability.id} className="border border-[color:var(--line)] bg-black/20 p-3 text-sm text-[color:var(--text)]">
+            <div
+              key={capability.id}
+              className="border border-[color:var(--line)] bg-black/20 p-3 text-sm text-[color:var(--text)]"
+            >
               <div className="font-medium">{capability.capabilityClass}</div>
               <div className="mt-1 text-[color:var(--muted)]">Provider config {capability.providerConfigId}</div>
               <div className="mt-2 text-xs text-[color:var(--muted)]">
@@ -154,32 +239,56 @@ export function ProvidersPage() {
       </Panel>
 
       <Panel>
-        <SectionHeading title="Model registry" subtitle="Routing inventory" />
+        <SectionHeading title="Model discovery" subtitle="Normalized live inventory" />
+        {modelSource === 'mock' ? (
+          <div className="mb-3 border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-amber-100">
+            Provider model discovery is running in <strong>mock/fallback</strong> mode.
+            {modelsStrictMode ? ' MODELS_STRICT is enabled: configure valid provider credentials to restore live source.' : ''}
+          </div>
+        ) : null}
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="text-[color:var(--muted)]">
               <tr>
+                <th className="py-2 pr-3">Provider</th>
                 <th className="py-2 pr-3">Model</th>
-                <th className="py-2 pr-3">Capability</th>
-                <th className="py-2 pr-3">Provider Config</th>
-                <th className="py-2 pr-3">Enabled</th>
+                <th className="py-2 pr-3">Capabilities</th>
+                <th className="py-2 pr-3">Context</th>
+                <th className="py-2 pr-3">Pricing</th>
+                <th className="py-2 pr-3">Source</th>
               </tr>
             </thead>
             <tbody>
-              {models.map((model) => (
+              {normalizedModels.map((model) => (
                 <tr key={model.id} className="border-t border-[color:var(--line)] text-[color:var(--text)]">
-                  <td className="py-2 pr-3">{model.modelId}</td>
-                  <td className="py-2 pr-3">{model.capabilityClass}</td>
-                  <td className="py-2 pr-3">{model.providerConfigId}</td>
-                  <td className="py-2 pr-3">{model.enabled ? 'yes' : 'no'}</td>
+                  <td className="py-2 pr-3">
+                    <Pill tone="accent">{model.provider}</Pill>
+                  </td>
+                  <td className="py-2 pr-3">
+                    <div className="font-medium">{model.displayName}</div>
+                    <div className="text-xs text-[color:var(--muted)]">{model.modelId}</div>
+                  </td>
+                  <td className="py-2 pr-3">
+                    <div className="flex flex-wrap gap-1">
+                      {model.capabilities.map((capability: string) => (
+                        <Pill key={`${model.id}-${capability}`}>{capability}</Pill>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="py-2 pr-3">{formatContext(model.contextWindow)}</td>
+                  <td className="py-2 pr-3">{formatPricing(model)}</td>
+                  <td className="py-2 pr-3 text-xs text-[color:var(--muted)]">{model.source}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {normalizedModels.length === 0 ? (
+          <div className="mt-3 text-sm text-[color:var(--muted)]">No normalized models available.</div>
+        ) : null}
       </Panel>
 
-      <ProviderBindingTable bindings={bindings} models={models} />
+      <ProviderBindingTable bindings={bindings} models={legacyModels} />
 
       <Panel>
         <SectionHeading title="Fallback chain" subtitle="Project policy" />

@@ -13,6 +13,16 @@ export interface SecretReference {
   description?: string;
 }
 
+export interface CompactContextNoteReference {
+  noteId: string;
+  path: string;
+  title: string;
+  scope: "context-notes";
+  excerpt: string;
+  score: number;
+  sourceType?: "context-note";
+}
+
 export interface EnvironmentContext {
   environmentId: string;
   name: string;
@@ -66,6 +76,7 @@ export interface RetrievalQuery {
   secretReferences?: SecretReference[];
   environmentContext?: EnvironmentContext;
   versionSnapshots?: VersionSnapshotReference[];
+  contextNotes?: CompactContextNoteReference[];
 }
 
 export interface RetrievedChunk {

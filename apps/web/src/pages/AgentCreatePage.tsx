@@ -122,7 +122,7 @@ export function AgentCreatePage() {
       if (!response.ok || !body.item) {
         throw new Error(body.message ?? `Unable to create agent (HTTP ${response.status})`);
       }
-      await navigate({ to: "/agents/$agentId", params: { agentId: body.item.id } });
+      await navigate({ to: "/settings/agents/$agentId", params: { agentId: body.item.id } });
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to create agent");
     } finally {
@@ -137,7 +137,7 @@ export function AgentCreatePage() {
           title="Create Agent"
           subtitle="Paperclip-style creation workflow"
           action={
-            <Button variant="secondary" onClick={() => void navigate({ to: "/agents" })}>
+            <Button variant="secondary" onClick={() => void navigate({ to: "/settings/agents" })}>
               Back to Agents
             </Button>
           }

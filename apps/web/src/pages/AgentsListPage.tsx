@@ -127,7 +127,7 @@ export function AgentsListPage() {
                 {loading ? "Refreshing..." : "Refresh"}
               </Button>
               <Link
-                to="/agents/new"
+                to="/settings/agents/new"
                 className="rounded-xl border border-cyan-400/30 bg-cyan-400/15 px-3 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/20"
               >
                 New agent
@@ -188,7 +188,7 @@ export function AgentsListPage() {
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Link
-                  to="/agents/$agentId"
+                  to="/settings/agents/$agentId"
                   params={{ agentId: agent.id }}
                   className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white transition hover:bg-white/10"
                 >

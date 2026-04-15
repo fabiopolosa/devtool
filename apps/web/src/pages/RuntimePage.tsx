@@ -19,7 +19,50 @@ type RuntimeJobRef = {
   operation: "heartbeat" | "diagnose";
 };
 
-const apiBaseUrl = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "").trim().replace(/\/$/, "");
+type AuditEventView = {
+  id: string;
+  action: string;
+  status: "success" | "failure";
+  resourceType: string;
+  resourceId?: string;
+  tenantId?: string;
+  projectId?: string;
+  jobId?: string;
+  occurredAt: string;
+  metadata: Record<string, unknown>;
+};
+
+type UsageEventView = {
+  id: string;
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  projectId?: string;
+  jobId?: string;
+  createdAt: string;
+  metadata: Record<string, unknown>;
+};
+
+type AuditSummaryView = {
+  total: number;
+  success: number;
+  failure: number;
+  byAction: Array<{ action: string; total: number; success: number; failure: number }>;
+};
+
+type UsageSummaryView = {
+  totalCount: number;
+  totalCost: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  byProvider: Array<{ key: string; count: number; totalCost: number; totalInputTokens: number; totalOutputTokens: number }>;
+  byModel: Array<{ key: string; count: number; totalCost: number; totalInputTokens: number; totalOutputTokens: number }>;
+};
+
+const apiBaseUrl = (((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "").trim().replace(/\/$/, "")) ||
+  (import.meta.env.DEV ? "http://localhost:4000" : "");
 const toApiUrl = (path: string): string => {
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
   return `${apiBaseUrl}${path}`;
@@ -38,6 +81,13 @@ export function RuntimePage() {
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [mcpMessage, setMcpMessage] = useState<string | undefined>();
   const [mcpConnections, setMcpConnections] = useState<number>(0);
+  const [runtimeTab, setRuntimeTab] = useState<"audit" | "usage">("audit");
+  const [auditEvents, setAuditEvents] = useState<AuditEventView[]>([]);
+  const [auditSummary, setAuditSummary] = useState<AuditSummaryView | undefined>();
+  const [usageEvents, setUsageEvents] = useState<UsageEventView[]>([]);
+  const [usageSummary, setUsageSummary] = useState<UsageSummaryView | undefined>();
+  const [runtimeDataError, setRuntimeDataError] = useState<string | undefined>();
+  const [runtimeDataLoading, setRuntimeDataLoading] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const loadRuntime = useCallback(async () => {
@@ -179,8 +229,49 @@ export function RuntimePage() {
     }
   };
 
+  const loadRuntimeTelemetry = useCallback(
+    async (tab: "audit" | "usage") => {
+      setRuntimeDataLoading(true);
+      setRuntimeDataError(undefined);
+      try {
+        if (tab === "audit") {
+          const { response, body } = await authActions.apiFetchJson<{
+            items?: AuditEventView[];
+            summary?: AuditSummaryView;
+            message?: string;
+          }>("/audit");
+          if (!response.ok) {
+            throw new Error(body.message ?? `Unable to load audit events (HTTP ${response.status})`);
+          }
+          setAuditEvents(body.items ?? []);
+          setAuditSummary(body.summary);
+        } else {
+          const { response, body } = await authActions.apiFetchJson<{
+            items?: UsageEventView[];
+            summary?: UsageSummaryView;
+            message?: string;
+          }>("/usage");
+          if (!response.ok) {
+            throw new Error(body.message ?? `Unable to load usage events (HTTP ${response.status})`);
+          }
+          setUsageEvents(body.items ?? []);
+          setUsageSummary(body.summary);
+        }
+      } catch (loadError) {
+        setRuntimeDataError(loadError instanceof Error ? loadError.message : "Unable to load runtime telemetry");
+      } finally {
+        setRuntimeDataLoading(false);
+      }
+    },
+    [authActions]
+  );
+
+  useEffect(() => {
+    void loadRuntimeTelemetry(runtimeTab);
+  }, [loadRuntimeTelemetry, runtimeTab]);
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <Panel>
         <SectionHeading
           title="Ruflo & Runtime"
@@ -191,7 +282,7 @@ export function RuntimePage() {
             </Button>
           }
         />
-        {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+        {error ? <p className="text-sm text-[color:var(--bad)]">{error}</p> : null}
       </Panel>
 
       <Panel>
@@ -250,13 +341,13 @@ export function RuntimePage() {
                   <input
                     value={draft.escalationRule}
                     onChange={(event) => updateDraft(workflow.id, { escalationRule: event.target.value })}
-                    className="mt-1 w-full rounded-xl border border-white/10 bg-slate-950/40 px-2 py-1 text-sm text-white"
+                    className="cp-input mt-1 w-full px-2 py-1 text-sm"
                   />
                 </label>
               </div>
             );
           })}
-          {workflows.length === 0 ? <p className="text-sm text-slate-400">No workflows found.</p> : null}
+          {workflows.length === 0 ? <p className="text-sm text-[color:var(--muted)]">No workflows found.</p> : null}
         </div>
       </Panel>
 
@@ -264,14 +355,14 @@ export function RuntimePage() {
         <SectionHeading title="MCP Integration" subtitle="Optional external runtime bridge" />
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Pill tone={mcpEnabled ? "good" : "warn"}>{mcpEnabled ? "enabled" : "disabled"}</Pill>
-          <span className="text-slate-400">{mcpMessage ?? "No MCP status message"}</span>
-          <span className="text-slate-400">connections: {mcpConnections}</span>
+          <span className="text-[color:var(--muted)]">{mcpMessage ?? "No MCP status message"}</span>
+          <span className="text-[color:var(--muted)]">connections: {mcpConnections}</span>
         </div>
         <div className="mt-3">
           {mcpEnabled ? (
             <Link
-              to="/mcp"
-              className="inline-flex items-center border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-200 hover:bg-white/5"
+              to="/settings/mcp"
+              className="btn btn-ghost inline-flex items-center px-3 py-2 text-xs"
             >
               Open MCP panel
             </Link>
@@ -287,7 +378,7 @@ export function RuntimePage() {
           <select
             value={selectedAgentId}
             onChange={(event) => setSelectedAgentId(event.target.value)}
-            className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
+            className="cp-input"
           >
             {agents.map((agent) => (
               <option key={agent.id} value={agent.id}>
@@ -301,21 +392,21 @@ export function RuntimePage() {
           <Button onClick={() => void triggerOperation("diagnose")}>Doctor</Button>
         </div>
         {selectedAgent ? (
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs text-[color:var(--muted)]">
             Selected agent: {selectedAgent.name} · adapter {selectedAgent.adapterType}
           </p>
         ) : null}
         {lastRuntimeJob ? (
-          <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3">
+          <div className="mt-3 border border-[color:var(--line)] bg-[color:var(--panel2)] p-3">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-white">
+              <span className="text-sm text-[color:var(--text)]">
                 Job {lastRuntimeJob.jobId} · {lastRuntimeJob.operation}
               </span>
               <Pill tone={liveState === "completed" ? "good" : liveState === "failed" ? "bad" : "warn"}>
                 {liveState}
               </Pill>
             </div>
-            <div className="mt-2 max-h-72 space-y-1 overflow-auto rounded-lg bg-slate-950/60 p-2 text-xs text-slate-300">
+            <div className="mt-2 max-h-72 space-y-1 overflow-auto border border-[color:var(--line)] bg-black/35 p-2 font-mono text-xs text-[color:var(--text)]">
               {liveLogs.map((line, index) => (
                 <div key={`${lastRuntimeJob.jobId}:${index}`}>{line}</div>
               ))}
@@ -324,6 +415,176 @@ export function RuntimePage() {
           </div>
         ) : null}
       </Panel>
+
+      <Panel>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SectionHeading title="Audit / Usage" subtitle="Runtime telemetry, token usage and cost" />
+          <div className="flex border border-[color:var(--line)] bg-[color:var(--panel2)] p-1 text-xs">
+            <button
+              type="button"
+              onClick={() => setRuntimeTab("audit")}
+              className={`px-3 py-1.5 uppercase tracking-[0.08em] ${runtimeTab === "audit" ? "bg-cyan-500/20 text-cyan-200" : "text-[color:var(--muted)]"}`}
+            >
+              Audit
+            </button>
+            <button
+              type="button"
+              onClick={() => setRuntimeTab("usage")}
+              className={`px-3 py-1.5 uppercase tracking-[0.08em] ${runtimeTab === "usage" ? "bg-cyan-500/20 text-cyan-200" : "text-[color:var(--muted)]"}`}
+            >
+              Usage
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-3 text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">
+          <span>{runtimeDataLoading ? "Loading runtime telemetry…" : "Runtime telemetry is live."}</span>
+          <Button variant="secondary" onClick={() => void loadRuntimeTelemetry(runtimeTab)}>
+            Refresh telemetry
+          </Button>
+        </div>
+
+        {runtimeDataError ? <p className="mt-3 text-sm text-[color:var(--bad)]">{runtimeDataError}</p> : null}
+
+        {runtimeTab === "audit" ? (
+          <div className="mt-4 space-y-3">
+            <div className="grid gap-3 md:grid-cols-3">
+              <MetricCard label="Events" value={String(auditSummary?.total ?? auditEvents.length)} />
+              <MetricCard label="Success" value={String(auditSummary?.success ?? 0)} />
+              <MetricCard label="Failure" value={String(auditSummary?.failure ?? 0)} />
+            </div>
+            <div className="overflow-hidden border border-[color:var(--line)]">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-[color:var(--panel2)] text-xs uppercase tracking-wide text-[color:var(--muted)]">
+                  <tr>
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Action</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Scope</th>
+                    <th className="px-3 py-2">Metadata</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditEvents.map((event) => (
+                    <tr key={event.id} className="border-t border-[color:var(--line)]">
+                      <td className="px-3 py-2 text-xs text-[color:var(--muted)]">{event.occurredAt}</td>
+                      <td className="px-3 py-2 text-[color:var(--text)]">{event.action}</td>
+                      <td className="px-3 py-2">
+                        <Pill tone={event.status === "success" ? "good" : "bad"}>{event.status}</Pill>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-[color:var(--text)]">
+                        {[event.tenantId, event.projectId, event.jobId].filter(Boolean).join(" · ") || "global"}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-[color:var(--muted)]">
+                        {Object.keys(event.metadata ?? {}).length > 0 ? JSON.stringify(event.metadata) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                  {auditEvents.length === 0 ? (
+                    <tr>
+                      <td className="px-3 py-4 text-center text-sm text-[color:var(--muted)]" colSpan={5}>
+                        No audit events found.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            {auditSummary?.byAction?.length ? (
+              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {auditSummary.byAction.map((item) => (
+                  <div key={item.action} className="border border-[color:var(--line)] bg-[color:var(--panel2)] p-3">
+                    <div className="text-sm text-[color:var(--text)]">{item.action}</div>
+                    <div className="mt-1 text-xs text-[color:var(--muted)]">
+                      total {item.total} · success {item.success} · failure {item.failure}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <div className="grid gap-3 md:grid-cols-4">
+              <MetricCard label="Calls" value={String(usageSummary?.totalCount ?? usageEvents.length)} />
+              <MetricCard label="Cost" value={`$${(usageSummary?.totalCost ?? 0).toFixed(4)}`} />
+              <MetricCard label="Input tokens" value={String(usageSummary?.totalInputTokens ?? 0)} />
+              <MetricCard label="Output tokens" value={String(usageSummary?.totalOutputTokens ?? 0)} />
+            </div>
+            <div className="grid gap-3 xl:grid-cols-2">
+              <SummaryList title="By provider" items={usageSummary?.byProvider ?? []} />
+              <SummaryList title="By model" items={usageSummary?.byModel ?? []} />
+            </div>
+            <div className="overflow-hidden border border-[color:var(--line)]">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-[color:var(--panel2)] text-xs uppercase tracking-wide text-[color:var(--muted)]">
+                  <tr>
+                    <th className="px-3 py-2">Time</th>
+                    <th className="px-3 py-2">Provider</th>
+                    <th className="px-3 py-2">Model</th>
+                    <th className="px-3 py-2">Tokens</th>
+                    <th className="px-3 py-2">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usageEvents.map((event) => (
+                    <tr key={event.id} className="border-t border-[color:var(--line)]">
+                      <td className="px-3 py-2 text-xs text-[color:var(--muted)]">{event.createdAt}</td>
+                      <td className="px-3 py-2 text-[color:var(--text)]">{event.provider}</td>
+                      <td className="px-3 py-2 text-xs text-[color:var(--text)]">{event.model}</td>
+                      <td className="px-3 py-2 text-xs text-[color:var(--text)]">
+                        in {event.inputTokens} · out {event.outputTokens}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-[color:var(--text)]">${event.cost.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                  {usageEvents.length === 0 ? (
+                    <tr>
+                      <td className="px-3 py-4 text-center text-sm text-[color:var(--muted)]" colSpan={5}>
+                        No usage events found.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border border-[color:var(--line)] bg-[color:var(--panel2)] p-3">
+      <div className="text-xs uppercase tracking-wide text-[color:var(--muted)]">{label}</div>
+      <div className="mt-1 text-lg font-medium text-[color:var(--text)]">{value}</div>
+    </div>
+  );
+}
+
+function SummaryList({
+  title,
+  items
+}: {
+  title: string;
+  items: Array<{ key: string; count: number; totalCost: number; totalInputTokens: number; totalOutputTokens: number }>;
+}) {
+  return (
+    <div className="border border-[color:var(--line)] bg-[color:var(--panel2)] p-3">
+      <div className="text-sm text-[color:var(--text)]">{title}</div>
+      <div className="mt-2 space-y-2">
+        {items.map((item) => (
+          <div key={item.key} className="flex items-center justify-between gap-3 text-xs text-[color:var(--muted)]">
+            <span className="truncate">{item.key}</span>
+            <span>
+              {item.count} · ${item.totalCost.toFixed(4)}
+            </span>
+          </div>
+        ))}
+        {items.length === 0 ? <div className="text-xs text-[color:var(--muted)]">No data.</div> : null}
+      </div>
     </div>
   );
 }

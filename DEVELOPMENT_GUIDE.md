@@ -39,6 +39,20 @@ Controllata da `AUTH_ENABLED`. Quando abilitata, `/auth/*` gestisce login/logout
 
 Gli adapter sono in `packages/providers/src/adapters`. Configura le chiavi in `.env` con prefissi `env://` o `secret://`.
 
+- `POST/PATCH /providers/config` esegue validazione live del provider e salva:
+  - `validationStatus` (`valid|invalid|unknown`)
+  - `lastValidatedAt`
+  - `validationError`
+- Le API non restituiscono mai chiavi in chiaro: solo `apiKeyMasked`.
+- Il discovery endpoint `/models` espone:
+  - `source: "live" | "mock"`
+  - `models: [...]`
+  - alias retrocompatibili (`items`, `meta`).
+- Con `MODELS_STRICT=1`, la UI Providers mostra un banner esplicito quando il source è `mock`.
+- Rate limit per provider:
+  - configurabile via provider config (`rpm/tpm` o `requestsPerMinute/tokensPerMinute`)
+  - enforcement lato runner prima delle chiamate ai provider.
+
 ## Brainstorming Mode
 
 - La modalità Brainstorming è disponibile in dashboard su `/brainstorming`.
@@ -52,6 +66,63 @@ Gli adapter sono in `packages/providers/src/adapters`. Configura le chiavi in `.
 - Composizione prompt unificata:
   - `@cp/prompt-builder` espone `buildPrompt({ role, subprompts, plan, context })`
   - il brainstorming usa prompt-builder per valorizzare `plan.composedPrompt`.
+
+## Knowledge System (LLMWIKI)
+
+- Knowledge tree su filesystem:
+  - `knowledge/system/`
+  - `knowledge/tenants/{tenantId}/`
+  - `knowledge/projects/{projectId}/`
+- Ogni file markdown deve catturare decisioni/pattern/insight riusabili (non log grezzi).
+- API principali:
+  - `GET /knowledge`
+  - `GET /knowledge/:knowledgeNodeId`
+  - `POST /knowledge`
+  - `PATCH /knowledge/:knowledgeNodeId`
+  - `DELETE /knowledge/:knowledgeNodeId`
+  - `POST /knowledge/sync` (sync markdown -> DB)
+  - `GET /knowledge/context/search` (contesto compatto per agenti/pipeline)
+- Runner integration:
+  - i job `generation` includono contesto knowledge in input quando disponibile;
+  - persistenza insight opzionale con `payload.captureKnowledge=true`.
+
+## Knowledge Configuration Layer
+
+- Policy API:
+  - `GET /knowledge/config`
+  - `POST /knowledge/config`
+  - `PATCH /knowledge/config`
+- Modello policy:
+  - `autoCapture`
+  - `captureModes`
+  - `requireApproval`
+  - `maxNodes`
+  - `relevanceThreshold`
+  - `versioning`
+  - `requireReview`
+  - `scope` (`system|tenant|project`)
+- Precedenza risoluzione:
+  - `project -> tenant -> system -> default`.
+- Integrazione runtime:
+  - retrieval usa `maxNodes` + `relevanceThreshold` effettivi;
+  - capture runner è bloccata se `requireApproval` o `requireReview` sono attivi.
+- UI platform:
+  - pagina `/settings/knowledge` (owner/admin) per gestire capture/retrieval/mutation settings.
+
+## Routing Context Model
+
+La UI usa un modello contestuale rigoroso:
+
+- **global**: `/` e `/projects`
+- **project**: tutte le viste operative sotto `/project/:projectId/*`
+- **platform**: tutte le viste owner/platform sotto `/settings/*`
+
+Le route legacy non scoped sono state rimosse. Le viste project/platform devono sempre usare route scoped.
+
+Regola di sviluppo:
+
+- **Do not introduce unscoped routes for project-level or platform-level views.**
+- Ogni nuova vista deve appartenere a uno e un solo livello: `global`, `project`, `platform`.
 
 ## Subprompt Library
 
@@ -92,6 +163,37 @@ Gli adapter sono in `packages/providers/src/adapters`. Configura le chiavi in `.
 - **Local Repos** offers a read-only file inspector, git history tab, and snapshot diff tab.
 - **Versioning** centralizes snapshot creation/comparison and feeds task-level diff visibility.
 - Theme is controlled in **Settings** and persisted client-side.
+
+## Prompt Registry (Governed Prompt Lifecycle)
+
+- Prompt governance routes:
+  - `GET /prompts`
+  - `GET /prompts/:promptId`
+  - `POST /prompts`
+  - `PATCH /prompts/:promptId`
+  - `POST /prompts/:promptId/activate`
+  - `POST /prompts/:promptId/deprecate`
+- Scope precedence is `project -> tenant -> system`.
+- Brainstorming/planner prompt composition resolves active registry entries before file fallback.
+- Prompt editing should happen through registry APIs/UI (`/settings/prompts`), not by mutating runtime prompt strings.
+
+## Coding Workflow (HITL)
+
+- Project route: `/project/:projectId/coding`
+- API: `/coding-workflow` (create/list/detail + approve/reject/revise/finalize transitions).
+- Intended flow:
+  - request
+  - plan
+  - human approval/revision
+  - task generation/execution
+  - finalization + optional knowledge update
+
+## Schemas + Context (Project Modules)
+
+- Schemas graph route: `/project/:projectId/schemas`
+  - includes Data Model, API Contracts, System Structure in node-based view.
+- Context route: `/project/:projectId/context`
+  - markdown notes for strategy/decisions/problems, project-scoped CRUD via `/context`.
 
 ## Documentazione
 

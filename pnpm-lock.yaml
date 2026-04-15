@@ -44,6 +44,9 @@ importers:
       '@cp/brainstorming':
         specifier: workspace:*
         version: link:../../packages/brainstorming
+      '@cp/context':
+        specifier: workspace:*
+        version: link:../../packages/context
       '@cp/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -53,6 +56,9 @@ importers:
       '@cp/environments':
         specifier: workspace:*
         version: link:../../packages/environments
+      '@cp/knowledge':
+        specifier: workspace:*
+        version: link:../../packages/knowledge
       '@cp/local-repos':
         specifier: workspace:*
         version: link:../../packages/local-repos
@@ -178,9 +184,15 @@ importers:
       '@cp/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@cp/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@cp/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@cp/knowledge':
+        specifier: workspace:*
+        version: link:../../packages/knowledge
       '@cp/local-repos':
         specifier: workspace:*
         version: link:../../packages/local-repos
@@ -196,6 +208,9 @@ importers:
       '@cp/retrieval':
         specifier: workspace:*
         version: link:../../packages/retrieval
+      '@cp/runner':
+        specifier: workspace:*
+        version: link:../../packages/runner
       '@cp/verifier':
         specifier: workspace:*
         version: link:../../packages/verifier
@@ -205,9 +220,16 @@ importers:
       ioredis:
         specifier: ^5.5.0
         version: 5.10.1
+      pg:
+        specifier: ^8.15.6
+        version: 8.20.0
       tsx:
         specifier: ^4.19.3
         version: 4.21.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.15.6
+        version: 8.20.0
 
   packages/agents:
     dependencies:
@@ -279,6 +301,19 @@ importers:
         specifier: ^3.24.2
         version: 3.25.76
 
+  packages/context:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
   packages/db:
     dependencies:
       '@cp/config':
@@ -311,6 +346,19 @@ importers:
         version: 3.25.76
 
   packages/environments:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/knowledge:
     dependencies:
       '@cp/domain':
         specifier: workspace:*
@@ -413,6 +461,28 @@ importers:
         specifier: workspace:*
         version: link:../domain
     devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/runner:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@cp/prompt-builder':
+        specifier: workspace:*
+        version: link:../prompt-builder
+      '@cp/providers':
+        specifier: workspace:*
+        version: link:../providers
+      bullmq:
+        specifier: ^5.43.0
+        version: 5.73.5
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
       vitest:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)

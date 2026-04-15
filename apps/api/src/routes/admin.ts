@@ -521,6 +521,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     const now = new Date().toISOString();
     const project: Project = {
       id: randomUUID(),
+      tenantId: request.tenantId ?? "tenant_default",
       key: body.key,
       name: body.name,
       ...(body.description ? { description: body.description } : {}),
@@ -601,6 +602,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     const now = new Date().toISOString();
     const task: Task = {
       id: randomUUID(),
+      tenantId: request.tenantId ?? "tenant_default",
       projectId: body.projectId,
       ...(body.roadmapItemId ? { roadmapItemId: body.roadmapItemId } : {}),
       title: body.title,

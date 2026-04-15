@@ -5,9 +5,11 @@ import type {
   BrainstormRoadmapTask,
   Subprompt
 } from "@cp/domain";
-import { PromptBuilderService } from "@cp/prompt-builder";
+import { PromptBuilderService, type BuildPromptInput, type PromptBuilderServiceOptions } from "@cp/prompt-builder";
 
 export interface BrainstormComposeInput {
+  tenantId?: string;
+  projectId?: string;
   projectIntent: string;
   selectedSubpromptIds: string[];
   guidedAnswers?: Record<string, string>;
@@ -28,6 +30,7 @@ export interface BrainstormSubpromptCatalog {
 export interface BrainstormingServiceOptions {
   subpromptCatalog: BrainstormSubpromptCatalog;
   rolesDir?: string;
+  resolveRoleInstructions?: PromptBuilderServiceOptions["resolveRoleInstructions"];
   now?: () => Date;
   idGenerator?: () => string;
 }
@@ -215,7 +218,10 @@ export class BrainstormingService {
     this.idGenerator = options.idGenerator ?? (() => randomUUID());
     this.subpromptCatalog = options.subpromptCatalog;
     this.promptBuilderService = new PromptBuilderService({
-      ...(options.rolesDir ? { rolesDir: options.rolesDir } : {})
+      ...(options.rolesDir ? { rolesDir: options.rolesDir } : {}),
+      ...(options.resolveRoleInstructions
+        ? { resolveRoleInstructions: options.resolveRoleInstructions }
+        : {})
     });
   }
 
@@ -300,7 +306,7 @@ export class BrainstormingService {
       selectedSubprompts
     } satisfies BrainstormPlan["plan"];
 
-    const composedPrompt = await this.promptBuilderService.buildPrompt({
+    const promptInput: BuildPromptInput = {
       role: "planner",
       subprompts: selectedSubprompts,
       plan: draftPlan,
@@ -313,8 +319,15 @@ export class BrainstormingService {
           "suggested agents/skills",
           "roadmap with dependencies"
         ]
+      },
+      registryContext: {
+        ...(input.tenantId ? { tenantId: input.tenantId } : {}),
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+        type: "planner",
+        target: "default"
       }
-    });
+    };
+    const composedPrompt = await this.promptBuilderService.buildPrompt(promptInput);
 
     return {
       title: "Brainstormed control-plane plan",
@@ -328,10 +341,16 @@ export class BrainstormingService {
     };
   }
 
-  makePlanEntity(sessionId: string, draft: BrainstormPlanDraft, actor = "brainstorming_service"): BrainstormPlan {
+  makePlanEntity(
+    sessionId: string,
+    draft: BrainstormPlanDraft,
+    actor = "brainstorming_service",
+    tenantId = "tenant_default"
+  ): BrainstormPlan {
     const nowIso = this.now().toISOString();
     return {
       id: this.idGenerator(),
+      tenantId,
       sessionId,
       title: draft.title,
       executiveSummary: draft.executiveSummary,

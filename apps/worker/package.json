@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "worker": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src --ext .ts",
@@ -12,17 +13,24 @@
   },
   "dependencies": {
     "@cp/agents": "workspace:*",
+    "@cp/db": "workspace:*",
     "@cp/domain": "workspace:*",
     "@cp/config": "workspace:*",
     "@cp/orchestration-ruflo": "workspace:*",
     "@cp/retrieval": "workspace:*",
     "@cp/memory": "workspace:*",
+    "@cp/knowledge": "workspace:*",
     "@cp/local-repos": "workspace:*",
     "@cp/providers": "workspace:*",
+    "@cp/runner": "workspace:*",
     "@cp/verifier": "workspace:*",
     "@cp/autoresearch": "workspace:*",
     "bullmq": "^5.43.0",
     "ioredis": "^5.5.0",
+    "pg": "^8.15.6",
     "tsx": "^4.19.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.6"
   }
 }

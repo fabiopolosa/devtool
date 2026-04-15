@@ -60,6 +60,16 @@ export const contextPacketVersionSnapshotSchema = z.object({
   taskId: idSchema.optional()
 });
 
+export const contextPacketNoteSchema = z.object({
+  noteId: idSchema,
+  path: z.string().min(1),
+  title: z.string().min(1),
+  scope: z.literal("context-notes"),
+  excerpt: z.string().min(1),
+  score: z.number().min(0).max(1),
+  sourceType: z.literal("context-note").optional()
+});
+
 export const contextPacketSchema = z.object({
   packetId: idSchema,
   projectId: idSchema,
@@ -81,6 +91,7 @@ export const contextPacketSchema = z.object({
   secretReferences: z.array(contextPacketSecretReferenceSchema).default([]),
   environmentContext: contextPacketEnvironmentSchema.optional(),
   versionSnapshots: z.array(contextPacketVersionSnapshotSchema).default([]),
+  contextNotes: z.array(contextPacketNoteSchema).default([]),
   compactSummary: z.string().min(1),
   sourceChunkIds: z.array(idSchema),
   tokenBudgetUsed: z.number().int().nonnegative(),

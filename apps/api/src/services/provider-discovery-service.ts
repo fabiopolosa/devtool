@@ -37,16 +37,21 @@ async function ensureProviderConfig(
   provider: ProviderName,
   actor: string
 ): Promise<{ item: ProviderConfig; created: boolean }> {
-  const existing = (await apiStore.listProviderConfigs()).find((entry) => entry.provider === provider);
+  const existing = (await apiStore.listProviderConfigs()).find(
+    (entry) => (entry.providerId ?? entry.provider) === provider
+  );
   if (existing) return { item: existing, created: false };
 
   const now = new Date().toISOString();
   const created = await apiStore.createProviderConfig({
     id: randomUUID(),
+    providerId: provider,
     provider,
     authRef: defaultAuthRef(provider),
+    secretRef: defaultAuthRef(provider),
     enabled: true,
     timeoutMs: 30000,
+    validationStatus: "unknown",
     metadata: { source: "auto_discovery" },
     createdAt: now,
     createdBy: actor,
@@ -185,11 +190,30 @@ export async function runProviderAutoDiscovery(
 ): Promise<ProviderDiscoveryExecutionResult> {
   const discovery = new ProviderAutoDiscoveryService();
   const discoveryResult = await discovery.run();
+  const providerConfigs = await apiStore.listProviderConfigs();
+  const enabledProviderSet = new Set<ProviderName>(
+    providerConfigs
+      .filter((config) => config.enabled)
+      .map((config) => config.providerId ?? config.provider)
+  );
 
   const registry = createDefaultProviderRegistry();
   const discoveredModels = await registry.discoverAllModels();
-  const filteredProviders = new Set<ProviderName>(discoveryResult.discoveredProviders);
-  const filteredModels = discoveredModels.filter((model) => filteredProviders.has(model.provider));
+  const discoveredProviderSet = new Set<ProviderName>(discoveryResult.discoveredProviders);
+  const effectiveProviderSet =
+    enabledProviderSet.size > 0
+      ? new Set<ProviderName>(
+          [...discoveredProviderSet].filter((provider) => enabledProviderSet.has(provider))
+        )
+      : discoveredProviderSet;
+
+  if (enabledProviderSet.size > 0 && effectiveProviderSet.size === 0) {
+    for (const provider of enabledProviderSet) {
+      effectiveProviderSet.add(provider);
+    }
+  }
+
+  const filteredModels = discoveredModels.filter((model) => effectiveProviderSet.has(model.provider));
 
   let createdProviderConfigs = 0;
   let createdCapabilities = 0;
@@ -205,7 +229,7 @@ export async function runProviderAutoDiscovery(
     capabilitiesByProvider.get(model.provider)?.add(model.capabilityClass);
   }
 
-  for (const provider of filteredProviders) {
+  for (const provider of effectiveProviderSet) {
     const ensured = await ensureProviderConfig(provider, actor);
     if (ensured.created) createdProviderConfigs += 1;
 
@@ -225,7 +249,7 @@ export async function runProviderAutoDiscovery(
 
   for (const model of filteredModels) {
     const providerConfig = (await apiStore.listProviderConfigs()).find(
-      (item) => item.provider === model.provider
+      (item) => (item.providerId ?? item.provider) === model.provider
     );
     if (!providerConfig) continue;
 
@@ -251,7 +275,7 @@ export async function runProviderAutoDiscovery(
     id: randomUUID(),
     source,
     queries: discoveryResult.queries,
-    discoveredProviders: discoveryResult.discoveredProviders,
+    discoveredProviders: [...effectiveProviderSet],
     discoveredModels: discoveryResult.discoveredModels,
     status: discoveryResult.status,
     searchStartedAt: discoveryResult.startedAt,

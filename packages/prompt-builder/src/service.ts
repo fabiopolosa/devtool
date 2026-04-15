@@ -9,11 +9,21 @@ export interface BuildPromptInput {
   subprompts: Subprompt[];
   plan?: BrainstormPlanPayload;
   context?: Record<string, unknown>;
+  registryContext?: {
+    tenantId?: string;
+    projectId?: string;
+    type?: string;
+    target?: string;
+  };
 }
 
 export interface PromptBuilderServiceOptions {
   rolesDir?: string;
   roleFallbackInstructions?: string;
+  resolveRoleInstructions?: (
+    role: string,
+    context?: BuildPromptInput["registryContext"]
+  ) => Promise<string | undefined> | string | undefined;
 }
 
 const defaultRoleFallbackInstructions =
@@ -52,10 +62,13 @@ const roleCandidates = (role: string): string[] => {
 export class PromptBuilderService {
   private readonly rolesDir: string;
   private readonly roleFallbackInstructions: string;
+  private readonly resolveRoleInstructions?: PromptBuilderServiceOptions["resolveRoleInstructions"];
+  private readonly fallbackWarnings = new Set<string>();
 
   constructor(options: PromptBuilderServiceOptions = {}) {
     this.rolesDir = options.rolesDir ?? resolveDefaultRolesDir();
     this.roleFallbackInstructions = options.roleFallbackInstructions ?? defaultRoleFallbackInstructions;
+    this.resolveRoleInstructions = options.resolveRoleInstructions;
   }
 
   async buildPrompt(input: BuildPromptInput): Promise<string> {
@@ -64,7 +77,7 @@ export class PromptBuilderService {
       throw new Error("buildPrompt requires a non-empty role");
     }
 
-    const roleInstructions = await this.loadRoleInstructions(role);
+    const roleInstructions = await this.loadRoleInstructions(role, input.registryContext);
     const subpromptSection =
       input.subprompts.length > 0
         ? input.subprompts
@@ -106,14 +119,41 @@ export class PromptBuilderService {
     return sections.join("\n");
   }
 
-  private async loadRoleInstructions(role: string): Promise<string> {
+  private async loadRoleInstructions(
+    role: string,
+    context?: BuildPromptInput["registryContext"]
+  ): Promise<string> {
+    if (this.resolveRoleInstructions) {
+      const resolved = await this.resolveRoleInstructions(role, context);
+      if (typeof resolved === "string" && resolved.trim().length > 0) {
+        return resolved.trim();
+      }
+      this.warnRegistryFallback(role, context, "active registry prompt not found");
+    }
+
     for (const candidate of roleCandidates(role)) {
       const fullPath = path.resolve(this.rolesDir, candidate);
       if (!existsSync(fullPath)) continue;
       const content = (await readFile(fullPath, "utf8")).trim();
-      if (content.length > 0) return content;
+      if (content.length > 0) {
+        this.warnRegistryFallback(role, context, `using role file fallback: ${candidate}`);
+        return content;
+      }
     }
+    this.warnRegistryFallback(role, context, "using default fallback instructions");
     return this.roleFallbackInstructions;
+  }
+
+  private warnRegistryFallback(
+    role: string,
+    context: BuildPromptInput["registryContext"] | undefined,
+    reason: string
+  ): void {
+    if (!this.resolveRoleInstructions) return;
+    const fingerprint = `${context?.tenantId ?? "tenant_default"}:${context?.projectId ?? "global"}:${role}:${reason}`;
+    if (this.fallbackWarnings.has(fingerprint)) return;
+    this.fallbackWarnings.add(fingerprint);
+    console.warn(`[prompt-builder] Registry fallback for role="${role}": ${reason}`);
   }
 }
 

@@ -208,7 +208,7 @@ export function AgentDetailPage() {
         const body = (await response.json()) as { message?: string };
         throw new Error(body.message ?? `Unable to delete agent (HTTP ${response.status})`);
       }
-      await navigate({ to: "/agents" });
+      await navigate({ to: "/settings/agents" });
     } catch (removeError) {
       setError(removeError instanceof Error ? removeError.message : "Unable to delete agent");
     } finally {
@@ -228,7 +228,7 @@ export function AgentDetailPage() {
           subtitle={agentId}
           action={
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => void navigate({ to: "/agents" })}>
+              <Button variant="secondary" onClick={() => void navigate({ to: "/settings/agents" })}>
                 Back
               </Button>
               <Button onClick={() => void runOperation("heartbeat")}>Heartbeat</Button>

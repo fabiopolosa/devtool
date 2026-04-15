@@ -3,6 +3,9 @@ import { idSchema, isoDateTimeSchema } from "./common.schema.js";
 
 export const auditEventSchema = z.object({
   id: idSchema,
+  tenantId: idSchema.optional(),
+  projectId: idSchema.optional(),
+  jobId: idSchema.optional(),
   userId: idSchema.optional(),
   action: z.string().min(1),
   resourceType: z.string().min(1),

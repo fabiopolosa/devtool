@@ -418,3 +418,218 @@ This section tracks post-stabilization implementation progress while preserving 
   - manual trigger from Providers UI (`Aggiorna provider`)
   - persisted discovery logs (`queries`, timestamp, discovered providers/models, status/notes)
   - fallback behavior keeps default providers when web discovery is unavailable.
+
+### Step 13 — Multi-Tenant Baseline, Fixed RBAC Roles, and Jobs Tracking
+- Added additive tenancy contracts and persistence:
+  - `tenants` table (`id`, `name`, `created_at`)
+  - `user_tenants` table (`user_id`, `tenant_id`, `role`, `created_at`)
+- Added required tenant scoping to operational entities:
+  - `projects`, `repositories`, `project_repository_links`
+  - `roadmap_items`, `tasks`, `task_runs`, `artifacts`, `approvals`
+  - `brainstorm_sessions`, `brainstorm_plans`
+  - additive migration `013_multi_tenant_rbac_jobs.sql`
+- Tenant runtime context is resolved per request via:
+  - header `x-tenant-id` (MVP explicit tenant switch)
+  - fallback from authenticated user memberships
+  - default fallback `tenant_default`
+- DB repository access is tenant-enforced:
+  - tenant-aware tables are auto-filtered with `tenant_id`
+  - create/update/delete/list/get operations are scoped to active tenant context
+- Added fixed role model for tenant memberships:
+  - `owner`, `admin`, `manager`, `user`, `guest`
+  - mapped to capability permissions (`canView`, `canEdit`, `canRunAgent`, `canManageUsers`, `canApprove`)
+  - authorization enforcement remains backend-side.
+- Added additive jobs module for workflow progress tracking:
+  - `jobs` table (`id`, `tenant_id`, `type`, `title`, `status`, timestamps, metadata)
+  - statuses: `idle`, `running`, `waiting_user`, `done`, `error`
+  - additive APIs:
+    - `GET /jobs`
+    - `GET /jobs/:jobId`
+    - `PATCH /jobs/:jobId/status`
+  - brainstorming flow now emits tenant-scoped jobs and status transitions.
+
+### Step 14 — Job DAG Orchestration Baseline (Tenant-Scoped)
+- Extended the jobs model from passive tracking to dependency-aware DAG execution:
+  - additive fields on `jobs`:
+    - `dependencies` (`string[]`)
+    - `depends_on_count` (`integer`)
+    - `ready` (`boolean`)
+    - `started_at`, `completed_at`
+  - additive migration: `015_jobs_dag_fields.sql`
+- DAG validation and readiness engine implemented in `apps/api/src/services/jobs-service.ts`:
+  - `validateDAG(...)` detects cycles before persisting dependency changes.
+
+### Step 15 — Context-Scoped Routing Enforcement (Global / Project / Platform)
+- Navigation and routing are aligned to strict context separation:
+  - `global`: `/`, `/projects`
+  - `project`: `/project/:projectId/*`
+  - `platform`: `/settings/*`
+- Legacy unscoped routes have been removed from the web router.
+- Only scoped routes are accepted for project/platform views.
+- Policy guardrail:
+  - Do not introduce unscoped routes for project-level or platform-level views.
+  - Every new UI route must declare one context boundary (`global`, `project`, `platform`).
+  - dependency existence is validated (unknown dependency ids are rejected).
+  - readiness is recomputed based on dependency completion:
+    - executable condition: `status = idle` and all dependencies `done`.
+  - status transitions enforced:
+    - `idle -> running -> done|error`
+    - starting a job in `running` state is blocked if not `ready`.
+- Additive jobs APIs for orchestration and automation:
+  - `POST /jobs` (create job nodes with optional dependencies)
+  - `GET /jobs/executable` (returns current runnable jobs)
+  - existing routes preserved:
+    - `GET /jobs`
+    - `GET /jobs/:jobId`
+    - `PATCH /jobs/:jobId/status`
+- Tenant + RBAC enforcement remains backend-side:
+  - list/detail routes require `canView`
+  - create/update routes require `canEdit` (or ownership where already allowed)
+  - executable route requires `canRunAgent`
+- UI queue now exposes DAG state instead of flat status-only tracking:
+  - highlights `ready`, `waiting_dependencies`, `running`, `waiting_user`, `error`, `done`
+  - surfaces dependency count/details in the left jobs sidebar
+  - keeps action-required jobs prioritized.
+
+### Step 15 — Provider Config Production Hardening
+- Provider credentials handling is now reference-first and non-plaintext:
+  - `provider_configs` continues to carry routing metadata (`provider`, `provider_id`, `auth_ref`, `endpoint`)
+  - secrets can be persisted encrypted in `secrets` and referenced with `secret://provider/<provider>/<configId>/api-key`
+  - API responses never expose clear provider keys; only masked output (`apiKeyMasked`).
+- Additive provider config fields for operational safety:
+  - `secret_ref`
+  - `validation_status` (`valid | invalid | unknown`)
+  - `last_validated_at`
+  - `validation_error`
+  - `requests_per_minute`
+  - `tokens_per_minute`
+  - migration: `021_provider_config_hardening.sql`.
+- Validation-on-save is enforced in provider config write routes:
+  - `POST /providers/config`
+  - `PATCH /providers/config/:id`
+  - a provider endpoint probe is executed (`/models` or provider equivalent), then status/lastValidatedAt/error are persisted.
+- Model discovery strict mode is exposed through `MODELS_STRICT`:
+  - `/models` now publishes canonical envelope:
+    - `source: "live" | "mock"`
+    - `models: [...]`
+  - backward-compatible aliases remain (`items`, `meta`).
+  - providers UI shows a warning banner when source is `mock`.
+- Discovery cache is tenant-aware and invalidated on provider config mutations:
+  - model discovery cache key is scoped by `tenantId`
+  - cache is reset after provider config create/update and manual provider discovery refresh.
+- Runner-side provider throttling is enforced before provider calls:
+  - in-memory limiter consumes per-tenant/per-provider RPM+TPM budgets
+  - limits are read from `provider_configs.requests_per_minute` and `provider_configs.tokens_per_minute`
+  - enforced in generation flow prior to invoking coding/chat providers.
+
+### Step 16 — Knowledge System (LLMWIKI + pgvector-ready)
+- Added additive knowledge persistence layer with markdown-first authoring and retrieval-ready records:
+  - DB table: `knowledge_nodes`
+  - fields: `id`, `tenant_id?`, `project_id?`, `scope`, `path`, `content`, `embedding?`, audit metadata
+  - additive migration: `022_knowledge_system.sql`
+- Scope model enforced:
+  - `system`: global operational principles and architecture notes
+  - `tenant`: tenant-wide standards and reusable patterns
+  - `project`: project decisions/insights tied to execution context
+- Filesystem knowledge tree introduced:
+  - `knowledge/system/`
+  - `knowledge/tenants/{tenantId}/`
+  - `knowledge/projects/{projectId}/`
+  - startup sync loads markdown into canonical DB records.
+- New service package `@cp/knowledge`:
+  - CRUD-compatible knowledge store adapter
+  - markdown filesystem sync (`syncFilesystem`)
+  - lexical search with semantic scoring fallback when embedding providers are configured
+  - compact context builder for generation workflows.
+- API routes added (additive only):
+  - `GET /knowledge` (list/search by `tenant`, `project`, `scope`, `path`, `query`)
+  - `GET /knowledge/:knowledgeNodeId`
+  - `POST /knowledge`
+  - `PATCH /knowledge/:knowledgeNodeId`
+  - `DELETE /knowledge/:knowledgeNodeId`
+  - `POST /knowledge/sync`
+  - `GET /knowledge/context/search`
+- Runner integration:
+  - generation jobs inject compact system/project knowledge context before model call.
+  - optional insight persistence from generation output is supported via `payload.captureKnowledge=true`.
+  - only compact decisions/insights are persisted, not raw execution logs.
+- UI integration:
+  - project-scoped knowledge workspace route: `/project/:projectId/knowledge`
+  - legacy `/knowledge` redirects to project-scoped route
+  - supports list/search/edit/create/delete and filesystem sync trigger.
+
+### Step 17 — Knowledge Configuration Layer (tenant/project policy controls)
+- Added additive configuration model for deterministic knowledge behavior:
+  - DB table: `knowledge_configs`
+  - fields: `tenant_id`, optional `project_id`, `scope`, `auto_capture`, `capture_modes`, `require_approval`, `max_nodes`, `relevance_threshold`, `versioning`, `require_review`, audit metadata
+  - additive migration: `023_knowledge_config.sql`.
+- API routes (additive under `/knowledge/*`):
+  - `GET /knowledge/config`
+    - resolves effective policy with precedence `project -> tenant -> system -> default`.
+    - returns canonical shape `{ item, source, items }`.
+  - `POST /knowledge/config`
+    - creates scoped policy records.
+    - protected by tenant permission `canManageUsers` (owner/admin in RBAC mapping).
+  - `PATCH /knowledge/config`
+    - upsert-style patch; creates scoped default then applies patch when record is missing.
+    - protected by tenant permission `canManageUsers`.
+- Retrieval alignment:
+  - `GET /knowledge/context/search` now applies effective `maxNodes` + `relevanceThreshold` when query overrides are not provided.
+- Runner alignment:
+  - generation jobs resolve effective knowledge config per tenant/project.
+  - retrieval injection uses configured `maxNodes`/`relevanceThreshold`.
+  - insight mutation follows config gates:
+    - auto-capture only when enabled and `generation_output` mode is active
+    - skips persistence when `requireApproval` or `requireReview` is enabled
+    - writes into configured scope (`system|tenant|project`).
+- Platform UI:
+  - new settings page `/settings/knowledge` exposes capture, scope, retrieval and mutation controls.
+  - integrated in owner/platform navigation and remains additive to existing routes/contracts.
+
+### Step 18 — Prompt Governance + Coding HITL + Schemas Graph + Context Workspace
+- Prompt governance is now first-class and additive:
+  - domain contract: `PromptRegistryEntry` (`system|tenant|project`, version, status, target, content)
+  - migration: `024_prompt_registry.sql`
+  - routes:
+    - `GET /prompts`
+    - `GET /prompts/:promptId`
+    - `POST /prompts`
+    - `PATCH /prompts/:promptId`
+    - `POST /prompts/:promptId/activate`
+    - `POST /prompts/:promptId/deprecate`
+  - active prompt resolution is scope-aware and consumed by prompt composition paths.
+- Prompt composition remains centralized in `@cp/prompt-builder`:
+  - brainstorming now resolves role instructions through prompt registry active entries before role-file fallback.
+  - no direct prompt composition is introduced outside the builder boundary.
+- Internal coding workflow with HITL is additive and project-scoped:
+  - migration: `025_coding_workflow.sql`
+  - entity: coding request/plan/tasks/approval states with explicit transitions
+  - routes:
+    - `GET /coding-workflow`
+    - `GET /coding-workflow/:workflowId`
+    - `POST /coding-workflow`
+    - `POST /coding-workflow/:workflowId/approve`
+    - `POST /coding-workflow/:workflowId/reject`
+    - `POST /coding-workflow/:workflowId/revise`
+    - `POST /coding-workflow/:workflowId/finalize`
+- Schemas observability is now node-based in project context:
+  - route: `/project/:projectId/schemas`
+  - sections:
+    - Data Model
+    - API Contracts
+    - System Structure
+  - graph canvas + node detail panel are implemented in web app components, not as static tables.
+- Project Context module (Obsidian-like notes) is additive:
+  - migration: `026_context_notes.sql`
+  - package: `@cp/context`
+  - routes:
+    - `GET /context`
+    - `GET /context/:contextId`
+    - `POST /context`
+    - `PATCH /context/:contextId`
+    - `DELETE /context/:contextId`
+  - UI route: `/project/:projectId/context` with notes list, markdown editor, reader, search.
+- Advanced memory integration:
+  - knowledge retrieval thresholds and max nodes are enforced by effective config
+  - context packet builder includes scoped knowledge snippets for generation/coding paths
+  - runner writes compact knowledge insights only for meaningful outputs, policy-gated.

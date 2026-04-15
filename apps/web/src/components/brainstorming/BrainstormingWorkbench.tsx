@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BrainstormPlan, BrainstormSession, Subprompt } from "@cp/domain";
 import { Button, Panel, Pill, SectionHeading } from "@/components/common";
 import { useAppStore } from "@/store/app-store";
@@ -51,8 +51,17 @@ export function BrainstormingWorkbench({
   const [creating, setCreating] = useState(false);
   const [loadingPlan, setLoadingPlan] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const isMountedRef = useRef(true);
+
+  useEffect(
+    () => () => {
+      isMountedRef.current = false;
+    },
+    []
+  );
 
   const refreshSubprompts = useCallback(async (): Promise<void> => {
+    if (!isMountedRef.current) return;
     setLoadingCatalog(true);
     setError(undefined);
     try {
@@ -62,6 +71,7 @@ export function BrainstormingWorkbench({
         throw new Error(body.message ?? `Unable to load subprompts (HTTP ${response.status})`);
       }
       const items = body.items ?? [];
+      if (!isMountedRef.current) return;
       setSubprompts(items);
       if (selectedSubpromptIds.length === 0 && items.length > 0) {
         const preferred = items
@@ -70,8 +80,10 @@ export function BrainstormingWorkbench({
         setSelectedSubpromptIds(preferred.length > 0 ? preferred : items.slice(0, 4).map((item) => item.id));
       }
     } catch (loadError) {
+      if (!isMountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load subprompt library");
     } finally {
+      if (!isMountedRef.current) return;
       setLoadingCatalog(false);
     }
   }, [authActions, selectedSubpromptIds.length]);
@@ -89,22 +101,23 @@ export function BrainstormingWorkbench({
 
   const loadPlan = useCallback(
     async (id: string): Promise<void> => {
+      if (!isMountedRef.current) return;
       setLoadingPlan(true);
       setError(undefined);
       try {
         const planResponse = await authActions.apiFetch(`/brainstorm/plan/${id}`);
         const planBody = (await planResponse.json()) as BrainstormPlanFetchResponse;
-        console.log("brainstorm response", planBody);
 
         if (planResponse.ok && planBody.item) {
           if (!planBody.item.plan) {
-            setError("BrainstormPlan non valido");
-            return;
+            throw new Error("Non-canonical plan detected at runtime source");
           }
+          if (!isMountedRef.current) return;
           setPlan(planBody.item);
           const sessionResponse = await authActions.apiFetch(`/brainstorm/${planBody.item.sessionId}`);
           const sessionBody = (await sessionResponse.json()) as BrainstormSessionFetchResponse;
           if (sessionResponse.ok && sessionBody.item?.session) {
+            if (!isMountedRef.current) return;
             setSession(sessionBody.item.session);
           }
           return;
@@ -113,7 +126,6 @@ export function BrainstormingWorkbench({
         if (planResponse.status === 404) {
           const sessionResponse = await authActions.apiFetch(`/brainstorm/${id}`);
           const sessionBody = (await sessionResponse.json()) as BrainstormSessionFetchResponse;
-          console.log("brainstorm response", sessionBody);
           if (!sessionResponse.ok || !sessionBody.item) {
             throw new Error(
               sessionBody.message ?? `Errore caricamento brainstorming session (HTTP ${sessionResponse.status})`
@@ -122,17 +134,19 @@ export function BrainstormingWorkbench({
           setSession(sessionBody.item.session);
           const sessionPlan = sessionBody.item.plans[0];
           if (!sessionPlan?.plan) {
-            setError("BrainstormPlan non valido");
-            return;
+            throw new Error("Non-canonical plan detected at runtime source");
           }
+          if (!isMountedRef.current) return;
           setPlan(sessionPlan);
           return;
         }
 
         throw new Error(planBody.message ?? `Errore caricamento brainstorming plan (HTTP ${planResponse.status})`);
       } catch (loadError) {
+        if (!isMountedRef.current) return;
         setError(loadError instanceof Error ? loadError.message : "Errore caricamento brainstorming");
       } finally {
+        if (!isMountedRef.current) return;
         setLoadingPlan(false);
       }
     },

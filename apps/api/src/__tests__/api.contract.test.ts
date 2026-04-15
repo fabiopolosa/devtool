@@ -38,10 +38,12 @@ describe("API contract", () => {
       "/approvals",
       "/artifacts",
       "/verification/results",
+      "/knowledge",
       "/memory/entries",
       "/retrieval/logs",
       "/experiments",
       "/providers",
+      "/providers/config",
       "/agents",
       "/skills/installed",
       "/secrets",
@@ -50,6 +52,7 @@ describe("API contract", () => {
       "/machines",
       "/local-repos",
       "/versioning/snapshots",
+      "/jobs",
       "/chat/threads"
     ];
 
@@ -78,6 +81,60 @@ describe("API contract", () => {
     const run = await app.inject({ method: "GET", url: "/runs/run_001" });
     expect(run.statusCode).toBe(200);
     expect(run.json().item.id).toBe("run_001");
+  });
+
+  it("returns enriched jobs and supports agent chat endpoint", async () => {
+    const jobs = await app.inject({ method: "GET", url: "/jobs" });
+    expect(jobs.statusCode).toBe(200);
+    const list = jobs.json() as {
+      items: Array<{
+        id: string;
+        title: string;
+        status: string;
+        actionRequired: boolean;
+        actionType?: string;
+        resourceId?: string;
+      }>;
+    };
+    expect(Array.isArray(list.items)).toBe(true);
+    expect(list.items[0]).toHaveProperty("actionRequired");
+
+    const chat = await app.inject({
+      method: "POST",
+      url: "/agent/chat",
+      payload: {
+        message: "Need input for plan review",
+        context: { planId: "plan_001" }
+      }
+    });
+    expect(chat.statusCode).toBe(200);
+    expect(chat.json()).toHaveProperty("item.response");
+  });
+
+  it("returns runtime snapshot for selected job", async () => {
+    const listResponse = await app.inject({ method: "GET", url: "/jobs" });
+    expect(listResponse.statusCode).toBe(200);
+    const listBody = listResponse.json() as { items: Array<{ id: string }> };
+    const firstJobId = listBody.items[0]?.id;
+    expect(firstJobId).toBeDefined();
+
+    const runtimeResponse = await app.inject({
+      method: "GET",
+      url: `/jobs/${firstJobId}/runtime`
+    });
+    expect(runtimeResponse.statusCode).toBe(200);
+    const runtimeBody = runtimeResponse.json() as {
+      item: {
+        job: { id: string };
+        dependencies: unknown[];
+        logs: Array<{ timestamp: string; event: string; message: string }>;
+      };
+    };
+    expect(runtimeBody.item.job.id).toBe(firstJobId);
+    expect(Array.isArray(runtimeBody.item.dependencies)).toBe(true);
+    expect(Array.isArray(runtimeBody.item.logs)).toBe(true);
+    expect(runtimeBody.item.logs[0]).toHaveProperty("timestamp");
+    expect(runtimeBody.item.logs[0]).toHaveProperty("event");
   });
 
   it("streams run events as SSE", async () => {

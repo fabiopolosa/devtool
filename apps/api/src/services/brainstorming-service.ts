@@ -23,10 +23,14 @@ import type {
 } from "@cp/domain";
 import { capabilityClasses, providerNames } from "@cp/domain";
 import { apiStore } from "./api-store.js";
+import { buildCompactKnowledgeContext, formatCompactKnowledgeContext } from "./knowledge-service.js";
+import { createJob, updateJobStatus } from "./jobs-service.js";
+import { promptRegistryService } from "./prompt-registry-service.js";
 import { skillsService } from "./skills-service.js";
 import { getSubprompt, listSubprompts, syncSubpromptsCatalog } from "./subprompts-service.js";
 
 export interface StartBrainstormInput {
+  tenantId?: string;
   projectIntent: string;
   threadId?: string;
   projectId?: string;
@@ -37,6 +41,7 @@ export interface StartBrainstormInput {
 }
 
 export interface ApplyBrainstormPlanInput {
+  tenantId?: string;
   planId: string;
   actor?: string;
   projectName?: string;
@@ -77,7 +82,16 @@ const brainstormingService = new BrainstormingService({
     list: (filters) => listSubprompts(filters),
     get: (subpromptId) => getSubprompt(subpromptId)
   },
-  rolesDir: promptRolesDir
+  rolesDir: promptRolesDir,
+  resolveRoleInstructions: async (role, context) => {
+    const activeEntry = await promptRegistryService.resolveActivePrompt({
+      tenantId: context?.tenantId ?? "tenant_default",
+      ...(context?.projectId ? { projectId: context.projectId } : {}),
+      ...(context?.type ? { type: context.type } : { type: "role" }),
+      ...(context?.target ? { target: context.target } : { target: role })
+    });
+    return activeEntry?.content;
+  }
 });
 
 const toSlug = (value: string): string =>
@@ -115,10 +129,18 @@ const inferRepositoryName = (url: string): string => {
   return lastSegment.replace(/\.git$/i, "");
 };
 
-const buildDraftInput = (input: StartBrainstormInput): BrainstormComposeInput => ({
+const buildDraftInput = (
+  input: StartBrainstormInput,
+  knowledgeContextSummary?: string
+): BrainstormComposeInput => ({
+  ...(input.tenantId ? { tenantId: input.tenantId } : {}),
+  ...(input.projectId ? { projectId: input.projectId } : {}),
   projectIntent: input.projectIntent,
   selectedSubpromptIds: input.selectedSubpromptIds ?? [],
-  guidedAnswers: input.guidedAnswers ?? {},
+  guidedAnswers: {
+    ...(input.guidedAnswers ?? {}),
+    ...(knowledgeContextSummary ? { knowledgeContext: knowledgeContextSummary } : {})
+  },
   ...(input.actor ? { actor: input.actor } : {})
 });
 
@@ -126,6 +148,7 @@ const defaultTaskFromRoadmap = (projectId: string, roadmapItem: RoadmapItem, rep
   const createdAt = nowIso();
   return {
     id: randomUUID(),
+    tenantId: roadmapItem.tenantId,
     projectId,
     roadmapItemId: roadmapItem.id,
     title: roadmapItem.title,
@@ -155,15 +178,20 @@ const defaultTaskFromRoadmap = (projectId: string, roadmapItem: RoadmapItem, rep
 };
 
 async function ensureProviderConfig(provider: ProviderName, actor: string): Promise<ProviderConfig> {
-  const existing = (await apiStore.listProviderConfigs()).find((item) => item.provider === provider);
+  const existing = (await apiStore.listProviderConfigs()).find(
+    (item) => (item.providerId ?? item.provider) === provider
+  );
   if (existing) return existing;
   const createdAt = nowIso();
   return apiStore.createProviderConfig({
     id: randomUUID(),
+    providerId: provider,
     provider,
     authRef: defaultAuthRef(provider),
+    secretRef: defaultAuthRef(provider),
     enabled: true,
     timeoutMs: 30000,
+    validationStatus: "unknown",
     metadata: { source: "brainstorm_apply" },
     createdAt,
     createdBy: actor,
@@ -263,6 +291,7 @@ async function createBindingsFromPlan(
 }
 
 async function ensureRepositoriesForPlan(
+  tenantId: string,
   projectId: string,
   input: ApplyBrainstormPlanInput,
   actor: string
@@ -284,6 +313,7 @@ async function ensureRepositoriesForPlan(
     const createdAt = nowIso();
     const created = await apiStore.createRepository({
       id: randomUUID(),
+      tenantId,
       name: inferRepositoryName(repositoryUrl),
       url: repositoryUrl,
       vcsProvider: inferVcsProvider(repositoryUrl),
@@ -308,6 +338,7 @@ async function ensureRepositoriesForPlan(
     const role: ProjectRepositoryLink["role"] = index === 0 ? "primary" : "secondary";
     await apiStore.createProjectRepositoryLink({
       id: randomUUID(),
+      tenantId,
       projectId,
       repositoryId: repository.id,
       role,
@@ -344,6 +375,7 @@ async function installSkillsFromPlan(plan: BrainstormPlan): Promise<
 
 export async function startBrainstormSession(input: StartBrainstormInput): Promise<BrainstormStartResult> {
   const actor = input.actor?.trim() || "brainstorming_service";
+  const tenantId = input.tenantId ?? "tenant_default";
   await syncSubpromptsCatalog();
   const selected =
     input.selectedSubpromptIds && input.selectedSubpromptIds.length > 0
@@ -353,6 +385,7 @@ export async function startBrainstormSession(input: StartBrainstormInput): Promi
   const createdAt = nowIso();
   const session: BrainstormSession = await apiStore.createBrainstormSession({
     id: randomUUID(),
+    tenantId,
     ...(input.threadId ? { threadId: input.threadId } : {}),
     ...(input.projectId ? { projectId: input.projectId } : {}),
     status: "collecting",
@@ -365,25 +398,61 @@ export async function startBrainstormSession(input: StartBrainstormInput): Promi
     updatedAt: createdAt,
     updatedBy: actor
   });
+  const brainstormJob = await createJob({
+    tenantId,
+    type: "brainstorm",
+    title: `Brainstorm session: ${input.projectIntent.trim().slice(0, 80)}`,
+    status: "running",
+    actionRequired: false,
+    resourceType: "brainstorm",
+    resourceId: session.id,
+    createdBy: actor
+  });
 
   if (input.generatePlan === false) {
+    await updateJobStatus(brainstormJob.id, "waiting_user", {
+      actionRequired: true,
+      actionType: "input"
+    });
     return { session };
   }
 
-  const draft: BrainstormPlanDraft = await brainstormingService.composePlanDraft(buildDraftInput(input));
-  const plan = brainstormingService.makePlanEntity(session.id, draft, actor);
-  const persistedPlan = await apiStore.createBrainstormPlan(plan);
-  const updatedSession = await apiStore.updateBrainstormSession(session.id, {
-    status: "planned",
-    planId: persistedPlan.id,
-    answers: input.guidedAnswers ?? {},
-    updatedAt: nowIso(),
-    updatedBy: actor
-  });
-  return {
-    session: updatedSession,
-    plan: persistedPlan
-  };
+  try {
+    const knowledgeContext = await buildCompactKnowledgeContext({
+      tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      query: input.projectIntent,
+      limit: 6,
+      includeContextNotes: true
+    });
+    const knowledgeSummary = formatCompactKnowledgeContext(knowledgeContext);
+    const draft: BrainstormPlanDraft = await brainstormingService.composePlanDraft(
+      buildDraftInput(input, knowledgeContext.length > 0 ? knowledgeSummary : undefined)
+    );
+    const plan = brainstormingService.makePlanEntity(session.id, draft, actor, tenantId);
+    const persistedPlan = await apiStore.createBrainstormPlan(plan);
+    const updatedSession = await apiStore.updateBrainstormSession(session.id, {
+      status: "planned",
+      planId: persistedPlan.id,
+      answers: input.guidedAnswers ?? {},
+      updatedAt: nowIso(),
+      updatedBy: actor
+    });
+    await updateJobStatus(brainstormJob.id, "done", {
+      actionRequired: false,
+      resourceId: persistedPlan.id
+    });
+    return {
+      session: updatedSession,
+      plan: persistedPlan
+    };
+  } catch (error) {
+    await updateJobStatus(brainstormJob.id, "error", {
+      actionRequired: true,
+      actionType: "review"
+    });
+    throw error;
+  }
 }
 
 export async function listBrainstormSessions(filters?: {
@@ -424,15 +493,29 @@ export async function applyBrainstormPlan(
   input: ApplyBrainstormPlanInput
 ): Promise<BrainstormApplyResult> {
   const actor = input.actor?.trim() || "brainstorming_service";
+  const tenantId = input.tenantId ?? "tenant_default";
+  const applyJob = await createJob({
+    tenantId,
+    type: "brainstorm_apply",
+    title: `Apply brainstorm plan ${input.planId}`,
+    status: "running",
+    actionRequired: false,
+    resourceType: "brainstorm",
+    resourceId: input.planId,
+    createdBy: actor
+  });
   const plan = await apiStore.getBrainstormPlan(input.planId);
   if (!plan) {
+    await updateJobStatus(applyJob.id, "error", { actionRequired: true, actionType: "review" });
     throw new Error(`Brainstorm plan not found: ${input.planId}`);
   }
   const session = await apiStore.getBrainstormSession(plan.sessionId);
   if (!session) {
+    await updateJobStatus(applyJob.id, "error", { actionRequired: true, actionType: "review" });
     throw new Error(`Brainstorm session not found: ${plan.sessionId}`);
   }
   if (session.status !== "approved" && session.status !== "applied") {
+    await updateJobStatus(applyJob.id, "error", { actionRequired: true, actionType: "approve" });
     throw new Error(
       `Brainstorm session ${session.id} must be approved before project creation (current status: ${session.status}).`
     );
@@ -442,6 +525,7 @@ export async function applyBrainstormPlan(
   const baseName = input.projectName?.trim() || plan.title;
   const project = await apiStore.createProject({
     id: randomUUID(),
+    tenantId,
     key: input.projectKey?.trim() || toSlug(baseName) || `project-${Date.now()}`,
     name: baseName,
     description: input.description?.trim() || plan.executiveSummary,
@@ -453,7 +537,7 @@ export async function applyBrainstormPlan(
     updatedBy: actor
   });
 
-  const repositories = await ensureRepositoriesForPlan(project.id, input, actor);
+  const repositories = await ensureRepositoriesForPlan(tenantId, project.id, input, actor);
   const repositoryIds = repositories.map((repo) => repo.id);
 
   const roadmapItems: RoadmapItem[] = [];
@@ -463,6 +547,7 @@ export async function applyBrainstormPlan(
     const roadmapItemCreatedAt = nowIso();
     const roadmapItem = await apiStore.createRoadmapItem({
       id: randomUUID(),
+      tenantId,
       projectId: project.id,
       title: roadmapTask.title,
       description: roadmapTask.description,
@@ -491,6 +576,10 @@ export async function applyBrainstormPlan(
     appliedAt,
     updatedAt: appliedAt,
     updatedBy: actor
+  });
+  await updateJobStatus(applyJob.id, "done", {
+    actionRequired: false,
+    resourceId: project.id
   });
 
   return {

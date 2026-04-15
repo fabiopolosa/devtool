@@ -23,7 +23,15 @@ export class ProviderRegistry {
   async discoverAllModels(): Promise<ProviderModelDescriptor[]> {
     const models: ProviderModelDescriptor[] = [];
     for (const provider of this.providers.values()) {
-      models.push(...(await provider.discoverModels()));
+      try {
+        models.push(...(await provider.discoverModels()));
+      } catch (error) {
+        console.warn("Provider model discovery failed", {
+          provider: provider.provider,
+          capabilityClass: provider.capabilityClass,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
     return models;
   }

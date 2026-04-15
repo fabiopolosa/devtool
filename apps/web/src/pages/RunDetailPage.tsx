@@ -6,6 +6,7 @@ import { useAppStore } from '@/store/app-store';
 
 export function RunDetailPage() {
   const { state } = useAppStore();
+  const projectId = usePathParam(3);
   const runId = usePathParam(1);
   const run = state.taskRuns.find((item) => item.id === runId) ?? state.taskRuns[0];
 
@@ -40,10 +41,24 @@ export function RunDetailPage() {
       {verification ? <VerificationSummary result={verification} steps={steps} /> : null}
       <AgentRunTable runs={[run]} />
 
-      <div className="flex gap-2">
-        <Link to="/artifacts/$runId" params={{ runId: run.id }} className="pill border border-white/10">Artifacts</Link>
-        <Link to="/retrieval/$runId" params={{ runId: run.id }} className="pill border border-white/10">Retrieved context</Link>
-      </div>
+      {projectId ? (
+        <div className="flex gap-2">
+          <Link
+            to="/project/$projectId/artifacts/$runId"
+            params={{ projectId, runId: run.id }}
+            className="pill border border-white/10"
+          >
+            Artifacts
+          </Link>
+          <Link
+            to="/project/$projectId/retrieval/$runId"
+            params={{ projectId, runId: run.id }}
+            className="pill border border-white/10"
+          >
+            Retrieved context
+          </Link>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -115,12 +115,13 @@ const installFetchMock = (): void => {
 describe("Brainstorming and MCP pages smoke", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   it("renders brainstorming page", async () => {
     installFetchMock();
-    window.history.pushState({}, "", "/brainstorming");
-    await router.navigate({ to: "/brainstorming" });
+    window.history.pushState({}, "", "/project/proj-control-plane/brainstorming");
+    await router.navigate({ to: "/project/$projectId/brainstorming", params: { projectId: "proj-control-plane" } });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>
@@ -134,8 +135,11 @@ describe("Brainstorming and MCP pages smoke", () => {
 
   it("renders brainstorm plan page by id", async () => {
     installFetchMock();
-    window.history.pushState({}, "", "/brainstorm/plan_001");
-    await router.navigate({ to: "/brainstorm/$id", params: { id: "plan_001" } });
+    window.history.pushState({}, "", "/project/proj-control-plane/brainstorm/plan_001");
+    await router.navigate({
+      to: "/project/$projectId/brainstorm/$id",
+      params: { projectId: "proj-control-plane", id: "plan_001" }
+    });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>
@@ -149,8 +153,9 @@ describe("Brainstorming and MCP pages smoke", () => {
 
   it("renders MCP page guard when auth is disabled", async () => {
     installFetchMock();
-    window.history.pushState({}, "", "/mcp");
-    await router.navigate({ to: "/mcp" });
+    window.localStorage.setItem("cp_owner_mode", "1");
+    window.history.pushState({}, "", "/settings/mcp");
+    await router.navigate({ to: "/settings/mcp" });
 
     render(
       <AppStoreProvider authEnabledOverride={false}>

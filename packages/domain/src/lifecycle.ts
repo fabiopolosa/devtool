@@ -56,3 +56,9 @@ export type UserStatus = (typeof userStatuses)[number];
 
 export const rbacRoleNames = ["admin", "editor", "operator", "viewer"] as const;
 export type RbacRoleName = (typeof rbacRoleNames)[number];
+
+export const tenantRoleNames = ["owner", "admin", "manager", "user", "guest"] as const;
+export type TenantRoleName = (typeof tenantRoleNames)[number];
+
+export const jobStatuses = ["idle", "running", "waiting_user", "done", "error"] as const;
+export type JobStatus = (typeof jobStatuses)[number];
