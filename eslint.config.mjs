@@ -1,5 +1,6 @@
 import tsParser from "@typescript-eslint/parser";
 import tsPlugin from "@typescript-eslint/eslint-plugin";
+import guardrailsPlugin from "./eslint-rules/index.mjs";
 
 export default [
   {
@@ -23,7 +24,8 @@ export default [
       }
     },
     plugins: {
-      "@typescript-eslint": tsPlugin
+      "@typescript-eslint": tsPlugin,
+      "cp-guardrails": guardrailsPlugin
     },
     rules: {
       "no-console": "off",
@@ -36,6 +38,26 @@ export default [
         }
       ],
       "@typescript-eslint/no-explicit-any": "off"
+      ,
+      "cp-guardrails/no-direct-prompt-build": [
+        "error",
+        {
+          allowWithin: ["/packages/prompt-builder/"]
+        }
+      ],
+      "cp-guardrails/no-subprompts-outside-builder": [
+        "error",
+        {
+          allowWithin: ["/packages/prompt-builder/"]
+        }
+      ],
+      "cp-guardrails/no-brainstormplan-legacy": "error",
+      "cp-guardrails/no-orchestration-outside-ruflo": [
+        "error",
+        {
+          allowWithin: ["/packages/orchestration-ruflo/", "/apps/worker/"]
+        }
+      ]
     }
   }
 ];

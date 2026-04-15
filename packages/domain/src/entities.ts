@@ -478,7 +478,6 @@ export type {
   BrainstormSession,
   BrainstormSessionStatus,
   BrainstormPlanPayload,
-  LegacyBrainstormPlan,
   BrainstormPlanLike,
   BrainstormPlanNormalizationOptions
 } from "./entities/brainstorm.js";

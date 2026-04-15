@@ -16,7 +16,8 @@ export interface AgentRoleDefinition {
   capabilityNeeds: CapabilityClass[];
 }
 
-const prompt = (name: string) => path.join(process.cwd(), "configs/prompts/roles", `${name}.md`);
+const resolvePromptPath = (name: string) =>
+  path.join(process.cwd(), "configs/prompts/roles", `${name}.md`);
 
 export const AGENT_ROLE_DEFINITIONS: AgentRoleDefinition[] = [
   {
@@ -29,7 +30,7 @@ export const AGENT_ROLE_DEFINITIONS: AgentRoleDefinition[] = [
     stopConditions: ["No unresolved high-impact ambiguity", "Task specs are execution ready"],
     qualityRules: ["Scope clarity", "Risk visibility", "Verification readiness"],
     auditRequirements: ["Assumptions recorded", "Files likely touched recorded"],
-    promptPath: prompt("planner"),
+    promptPath: resolvePromptPath("planner"),
     capabilityNeeds: ["chat_reasoning"]
   },
   {
@@ -42,7 +43,7 @@ export const AGENT_ROLE_DEFINITIONS: AgentRoleDefinition[] = [
     stopConditions: ["Implementation complete", "Verification executed"],
     qualityRules: ["Minimal churn", "Deterministic outputs"],
     auditRequirements: ["Commands run", "Files changed", "Risks"],
-    promptPath: prompt("codex-builder"),
+    promptPath: resolvePromptPath("codex-builder"),
     capabilityNeeds: ["coding"]
   },
   {
@@ -55,7 +56,7 @@ export const AGENT_ROLE_DEFINITIONS: AgentRoleDefinition[] = [
     stopConditions: ["Refactor goals complete", "Verification executed"],
     qualityRules: ["Readability", "Maintainability", "Minimal risk"],
     auditRequirements: ["Behavior preservation notes"],
-    promptPath: prompt("codex-refactor"),
+    promptPath: resolvePromptPath("codex-refactor"),
     capabilityNeeds: ["coding"]
   },
   {
@@ -68,7 +69,7 @@ export const AGENT_ROLE_DEFINITIONS: AgentRoleDefinition[] = [
     stopConditions: ["Root cause confidence acceptable", "Fix strategy validated"],
     qualityRules: ["Root cause != symptom", "Uncertainty explicit"],
     auditRequirements: ["Evidence list", "Confidence level"],
-    promptPath: prompt("claude-debugger"),
+    promptPath: resolvePromptPath("claude-debugger"),
     capabilityNeeds: ["chat_reasoning", "coding"]
   },
   {
@@ -81,7 +82,7 @@ export const AGENT_ROLE_DEFINITIONS: AgentRoleDefinition[] = [
     stopConditions: ["Question answered", "Caveats documented"],
     qualityRules: ["Source quality", "Breaking changes highlighted"],
     auditRequirements: ["Source list with links"],
-    promptPath: prompt("gemini-researcher"),
+    promptPath: resolvePromptPath("gemini-researcher"),
     capabilityNeeds: ["chat_reasoning"]
   },
   {
@@ -94,7 +95,7 @@ export const AGENT_ROLE_DEFINITIONS: AgentRoleDefinition[] = [
     stopConditions: ["Requested assets generated", "Formats validated"],
     qualityRules: ["Brand consistency", "Resolution suitability"],
     auditRequirements: ["Model used", "Prompt used", "Outputs"],
-    promptPath: prompt("image-designer"),
+    promptPath: resolvePromptPath("image-designer"),
     capabilityNeeds: ["image_generation"]
   },
   {
@@ -107,7 +108,7 @@ export const AGENT_ROLE_DEFINITIONS: AgentRoleDefinition[] = [
     stopConditions: ["Edit complete", "Output asset validated"],
     qualityRules: ["Operation fidelity", "Format compatibility"],
     auditRequirements: ["Source asset refs", "Operation details"],
-    promptPath: prompt("image-editor"),
+    promptPath: resolvePromptPath("image-editor"),
     capabilityNeeds: ["image_editing", "vision_analysis"]
   }
 ];

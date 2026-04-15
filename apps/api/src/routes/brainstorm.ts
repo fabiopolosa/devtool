@@ -29,6 +29,11 @@ interface ApplyPlanBody {
 }
 
 export const brainstormRoutes: FastifyPluginAsync = async (fastify) => {
+  const isContractError = (message: string): boolean =>
+    message.includes("Legacy top-level plan fields") ||
+    message.includes("Invalid or missing canonical plan payload") ||
+    message.includes("Invalid canonical brainstorm plan payload");
+
   fastify.get<{
     Querystring: { threadId?: string; projectId?: string; status?: "collecting" | "planned" | "approved" | "applied" | "archived" };
   }>(
@@ -82,17 +87,25 @@ export const brainstormRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["brainstorm"], summary: "Get brainstorming session with associated plans" }
     },
     async (request, reply) => {
-      const session = await getBrainstormSession(request.params.sessionId);
-      if (!session) {
-        return reply.code(404).send({ item: null });
-      }
-      const plans = await listBrainstormPlans(session.id);
-      return {
-        item: {
-          session,
-          plans
+      try {
+        const session = await getBrainstormSession(request.params.sessionId);
+        if (!session) {
+          return reply.code(404).send({ item: null });
         }
-      };
+        const plans = await listBrainstormPlans(session.id);
+        return {
+          item: {
+            session,
+            plans
+          }
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid brainstorm session contract";
+        if (isContractError(message)) {
+          return reply.code(422).send({ error: "invalid_contract", message });
+        }
+        throw error;
+      }
     }
   );
 
@@ -102,11 +115,19 @@ export const brainstormRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["brainstorm"], summary: "Get final brainstorm plan by id" }
     },
     async (request, reply) => {
-      const item = await getBrainstormPlan(request.params.planId);
-      if (!item) {
-        return reply.code(404).send({ item: null });
+      try {
+        const item = await getBrainstormPlan(request.params.planId);
+        if (!item) {
+          return reply.code(404).send({ item: null });
+        }
+        return { item };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid brainstorm plan contract";
+        if (isContractError(message)) {
+          return reply.code(422).send({ error: "invalid_contract", message });
+        }
+        throw error;
       }
-      return { item };
     }
   );
 
@@ -123,9 +144,16 @@ export const brainstormRoutes: FastifyPluginAsync = async (fastify) => {
         );
         return { item };
       } catch (error) {
+        const message = error instanceof Error ? error.message : "Plan not found";
+        if (isContractError(message)) {
+          return reply.code(422).send({
+            error: "invalid_contract",
+            message
+          });
+        }
         return reply.code(404).send({
           error: "not_found",
-          message: error instanceof Error ? error.message : "Plan not found"
+          message
         });
       }
     }
@@ -155,6 +183,9 @@ export const brainstormRoutes: FastifyPluginAsync = async (fastify) => {
         return { item: result };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unable to apply brainstorm plan";
+        if (isContractError(message)) {
+          return reply.code(422).send({ error: "invalid_contract", message });
+        }
         if (message.includes("must be approved")) {
           return reply.code(409).send({ error: "invalid_state", message });
         }

@@ -388,7 +388,10 @@ This section tracks post-stabilization implementation progress while preserving 
 - Compatibility helpers are centralized in `@cp/domain`:
   - `getBrainstormPlanPayload(...)`
   - `normalizeBrainstormPlan(...)`
-- Legacy top-level plan fields are read via temporary compatibility fallback only; all write paths persist canonical nested `plan`.
+- Legacy top-level plan fields are rejected at runtime (no compatibility fallback). Invalid payloads surface as contract errors (`422`) in brainstorming read/apply endpoints.
+- Prompt composition is centralized in `@cp/prompt-builder`:
+  - `buildPrompt({ role, subprompts, plan, context })`
+  - Brainstorming uses prompt-builder (not ad-hoc string composition) to build `plan.composedPrompt`.
 - Brainstorming orchestration routes are additive and persistent:
   - `GET /brainstorm`
   - `POST /brainstorm`

@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { BrainstormPlan } from "@cp/domain";
 
 describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", () => {
   let app: FastifyInstance;
@@ -121,50 +120,28 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     expect(applyBody.item.roadmapItems.length).toBeGreaterThan(0);
   });
 
-  it("normalizes legacy brainstorm plans without crashing consumers", async () => {
+  it("rejects legacy brainstorm plans that do not use plan.*", async () => {
     const now = new Date().toISOString();
     const { apiStore } = await import("../services/api-store.js");
-    await apiStore.createBrainstormPlan({
-      id: "legacy_plan_contract_test",
-      sessionId: "legacy_session_contract_test",
-      title: "Legacy plan",
-      executiveSummary: "Legacy summary",
-      createdAt: now,
-      createdBy: "test",
-      updatedAt: now,
-      updatedBy: "test",
-      recommendedStack: {
-        database: "PostgreSQL",
-        backend: "Fastify",
-        frontend: "React",
-        llmProviders: ["openai"],
-        vectorStore: "pgvector"
-      },
-      architecture: {
-        repositoryStrategy: "monorepo",
-        packageLayout: ["apps/api", "apps/web"],
-        rationale: "legacy compatibility"
-      },
-      suggestedAgents: [],
-      suggestedSkills: [],
-      providerBindings: [],
-      roadmap: [],
-      assumptions: [],
-      risks: [],
-      composedPrompt: "legacy prompt",
-      selectedSubprompts: []
-    } as unknown as BrainstormPlan);
-
-    const response = await app.inject({
-      method: "GET",
-      url: "/brainstorm/plan/legacy_plan_contract_test"
-    });
-    expect(response.statusCode).toBe(200);
-    const body = response.json() as {
-      item: { plan: { recommendedStack: { backend: string }; composedPrompt: string } };
-    };
-    expect(body.item.plan.recommendedStack.backend).toBe("Fastify");
-    expect(body.item.plan.composedPrompt).toBe("legacy prompt");
+    await expect(
+      apiStore.createBrainstormPlan({
+        id: "legacy_plan_contract_test",
+        sessionId: "legacy_session_contract_test",
+        title: "Legacy plan",
+        executiveSummary: "Legacy summary",
+        createdAt: now,
+        createdBy: "test",
+        updatedAt: now,
+        updatedBy: "test",
+        recommendedStack: {
+          database: "PostgreSQL",
+          backend: "Fastify",
+          frontend: "React",
+          llmProviders: ["openai"],
+          vectorStore: "pgvector"
+        }
+      } as unknown as Parameters<typeof apiStore.createBrainstormPlan>[0])
+    ).rejects.toThrow(/Legacy top-level plan fields are not supported/);
   });
 
   it("exposes MCP routes in optional/disabled mode without blocking", async () => {

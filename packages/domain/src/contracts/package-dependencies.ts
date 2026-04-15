@@ -20,7 +20,8 @@ export const allowedPackageDependencies = {
   "@cp/ui-kit": ["@cp/domain"],
   "@cp/skills": ["@cp/domain", "@cp/config"],
   "@cp/subprompts": ["@cp/domain", "@cp/config"],
-  "@cp/brainstorming": ["@cp/domain", "@cp/config", "@cp/subprompts", "@cp/skills"],
+  "@cp/prompt-builder": ["@cp/domain", "@cp/config", "@cp/subprompts"],
+  "@cp/brainstorming": ["@cp/domain", "@cp/config", "@cp/prompt-builder"],
   "@cp/mcp": ["@cp/domain", "@cp/config", "@cp/secrets"]
 } as const;
 

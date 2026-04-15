@@ -321,11 +321,11 @@ export class ApiStore {
   }
   async listBrainstormPlans(filters?: { sessionId?: string }): Promise<BrainstormPlan[]> {
     const items = await this.repo("brainstorm_plans").list(filters);
-    return items.map((item) => normalizeBrainstormPlan(item, { warnOnLegacyFallback: true }));
+    return items.map((item) => normalizeBrainstormPlan(item));
   }
   async getBrainstormPlan(planId: string): Promise<BrainstormPlan | null> {
     const item = await this.repo("brainstorm_plans").getById(planId);
-    return item ? normalizeBrainstormPlan(item, { warnOnLegacyFallback: true }) : null;
+    return item ? normalizeBrainstormPlan(item) : null;
   }
   async createBrainstormPlan(plan: BrainstormPlan): Promise<BrainstormPlan> {
     const normalized = normalizeBrainstormPlan(plan);
@@ -340,8 +340,7 @@ export class ApiStore {
       {
         ...existing,
         ...patch
-      },
-      { warnOnLegacyFallback: true }
+      }
     );
     return this.repo("brainstorm_plans").update(planId, merged);
   }

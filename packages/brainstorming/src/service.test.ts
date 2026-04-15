@@ -1,39 +1,43 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { Subprompt } from "@cp/domain";
 import { BrainstormingService } from "./service.js";
 
 describe("BrainstormingService", () => {
   it("loads subprompts and composes a coherent draft", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "brainstorming-subprompts-"));
-    await writeFile(
-      path.join(dir, "stack.json"),
-      JSON.stringify({
+    const subpromptCatalog: Subprompt[] = [
+      {
         id: "stack_default",
         title: "Default stack",
         category: "stack",
         summary: "Default stack summary",
         prompt: "Use PostgreSQL and Fastify",
         tags: ["stack", "postgres"],
+        sourcePath: "memory://stack_default",
         enabled: true
-      })
-    );
-    await writeFile(
-      path.join(dir, "architecture.yaml"),
-      [
-        "id: arch_monorepo",
-        "title: Monorepo",
-        "category: architecture",
-        "summary: Monorepo layout",
-        "prompt: Prefer modular monorepo packages",
-        "tags:",
-        "  - architecture",
-        "enabled: true"
-      ].join("\n")
-    );
+      },
+      {
+        id: "arch_monorepo",
+        title: "Monorepo",
+        category: "architecture",
+        summary: "Monorepo layout",
+        prompt: "Prefer modular monorepo packages",
+        tags: ["architecture"],
+        sourcePath: "memory://arch_monorepo",
+        enabled: true
+      }
+    ];
 
-    const service = new BrainstormingService({ subpromptsDir: dir });
+    const service = new BrainstormingService({
+      subpromptCatalog: {
+        list: async (filters) =>
+          subpromptCatalog.filter((item) => {
+            if (filters?.category && item.category !== filters.category) return false;
+            if (filters?.enabled !== undefined && item.enabled !== filters.enabled) return false;
+            return true;
+          }),
+        get: async (id) => subpromptCatalog.find((item) => item.id === id) ?? null
+      }
+    });
     const all = await service.listSubprompts();
     expect(all.length).toBe(2);
 
@@ -46,6 +50,7 @@ describe("BrainstormingService", () => {
     expect(draft.plan.recommendedStack.database.toLowerCase()).toContain("postgres");
     expect(draft.plan.architecture.repositoryStrategy).toBe("monorepo");
     expect(draft.plan.roadmap.length).toBeGreaterThan(0);
-    expect(draft.plan.composedPrompt).toContain("User intent");
+    expect(draft.plan.composedPrompt).toContain("ROLE: planner");
+    expect(draft.plan.composedPrompt).toContain("ADDITIONAL CONTEXT (JSON):");
   });
 });

@@ -59,6 +59,9 @@ importers:
       '@cp/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
+      '@cp/prompt-builder':
+        specifier: workspace:*
+        version: link:../../packages/prompt-builder
       '@cp/providers':
         specifier: workspace:*
         version: link:../../packages/providers
@@ -71,9 +74,6 @@ importers:
       '@cp/skills':
         specifier: workspace:*
         version: link:../../packages/skills
-      '@cp/subprompts':
-        specifier: workspace:*
-        version: link:../../packages/subprompts
       '@cp/versioning':
         specifier: workspace:*
         version: link:../../packages/versioning
@@ -259,12 +259,9 @@ importers:
       '@cp/domain':
         specifier: workspace:*
         version: link:../domain
-      '@cp/subprompts':
+      '@cp/prompt-builder':
         specifier: workspace:*
-        version: link:../subprompts
-      yaml:
-        specifier: ^2.8.1
-        version: 2.8.3
+        version: link:../prompt-builder
     devDependencies:
       typescript:
         specifier: ^5.8.2
@@ -377,6 +374,22 @@ importers:
         specifier: ^3.24.2
         version: 3.25.76
     devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/prompt-builder:
+    dependencies:
+      '@cp/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@cp/subprompts':
+        specifier: workspace:*
+        version: link:../subprompts
+    devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
       vitest:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)

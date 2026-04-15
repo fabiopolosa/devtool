@@ -522,3 +522,38 @@ Validation:
 - `pnpm test` passed.
 - `pnpm build` passed.
 - `pnpm db:migrate` remains environment-dependent; run only when `DATABASE_URL`, `REDIS_URL`, and `SECRETS_MASTER_KEY` are available in execution context.
+
+## Phase L — BrainstormPlan Canonical Hard Cut + Prompt Builder Unification
+Status: implemented
+
+Implemented:
+- Removed legacy BrainstormPlan compatibility fallback:
+  - top-level fields (`recommendedStack`, `roadmap`, `risks`, etc.) are now rejected
+  - canonical shape is strictly `brainstormPlan.plan.*`
+- API storage paths now persist/read only canonical plans:
+  - no legacy normalization in `api-store` for brainstorm plans
+  - invalid contract records trigger explicit errors
+- Added `@cp/prompt-builder` package to centralize prompt assembly:
+  - `buildPrompt({ role, subprompts, plan, context })`
+  - planner/brainstorming prompt composition now uses prompt-builder
+- Reduced subprompts package scope to registry/loader/composer concerns:
+  - DB sync/upsert logic moved out of `@cp/subprompts` into API service layer
+- Added route-level contract error handling for brainstorm endpoints:
+  - invalid contract payloads return `422 invalid_contract`
+
+Key files:
+- `packages/domain/src/entities/brainstorm.ts`
+- `packages/domain/src/schemas/brainstorm.schema.ts`
+- `apps/api/src/services/api-store.ts`
+- `apps/api/src/routes/brainstorm.ts`
+- `packages/prompt-builder/src/service.ts`
+- `packages/brainstorming/src/service.ts`
+- `packages/subprompts/src/service.ts`
+- `apps/api/src/services/subprompts-service.ts`
+
+Validation:
+- `pnpm typecheck` passed.
+- `pnpm lint` passed.
+- `pnpm test` passed.
+- `pnpm build` passed.
+- `pnpm db:migrate` blocked by missing env vars (`DATABASE_URL`, `REDIS_URL`, `SECRETS_MASTER_KEY`) in current execution context.

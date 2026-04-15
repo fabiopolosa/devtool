@@ -1,47 +1,37 @@
-import path from "node:path";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { Subprompt } from "@cp/domain";
-import { SubpromptsService, type SubpromptStore } from "@cp/subprompts";
+import {
+  composeSubpromptsFromCatalog,
+  getSubpromptFromCatalog,
+  listSubpromptsFromCatalog
+} from "@cp/prompt-builder";
 import { apiStore } from "./api-store.js";
 
-class ApiSubpromptStoreAdapter implements SubpromptStore {
-  async listSubprompts(filters?: { category?: Subprompt["category"]; enabled?: boolean }): Promise<Subprompt[]> {
-    return apiStore.listSubprompts(filters);
-  }
-
-  async getSubprompt(id: string): Promise<Subprompt | null> {
-    return apiStore.getSubprompt(id);
-  }
-
-  async createSubprompt(item: Subprompt): Promise<Subprompt> {
-    return apiStore.createSubprompt(item);
-  }
-
-  async updateSubprompt(id: string, patch: Partial<Subprompt>): Promise<Subprompt> {
-    return apiStore.updateSubprompt(id, patch);
-  }
-}
-
-const resolveDefaultSubpromptsDir = (): string => {
-  const fromCwd = path.resolve(process.cwd(), "configs/subprompts");
-  if (existsSync(fromCwd)) {
-    return fromCwd;
-  }
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(moduleDir, "../../../../configs/subprompts");
-};
-
-const subpromptsDir = process.env.SUBPROMPTS_DIR?.trim() || resolveDefaultSubpromptsDir();
-
-export const subpromptsService = new SubpromptsService({
-  subpromptsDir
-});
-
-const storeAdapter = new ApiSubpromptStoreAdapter();
-
 export async function syncSubpromptsCatalog(): Promise<Subprompt[]> {
-  return subpromptsService.syncToStore(storeAdapter);
+  const filesystemItems = await listSubpromptsFromCatalog();
+  const persisted = await apiStore.listSubprompts();
+  const byId = new Map(persisted.map((item) => [item.id, item] as const));
+
+  const synced: Subprompt[] = [];
+  for (const item of filesystemItems) {
+    const existing = byId.get(item.id);
+    if (!existing) {
+      synced.push(await apiStore.createSubprompt(item));
+      continue;
+    }
+    synced.push(
+      await apiStore.updateSubprompt(existing.id, {
+        title: item.title,
+        category: item.category,
+        summary: item.summary,
+        prompt: item.prompt,
+        tags: item.tags,
+        sourcePath: item.sourcePath,
+        enabled: item.enabled
+      })
+    );
+  }
+
+  return synced;
 }
 
 export async function listSubprompts(filters?: {
@@ -65,6 +55,8 @@ export async function listSubprompts(filters?: {
 export async function getSubprompt(subpromptId: string): Promise<Subprompt | null> {
   const existing = await apiStore.getSubprompt(subpromptId);
   if (existing) return existing;
+  const fromCatalog = await getSubpromptFromCatalog(subpromptId);
+  if (!fromCatalog) return null;
   await syncSubpromptsCatalog();
   return apiStore.getSubprompt(subpromptId);
 }
@@ -74,5 +66,5 @@ export async function composeSubprompts(input: {
   includeDisabled?: boolean;
   additionalInstructions?: string[];
 }): Promise<{ selectedSubprompts: Subprompt[]; composedPrompt: string }> {
-  return subpromptsService.compose(input);
+  return composeSubpromptsFromCatalog(input);
 }

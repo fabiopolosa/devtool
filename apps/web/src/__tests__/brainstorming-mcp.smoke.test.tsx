@@ -35,6 +35,63 @@ const installFetchMock = (): void => {
         });
       }
 
+      if (path.startsWith("/brainstorm/plan/")) {
+        return jsonResponse({
+          item: {
+            id: "plan_001",
+            sessionId: "session_001",
+            title: "Brainstorm Plan",
+            executiveSummary: "Summary",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            createdBy: "test",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            updatedBy: "test",
+            plan: {
+              recommendedStack: {
+                database: "PostgreSQL",
+                backend: "Fastify",
+                frontend: "React",
+                llmProviders: ["openai"],
+                vectorStore: "pgvector"
+              },
+              architecture: {
+                repositoryStrategy: "monorepo",
+                packageLayout: ["apps/api", "apps/web"],
+                rationale: "Single control-plane repository"
+              },
+              suggestedAgents: [],
+              suggestedSkills: [],
+              providerBindings: [],
+              roadmap: [],
+              assumptions: [],
+              risks: [],
+              composedPrompt: "Composed prompt",
+              selectedSubprompts: []
+            }
+          }
+        });
+      }
+
+      if (path.startsWith("/brainstorm/")) {
+        return jsonResponse({
+          item: {
+            session: {
+              id: "session_001",
+              status: "planned",
+              projectIntent: "Intent",
+              selectedSubpromptIds: [],
+              questions: [],
+              answers: {},
+              createdAt: "2026-01-01T00:00:00.000Z",
+              createdBy: "test",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              updatedBy: "test"
+            },
+            plans: []
+          }
+        });
+      }
+
       if (path === "/mcp/status") {
         return jsonResponse({
           enabled: false,
@@ -73,6 +130,21 @@ describe("Brainstorming and MCP pages smoke", () => {
 
     expect(await screen.findByRole("heading", { name: "Brainstorming" })).toBeInTheDocument();
     expect(screen.getByText("Session Input")).toBeInTheDocument();
+  });
+
+  it("renders brainstorm plan page by id", async () => {
+    installFetchMock();
+    window.history.pushState({}, "", "/brainstorm/plan_001");
+    await router.navigate({ to: "/brainstorm/$id", params: { id: "plan_001" } });
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <RouterProvider router={router} />
+      </AppStoreProvider>
+    );
+
+    expect(await screen.findByRole("heading", { name: "Brainstorm Plan" })).toBeInTheDocument();
+    expect(screen.getByText("Recommended stack")).toBeInTheDocument();
   });
 
   it("renders MCP page guard when auth is disabled", async () => {

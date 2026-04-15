@@ -101,7 +101,7 @@ export class OpenAICodingProvider extends BaseProviderAdapter<"coding"> implemen
     const apiKey = this.requireApiKey();
     const model = "gpt-5.1-codex";
     const runtime = this.withContext(context);
-    const prompt = request.codeContext
+    const requestText = request.codeContext
       ? `${request.prompt}\n\nCode context:\n${request.codeContext}`
       : request.prompt;
 
@@ -114,7 +114,7 @@ export class OpenAICodingProvider extends BaseProviderAdapter<"coding"> implemen
           model,
           messages: [
             ...(request.systemPrompt ? [{ role: "system", content: request.systemPrompt }] : []),
-            { role: "user", content: prompt }
+            { role: "user", content: requestText }
           ],
           ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
           ...(request.temperature !== undefined ? { temperature: request.temperature } : {})

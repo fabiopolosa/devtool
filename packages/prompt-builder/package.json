@@ -1,5 +1,5 @@
 {
-  "name": "@cp/brainstorming",
+  "name": "@cp/prompt-builder",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@cp/domain": "workspace:*",
-    "@cp/prompt-builder": "workspace:*"
+    "@cp/subprompts": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.2",

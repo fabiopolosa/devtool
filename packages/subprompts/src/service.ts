@@ -3,13 +3,6 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { Subprompt, SubpromptCategory } from "@cp/domain";
 
-export interface SubpromptStore {
-  listSubprompts(filters?: { category?: SubpromptCategory; enabled?: boolean }): Promise<Subprompt[]>;
-  getSubprompt(id: string): Promise<Subprompt | null>;
-  createSubprompt(item: Subprompt): Promise<Subprompt>;
-  updateSubprompt(id: string, patch: Partial<Subprompt>): Promise<Subprompt>;
-}
-
 export interface SubpromptsServiceOptions {
   subpromptsDir: string;
   now?: () => Date;
@@ -129,39 +122,6 @@ export class SubpromptsService {
       selectedSubprompts: selected,
       composedPrompt
     };
-  }
-
-  async syncToStore(store: SubpromptStore): Promise<Subprompt[]> {
-    const filesystemItems = await this.readFromFilesystem();
-    const persisted = await store.listSubprompts();
-    const byId = new Map(persisted.map((item) => [item.id, item] as const));
-
-    const synced: Subprompt[] = [];
-    for (const item of filesystemItems) {
-      const existing = byId.get(item.id);
-      if (!existing) {
-        const created = await store.createSubprompt({
-          ...item,
-          sourcePath: item.sourcePath,
-          enabled: item.enabled
-        });
-        synced.push(created);
-        continue;
-      }
-
-      const updated = await store.updateSubprompt(existing.id, {
-        title: item.title,
-        category: item.category,
-        summary: item.summary,
-        prompt: item.prompt,
-        tags: item.tags,
-        sourcePath: item.sourcePath,
-        enabled: item.enabled
-      });
-      synced.push(updated);
-    }
-
-    return synced;
   }
 
   private async readFromFilesystem(): Promise<Subprompt[]> {

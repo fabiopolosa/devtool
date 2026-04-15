@@ -14,6 +14,7 @@ import { ApprovalsPage } from '@/pages/ApprovalsPage';
 import { ExperimentsPage } from '@/pages/ExperimentsPage';
 import { ChatPage } from '@/pages/ChatPage';
 import { BrainstormingPage } from '@/pages/BrainstormingPage';
+import { BrainstormPlanPage } from '@/pages/BrainstormPlanPage';
 import { ProvidersPage } from '@/pages/ProvidersPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { AdminRbacPage } from '@/pages/AdminRbacPage';
@@ -116,6 +117,12 @@ const brainstormingRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'brainstorming',
   component: BrainstormingPage
+});
+
+const brainstormPlanRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'brainstorm/$id',
+  component: BrainstormPlanPage
 });
 
 const providersRoute = createRoute({
@@ -223,6 +230,7 @@ const routeTree = rootRoute.addChildren([
   experimentsRoute,
   chatRoute,
   brainstormingRoute,
+  brainstormPlanRoute,
   providersRoute,
   skillsRoute,
   agentsRoute,

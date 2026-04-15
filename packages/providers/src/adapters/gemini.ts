@@ -96,7 +96,7 @@ export class GeminiCodingProvider extends BaseProviderAdapter<"coding"> implemen
     const apiKey = this.requireApiKey();
     const model = "gemini-2.5-pro";
     const runtime = this.withContext(context);
-    const prompt = request.codeContext
+    const requestText = request.codeContext
       ? `${request.prompt}\n\nCode context:\n${request.codeContext}`
       : request.prompt;
 
@@ -106,7 +106,7 @@ export class GeminiCodingProvider extends BaseProviderAdapter<"coding"> implemen
         method: "POST",
         body: {
           ...(request.systemPrompt ? { systemInstruction: { parts: [{ text: request.systemPrompt }] } } : {}),
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          contents: [{ role: "user", parts: [{ text: requestText }] }],
           generationConfig: {
             ...(request.maxTokens !== undefined ? { maxOutputTokens: request.maxTokens } : {}),
             ...(request.temperature !== undefined ? { temperature: request.temperature } : {})

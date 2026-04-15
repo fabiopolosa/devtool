@@ -5,8 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@cp/domain": path.resolve(__dirname, "../domain/src/index.ts"),
-      "@cp/subprompts": path.resolve(__dirname, "../subprompts/src/index.ts"),
-      "@cp/prompt-builder": path.resolve(__dirname, "../prompt-builder/src/index.ts")
+      "@cp/subprompts": path.resolve(__dirname, "../subprompts/src/index.ts")
     }
   }
 });

@@ -84,7 +84,7 @@ export class OpenRouterCodingProvider extends BaseProviderAdapter<"coding"> impl
     const apiKey = this.requireApiKey();
     const model = "openrouter-coding-default";
     const runtime = this.withContext(context);
-    const prompt = request.codeContext
+    const requestText = request.codeContext
       ? `${request.prompt}\n\nCode context:\n${request.codeContext}`
       : request.prompt;
 
@@ -100,7 +100,7 @@ export class OpenRouterCodingProvider extends BaseProviderAdapter<"coding"> impl
           model,
           messages: [
             ...(request.systemPrompt ? [{ role: "system", content: request.systemPrompt }] : []),
-            { role: "user", content: prompt }
+            { role: "user", content: requestText }
           ],
           ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
           ...(request.temperature !== undefined ? { temperature: request.temperature } : {})

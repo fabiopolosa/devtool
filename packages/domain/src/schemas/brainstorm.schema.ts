@@ -88,37 +88,6 @@ export const brainstormPlanSchema = z.object({
   updatedBy: z.string().min(1)
 });
 
-export const legacyBrainstormPlanSchema = z
-  .object({
-    id: idSchema.optional(),
-    sessionId: idSchema.optional(),
-    title: z.string().min(1).optional(),
-    executiveSummary: z.string().min(1).optional(),
-    plan: brainstormPlanPayloadSchema.partial().optional(),
-    recommendedStack: brainstormPlanPayloadSchema.shape.recommendedStack.partial().optional(),
-    architecture: brainstormPlanPayloadSchema.shape.architecture.partial().optional(),
-    suggestedAgents: brainstormPlanPayloadSchema.shape.suggestedAgents.optional(),
-    suggestedSkills: brainstormPlanPayloadSchema.shape.suggestedSkills.optional(),
-    providerBindings: brainstormPlanPayloadSchema.shape.providerBindings.optional(),
-    roadmap: brainstormPlanPayloadSchema.shape.roadmap.optional(),
-    assumptions: brainstormPlanPayloadSchema.shape.assumptions.optional(),
-    risks: brainstormPlanPayloadSchema.shape.risks.optional(),
-    composedPrompt: brainstormPlanPayloadSchema.shape.composedPrompt.optional(),
-    selectedSubprompts: z
-      .array(
-        z.union([
-          z.string().min(1),
-          brainstormSelectedSubpromptSchema
-        ])
-      )
-      .optional(),
-    createdAt: isoDateTimeSchema.optional(),
-    createdBy: z.string().min(1).optional(),
-    updatedAt: isoDateTimeSchema.optional(),
-    updatedBy: z.string().min(1).optional()
-  })
-  .passthrough();
-
 export const brainstormSessionSchema = z.object({
   id: idSchema,
   threadId: idSchema.optional(),
@@ -141,5 +110,4 @@ export type BrainstormQuestionSchema = z.infer<typeof brainstormQuestionSchema>;
 export type BrainstormRoadmapTaskSchema = z.infer<typeof brainstormRoadmapTaskSchema>;
 export type BrainstormPlanPayloadSchema = z.infer<typeof brainstormPlanPayloadSchema>;
 export type BrainstormPlanSchema = z.infer<typeof brainstormPlanSchema>;
-export type LegacyBrainstormPlanSchema = z.infer<typeof legacyBrainstormPlanSchema>;
 export type BrainstormSessionSchema = z.infer<typeof brainstormSessionSchema>;

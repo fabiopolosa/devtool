@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getBrainstormPlanPayload } from "@cp/domain";
 import type { BrainstormPlan, BrainstormSession, Subprompt } from "@cp/domain";
 import { Button, Panel, Pill, SectionHeading } from "@/components/common";
 import { useAppStore } from "@/store/app-store";
@@ -18,7 +17,26 @@ type CreateProjectResult = {
   skillInstallResults: Array<{ name: string; installed: boolean; warning?: string }>;
 };
 
-export function BrainstormingWorkbench({ embedded = false }: { embedded?: boolean }) {
+type BrainstormPlanFetchResponse = {
+  item?: BrainstormPlan;
+  message?: string;
+};
+
+type BrainstormSessionFetchResponse = {
+  item?: {
+    session: BrainstormSession;
+    plans: BrainstormPlan[];
+  };
+  message?: string;
+};
+
+export function BrainstormingWorkbench({
+  embedded = false,
+  planId
+}: {
+  embedded?: boolean;
+  planId?: string;
+}) {
   const { authActions } = useAppStore();
   const [projectIntent, setProjectIntent] = useState("");
   const [projectName, setProjectName] = useState("");
@@ -31,6 +49,7 @@ export function BrainstormingWorkbench({ embedded = false }: { embedded?: boolea
   const [loadingCatalog, setLoadingCatalog] = useState(false);
   const [running, setRunning] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [loadingPlan, setLoadingPlan] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   const refreshSubprompts = useCallback(async (): Promise<void> => {
@@ -58,16 +77,66 @@ export function BrainstormingWorkbench({ embedded = false }: { embedded?: boolea
   }, [authActions, selectedSubpromptIds.length]);
 
   useEffect(() => {
+    if (planId) return;
     void refreshSubprompts();
-  }, [refreshSubprompts]);
+  }, [planId, refreshSubprompts]);
 
   const selectedSubprompts = useMemo(
     () => subprompts.filter((item) => selectedSubpromptIds.includes(item.id)),
     [subprompts, selectedSubpromptIds]
   );
-  const planPayload = useMemo(
-    () => (plan ? getBrainstormPlanPayload(plan, { warnOnLegacyFallback: true }) : undefined),
-    [plan]
+  const planPayload = useMemo(() => plan?.plan, [plan]);
+
+  const loadPlan = useCallback(
+    async (id: string): Promise<void> => {
+      setLoadingPlan(true);
+      setError(undefined);
+      try {
+        const planResponse = await authActions.apiFetch(`/brainstorm/plan/${id}`);
+        const planBody = (await planResponse.json()) as BrainstormPlanFetchResponse;
+        console.log("brainstorm response", planBody);
+
+        if (planResponse.ok && planBody.item) {
+          if (!planBody.item.plan) {
+            setError("BrainstormPlan non valido");
+            return;
+          }
+          setPlan(planBody.item);
+          const sessionResponse = await authActions.apiFetch(`/brainstorm/${planBody.item.sessionId}`);
+          const sessionBody = (await sessionResponse.json()) as BrainstormSessionFetchResponse;
+          if (sessionResponse.ok && sessionBody.item?.session) {
+            setSession(sessionBody.item.session);
+          }
+          return;
+        }
+
+        if (planResponse.status === 404) {
+          const sessionResponse = await authActions.apiFetch(`/brainstorm/${id}`);
+          const sessionBody = (await sessionResponse.json()) as BrainstormSessionFetchResponse;
+          console.log("brainstorm response", sessionBody);
+          if (!sessionResponse.ok || !sessionBody.item) {
+            throw new Error(
+              sessionBody.message ?? `Errore caricamento brainstorming session (HTTP ${sessionResponse.status})`
+            );
+          }
+          setSession(sessionBody.item.session);
+          const sessionPlan = sessionBody.item.plans[0];
+          if (!sessionPlan?.plan) {
+            setError("BrainstormPlan non valido");
+            return;
+          }
+          setPlan(sessionPlan);
+          return;
+        }
+
+        throw new Error(planBody.message ?? `Errore caricamento brainstorming plan (HTTP ${planResponse.status})`);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Errore caricamento brainstorming");
+      } finally {
+        setLoadingPlan(false);
+      }
+    },
+    [authActions]
   );
 
   const generatePlan = async (): Promise<void> => {
@@ -91,6 +160,9 @@ export function BrainstormingWorkbench({ embedded = false }: { embedded?: boolea
       const body = (await response.json()) as { item?: BrainstormStartItem; message?: string };
       if (!response.ok || !body.item?.session) {
         throw new Error(body.message ?? `Unable to generate brainstorm plan (HTTP ${response.status})`);
+      }
+      if (!body.item.plan?.plan) {
+        throw new Error("BrainstormPlan non valido");
       }
       setSession(body.item.session);
       setPlan(body.item.plan);
@@ -153,6 +225,37 @@ export function BrainstormingWorkbench({ embedded = false }: { embedded?: boolea
         : [...current, subpromptId]
     );
   };
+
+  useEffect(() => {
+    if (!planId) return;
+    void loadPlan(planId);
+  }, [loadPlan, planId]);
+
+  if (planId) {
+    if (error) {
+      return (
+        <Panel className="border border-rose-400/40 bg-rose-500/10">
+          <p className="text-sm text-rose-200">Errore caricamento brainstorming: {error}</p>
+        </Panel>
+      );
+    }
+
+    if (!plan && loadingPlan) {
+      return (
+        <Panel>
+          <p className="text-sm text-[color:var(--muted)]">Loading...</p>
+        </Panel>
+      );
+    }
+
+    if (!plan?.plan) {
+      return (
+        <Panel>
+          <p className="text-sm text-[color:var(--muted)]">BrainstormPlan non valido</p>
+        </Panel>
+      );
+    }
+  }
 
   return (
     <div className="space-y-4">

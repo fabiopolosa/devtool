@@ -21,10 +21,10 @@ import type {
   RoadmapItem,
   Task
 } from "@cp/domain";
-import { capabilityClasses, getBrainstormPlanPayload, providerNames } from "@cp/domain";
+import { capabilityClasses, providerNames } from "@cp/domain";
 import { apiStore } from "./api-store.js";
 import { skillsService } from "./skills-service.js";
-import { listSubprompts, syncSubpromptsCatalog } from "./subprompts-service.js";
+import { getSubprompt, listSubprompts, syncSubpromptsCatalog } from "./subprompts-service.js";
 
 export interface StartBrainstormInput {
   projectIntent: string;
@@ -61,18 +61,23 @@ export interface BrainstormApplyResult {
   skillInstallResults: Array<{ name: string; installed: boolean; warning?: string }>;
 }
 
-const resolveDefaultSubpromptsDir = (): string => {
-  const fromCwd = path.resolve(process.cwd(), "configs/subprompts");
+const resolveDefaultPromptRolesDir = (): string => {
+  const fromCwd = path.resolve(process.cwd(), "configs/prompts/roles");
   if (existsSync(fromCwd)) {
     return fromCwd;
   }
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(moduleDir, "../../../../configs/subprompts");
+  return path.resolve(moduleDir, "../../../../configs/prompts/roles");
 };
-const subpromptsDir = process.env.SUBPROMPTS_DIR?.trim() || resolveDefaultSubpromptsDir();
+
+const promptRolesDir = process.env.PROMPT_ROLES_DIR?.trim() || resolveDefaultPromptRolesDir();
 
 const brainstormingService = new BrainstormingService({
-  subpromptsDir
+  subpromptCatalog: {
+    list: (filters) => listSubprompts(filters),
+    get: (subpromptId) => getSubprompt(subpromptId)
+  },
+  rolesDir: promptRolesDir
 });
 
 const toSlug = (value: string): string =>
@@ -210,7 +215,7 @@ async function createBindingsFromPlan(
   actor: string
 ): Promise<ProjectProviderBinding[]> {
   const output: ProjectProviderBinding[] = [];
-  const planPayload = getBrainstormPlanPayload(plan, { warnOnLegacyFallback: true });
+  const planPayload = plan.plan;
   for (const binding of planPayload.providerBindings) {
     const capabilityClass = toCapabilityClass(binding.capabilityClass);
     const primaryProvider = toProviderName(binding.primaryProvider);
@@ -321,7 +326,7 @@ async function installSkillsFromPlan(plan: BrainstormPlan): Promise<
   Array<{ name: string; installed: boolean; warning?: string }>
 > {
   const output: Array<{ name: string; installed: boolean; warning?: string }> = [];
-  const planPayload = getBrainstormPlanPayload(plan, { warnOnLegacyFallback: true });
+  const planPayload = plan.plan;
   for (const skill of planPayload.suggestedSkills) {
     const result = await skillsService.installSkill({
       name: skill.name,
@@ -453,7 +458,7 @@ export async function applyBrainstormPlan(
 
   const roadmapItems: RoadmapItem[] = [];
   const tasks: Task[] = [];
-  const planPayload = getBrainstormPlanPayload(plan, { warnOnLegacyFallback: true });
+  const planPayload = plan.plan;
   for (const [index, roadmapTask] of planPayload.roadmap.entries()) {
     const roadmapItemCreatedAt = nowIso();
     const roadmapItem = await apiStore.createRoadmapItem({

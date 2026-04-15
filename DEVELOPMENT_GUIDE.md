@@ -25,6 +25,7 @@ Install Node 18+, pnpm, PostgreSQL e Redis. Clona la repo, installa le dipenden
 ## Workflow
 
 Lavora su branch dedicati, esegui `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build` prima di fare commit. Usa commit convenzionali (`feat:`, `fix:`, ecc.).
+All prompt composition MUST go through `packages/prompt-builder`; any deviation is blocked by ESLint custom guardrails.
 
 ## Testing e verifica
 
@@ -41,13 +42,16 @@ Gli adapter sono in `packages/providers/src/adapters`. Configura le chiavi in `.
 ## Brainstorming Mode
 
 - La modalità Brainstorming è disponibile in dashboard su `/brainstorming`.
-- Il contratto piano è canonico su `BrainstormPlan.plan.*` (non usare campi legacy top-level).
+- Il contratto piano è canonico su `BrainstormPlan.plan.*` (campi legacy top-level non supportati).
 - Flusso operativo:
   - avvio sessione (`POST /brainstorm`)
   - generazione piano (`status: planned`)
   - approvazione (`POST /brainstorm/plan/:planId/approve`)
   - applicazione progetto (`POST /brainstorm/plan/:planId/create-project`, stato finale `applied`)
 - Il workbench mostra session state, riepilogo, subprompt selezionati e azioni approve/apply.
+- Composizione prompt unificata:
+  - `@cp/prompt-builder` espone `buildPrompt({ role, subprompts, plan, context })`
+  - il brainstorming usa prompt-builder per valorizzare `plan.composedPrompt`.
 
 ## Subprompt Library
 

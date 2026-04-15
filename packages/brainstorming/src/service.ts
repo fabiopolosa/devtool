@@ -5,7 +5,7 @@ import type {
   BrainstormRoadmapTask,
   Subprompt
 } from "@cp/domain";
-import { SubpromptsService } from "@cp/subprompts";
+import { PromptBuilderService } from "@cp/prompt-builder";
 
 export interface BrainstormComposeInput {
   projectIntent: string;
@@ -20,8 +20,14 @@ export interface BrainstormPlanDraft {
   plan: BrainstormPlan["plan"];
 }
 
+export interface BrainstormSubpromptCatalog {
+  list(filters?: { category?: Subprompt["category"]; enabled?: boolean; tag?: string }): Promise<Subprompt[]>;
+  get(id: string): Promise<Subprompt | null>;
+}
+
 export interface BrainstormingServiceOptions {
-  subpromptsDir: string;
+  subpromptCatalog: BrainstormSubpromptCatalog;
+  rolesDir?: string;
   now?: () => Date;
   idGenerator?: () => string;
 }
@@ -201,22 +207,24 @@ const roadmapFromIntent = (intent: string, selectedSkills: string[]): Brainstorm
 export class BrainstormingService {
   private readonly now: () => Date;
   private readonly idGenerator: () => string;
-  private readonly subpromptsService: SubpromptsService;
+  private readonly subpromptCatalog: BrainstormSubpromptCatalog;
+  private readonly promptBuilderService: PromptBuilderService;
 
   constructor(private readonly options: BrainstormingServiceOptions) {
     this.now = options.now ?? (() => new Date());
     this.idGenerator = options.idGenerator ?? (() => randomUUID());
-    this.subpromptsService = new SubpromptsService({
-      subpromptsDir: options.subpromptsDir
+    this.subpromptCatalog = options.subpromptCatalog;
+    this.promptBuilderService = new PromptBuilderService({
+      ...(options.rolesDir ? { rolesDir: options.rolesDir } : {})
     });
   }
 
   async listSubprompts(filters?: { category?: Subprompt["category"]; enabled?: boolean }): Promise<Subprompt[]> {
-    return this.subpromptsService.list(filters);
+    return this.subpromptCatalog.list(filters);
   }
 
   async getSubprompt(id: string): Promise<Subprompt | null> {
-    return this.subpromptsService.get(id);
+    return this.subpromptCatalog.get(id);
   }
 
   defaultGuidedQuestions(intent: string): BrainstormQuestion[] {
@@ -273,13 +281,39 @@ export class BrainstormingService {
       suggestedSkills.map((skill) => skill.name)
     );
 
-    const composed = await this.subpromptsService.compose({
-      selectedIds: selectedSubprompts.map((item) => item.id),
-      additionalInstructions: [
-        `User intent: ${input.projectIntent}`,
-        ...Object.entries(input.guidedAnswers ?? {}).map(([key, value]) => `${key}: ${value}`),
-        "Output requirements: stack recommendation, architecture strategy, suggested agents/skills, roadmap with dependencies."
-      ]
+    const draftPlan = {
+      recommendedStack: stack,
+      architecture,
+      suggestedAgents: defaultAgents(),
+      suggestedSkills,
+      providerBindings: defaultBindings(stack),
+      roadmap,
+      assumptions: [
+        "Contracts remain additive and backward-compatible.",
+        "Provider credentials are configured externally via secrets/env refs."
+      ],
+      risks: [
+        "Discovery may require network access; fallback provider set must remain valid.",
+        "Cross-repo tasks need explicit ordering to avoid conflicting writes."
+      ],
+      composedPrompt: "",
+      selectedSubprompts
+    } satisfies BrainstormPlan["plan"];
+
+    const composedPrompt = await this.promptBuilderService.buildPrompt({
+      role: "planner",
+      subprompts: selectedSubprompts,
+      plan: draftPlan,
+      context: {
+        projectIntent: input.projectIntent,
+        guidedAnswers: input.guidedAnswers ?? {},
+        outputRequirements: [
+          "stack recommendation",
+          "architecture strategy",
+          "suggested agents/skills",
+          "roadmap with dependencies"
+        ]
+      }
     });
 
     return {
@@ -287,21 +321,8 @@ export class BrainstormingService {
       executiveSummary:
         "Structured initial plan generated from guided questions plus reusable subprompt library.",
       plan: {
-        recommendedStack: stack,
-        architecture,
-        suggestedAgents: defaultAgents(),
-        suggestedSkills,
-        providerBindings: defaultBindings(stack),
-        roadmap,
-        assumptions: [
-          "Contracts remain additive and backward-compatible.",
-          "Provider credentials are configured externally via secrets/env refs."
-        ],
-        risks: [
-          "Discovery may require network access; fallback provider set must remain valid.",
-          "Cross-repo tasks need explicit ordering to avoid conflicting writes."
-        ],
-        composedPrompt: composed.composedPrompt,
+        ...draftPlan,
+        composedPrompt,
         selectedSubprompts
       }
     };

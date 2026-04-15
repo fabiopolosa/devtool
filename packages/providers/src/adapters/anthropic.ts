@@ -89,7 +89,7 @@ export class AnthropicCodingProvider extends BaseProviderAdapter<"coding"> imple
     const apiKey = this.requireApiKey();
     const model = "claude-sonnet-4.5";
     const runtime = this.withContext(context);
-    const prompt = request.codeContext
+    const requestText = request.codeContext
       ? `${request.prompt}\n\nCode context:\n${request.codeContext}`
       : request.prompt;
 
@@ -105,7 +105,7 @@ export class AnthropicCodingProvider extends BaseProviderAdapter<"coding"> imple
           model,
           max_tokens: request.maxTokens ?? 2048,
           ...(request.systemPrompt ? { system: request.systemPrompt } : {}),
-          messages: [{ role: "user", content: prompt }]
+          messages: [{ role: "user", content: requestText }]
         }
       },
       runtime

@@ -18,7 +18,8 @@ export default defineConfig({
       "@cp/versioning": path.resolve(__dirname, "../../packages/versioning/src/index.ts"),
       "@cp/mcp": path.resolve(__dirname, "../../packages/mcp/src/index.ts"),
       "@cp/providers": path.resolve(__dirname, "../../packages/providers/src/index.ts"),
-      "@cp/subprompts": path.resolve(__dirname, "../../packages/subprompts/src/index.ts")
+      "@cp/subprompts": path.resolve(__dirname, "../../packages/subprompts/src/index.ts"),
+      "@cp/prompt-builder": path.resolve(__dirname, "../../packages/prompt-builder/src/index.ts")
     }
   },
   test: {
