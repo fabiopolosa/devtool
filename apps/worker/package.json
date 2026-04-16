@@ -22,6 +22,7 @@
     "@cp/knowledge": "workspace:*",
     "@cp/local-repos": "workspace:*",
     "@cp/providers": "workspace:*",
+    "@cp/prompt-builder": "workspace:*",
     "@cp/runner": "workspace:*",
     "@cp/verifier": "workspace:*",
     "@cp/autoresearch": "workspace:*",

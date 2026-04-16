@@ -202,6 +202,9 @@ importers:
       '@cp/orchestration-ruflo':
         specifier: workspace:*
         version: link:../../packages/orchestration-ruflo
+      '@cp/prompt-builder':
+        specifier: workspace:*
+        version: link:../../packages/prompt-builder
       '@cp/providers':
         specifier: workspace:*
         version: link:../../packages/providers
@@ -285,6 +288,22 @@ importers:
         specifier: workspace:*
         version: link:../prompt-builder
     devDependencies:
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/cli:
+    dependencies:
+      '@cp/worker-local':
+        specifier: workspace:*
+        version: link:../worker-local
+    devDependencies:
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
       typescript:
         specifier: ^5.8.2
         version: 5.9.3
@@ -580,6 +599,8 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.19.17)(jiti@1.21.7)(jsdom@26.1.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/worker-local: {}
 
 packages:
 

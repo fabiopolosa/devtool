@@ -1,46 +1,339 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { Queue, Worker, Job, type QueueOptions } from "bullmq";
 import { Redis } from "ioredis";
 import { DEFAULT_TENANT_ID } from "@cp/db";
 import { loadEnv } from "@cp/config";
+import { PromptBuilderService } from "@cp/prompt-builder";
 import type { AgentRuntimeJobData } from "@cp/agents";
+import type { Job as RunnerJob } from "@cp/domain";
 import type { LocalRepoJobData } from "@cp/local-repos";
-import { BullMqJobExecutionQueue, DagRunner, InMemoryProviderRateLimiter } from "@cp/runner";
+import {
+  WorkflowLoader,
+  RufloOrchestrationService,
+  type BudgetLimits,
+  type OrchestrationRunEvent,
+  type WorkflowDefinition
+} from "@cp/orchestration-ruflo";
+import {
+  BullMqJobExecutionQueue,
+  DagRunner,
+  InMemoryProviderRateLimiter,
+  type JobExecutionResult
+} from "@cp/runner";
 import { DagWorkerJobStore } from "./dag-job-store.js";
 
 const env = loadEnv();
 const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 
-const orchestrationQueueName = "orchestration-runs";
-const autoresearchQueueName = "autoresearch-runs";
 const agentRuntimeQueueName = "agent-runtime-jobs";
 const localRepoQueueName = "local-repo-jobs";
 const dagQueuePrefix = "dag-job-execution";
 
 const queueConnection: QueueOptions["connection"] = connection;
+const internalRunnerBaseUrl = (
+  process.env.RUNNER_INTERNAL_API_URL?.trim() || `http://127.0.0.1:${env.API_PORT}`
+).replace(/\/$/, "");
+const internalRunnerToken = process.env.RUNNER_INTERNAL_TOKEN?.trim();
+const workflowLoader = new WorkflowLoader();
 
-export const orchestrationQueue = new Queue(orchestrationQueueName, { connection });
-export const autoresearchQueue = new Queue(autoresearchQueueName, { connection });
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+
+const toErrorMessage = async (response: Response): Promise<string> => {
+  const raw = (await response.text()).trim();
+  if (!raw) {
+    return `internal runner request failed (${response.status})`;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { message?: string };
+    if (parsed?.message && typeof parsed.message === "string" && parsed.message.trim().length > 0) {
+      return parsed.message.trim();
+    }
+  } catch {
+    // fall through to raw body preview
+  }
+  return raw.slice(0, 300);
+};
+
+const asNonEmptyString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+
+const asNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+type RunnerUsageRecord = NonNullable<JobExecutionResult["usage"]>;
+
+const asUsageRecord = (value: unknown): RunnerUsageRecord | undefined => {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const provider = asNonEmptyString(record.provider);
+  const model = asNonEmptyString(record.model);
+  const inputTokens = asNumber(record.inputTokens);
+  const outputTokens = asNumber(record.outputTokens);
+  const cost = asNumber(record.cost);
+  if (!provider || !model || inputTokens === undefined || outputTokens === undefined || cost === undefined) {
+    return undefined;
+  }
+  return {
+    provider: provider as RunnerUsageRecord["provider"],
+    model,
+    inputTokens: Math.max(0, Math.trunc(inputTokens)),
+    outputTokens: Math.max(0, Math.trunc(outputTokens)),
+    cost: Math.max(0, cost),
+    ...(asRecord(record.metadata) ? { metadata: record.metadata as Record<string, unknown> } : {})
+  };
+};
+
+const normalizeBudget = (value: unknown): BudgetLimits => {
+  const record = asRecord(value) ?? {};
+  return {
+    ...(typeof asNumber(record.maxRetries) === "number"
+      ? { maxRetries: Math.max(0, Math.trunc(asNumber(record.maxRetries) ?? 0)) }
+      : { maxRetries: 1 }),
+    ...(typeof asNumber(record.maxInputTokens) === "number"
+      ? { maxInputTokens: Math.max(1, Math.trunc(asNumber(record.maxInputTokens) ?? 1)) }
+      : {}),
+    ...(typeof asNumber(record.maxOutputTokens) === "number"
+      ? { maxOutputTokens: Math.max(1, Math.trunc(asNumber(record.maxOutputTokens) ?? 1)) }
+      : {}),
+    ...(typeof asNumber(record.maxLatencyMs) === "number"
+      ? { maxLatencyMs: Math.max(1, Math.trunc(asNumber(record.maxLatencyMs) ?? 1)) }
+      : {}),
+    ...(typeof asNumber(record.maxCostUsd) === "number"
+      ? { maxCostUsd: Math.max(0.000001, asNumber(record.maxCostUsd) ?? 0.000001) }
+      : {})
+  };
+};
+
+const runRufloWorkflowAction = async (
+  job: RunnerJob,
+  action: string,
+  payload: Record<string, unknown>
+): Promise<JobExecutionResult> => {
+  if (action !== "ruflo.execute_workflow") {
+    throw new Error(`Unsupported Ruflo action: ${action}`);
+  }
+
+  const workflowId = asNonEmptyString(payload.workflowId);
+  const taskId = asNonEmptyString(payload.taskId) ?? asNonEmptyString(job.resourceId);
+  if (!workflowId) {
+    throw new Error("Missing required payload field: workflowId");
+  }
+  if (!taskId) {
+    throw new Error("Missing required payload field: taskId");
+  }
+
+  const workflows = await workflowLoader.loadAll();
+  const workflow = workflows.find((item) => item.id === workflowId);
+  if (!workflow) {
+    throw new Error(`Workflow not found: ${workflowId}`);
+  }
+
+  const eventBuffer: OrchestrationRunEvent[] = [];
+  const orchestrationService = new RufloOrchestrationService({
+    workflowStore: {
+      get: async (id: string): Promise<WorkflowDefinition | null> =>
+        workflows.find((item) => item.id === id) ?? null,
+      list: async (): Promise<WorkflowDefinition[]> => workflows,
+      upsert: async (): Promise<void> => {
+        // Workflow definitions are loaded from disk and treated as immutable at runtime.
+      }
+    },
+    eventLogger: {
+      append: async (event) => {
+        eventBuffer.push(event);
+      },
+      list: async (runId: string): Promise<OrchestrationRunEvent[]> =>
+        eventBuffer.filter((event) => event.runId === runId)
+    }
+  });
+
+  const actor = asNonEmptyString(payload.actor) ?? job.createdBy ?? "ruflo_runtime";
+  const budget = normalizeBudget(payload.budget);
+  const runId = asNonEmptyString(payload.runId) ?? randomUUID();
+  let run = await orchestrationService.startRun({
+    runId,
+    taskId,
+    workflowId,
+    budget,
+    actor
+  });
+
+  run = await orchestrationService.enforceBudget(run);
+  if (run.status === "blocked" || run.status === "waiting_for_approval") {
+    return {
+      nextStatus: "waiting_user",
+      actionRequired: true,
+      actionType: "review",
+      payloadPatch: {
+        output: {
+          stage: "ruflo",
+          action,
+          result: {
+            run,
+            workflowId,
+            workflowVersion: workflow.version,
+            events: eventBuffer
+          }
+        }
+      }
+    };
+  }
+
+  const autoApprove = payload.autoApprove === true;
+  for (const step of workflow.steps) {
+    await orchestrationService.recordStep({
+      runId: run.runId,
+      taskId,
+      stepId: step.id,
+      actor,
+      message: `Step started: ${step.id}`,
+      eventType: "step_started",
+      status: run.status,
+      metadata: {
+        stepType: step.type
+      }
+    });
+
+    if (step.type === "approval" && !autoApprove) {
+      run = await orchestrationService.transitionRunStatus(run, "waiting_for_approval");
+      await orchestrationService.recordStep({
+        runId: run.runId,
+        taskId,
+        stepId: step.id,
+        actor,
+        message: `Approval required for step ${step.id}`,
+        eventType: "verification_requested",
+        status: run.status,
+        metadata: {
+          stepType: step.type
+        }
+      });
+      return {
+        nextStatus: "waiting_user",
+        actionRequired: true,
+        actionType: "approve",
+        payloadPatch: {
+          output: {
+            stage: "ruflo",
+            action,
+            result: {
+              run,
+              workflowId,
+              workflowVersion: workflow.version,
+              awaitingApprovalStepId: step.id,
+              events: eventBuffer
+            }
+          }
+        }
+      };
+    }
+
+    await orchestrationService.recordStep({
+      runId: run.runId,
+      taskId,
+      stepId: step.id,
+      actor,
+      message: `Step completed: ${step.id}`,
+      eventType: "step_completed",
+      status: run.status,
+      metadata: {
+        stepType: step.type
+      }
+    });
+  }
+
+  run = await orchestrationService.transitionRunStatus(run, "completed");
+  return {
+    nextStatus: "done",
+    payloadPatch: {
+      output: {
+        stage: "ruflo",
+        action,
+        result: {
+          run,
+          workflowId,
+          workflowVersion: workflow.version,
+          events: eventBuffer
+        }
+      }
+    }
+  };
+};
+
+const runInternalRunnerAction = async (job: RunnerJob): Promise<JobExecutionResult> => {
+  const payload = asRecord(job.payload) ?? {};
+  const action = typeof payload.internalAction === "string" ? payload.internalAction.trim() : "";
+  if (!action) {
+    return {
+      nextStatus: "done",
+      payloadPatch: {
+        output: {
+          stage: "internal_runner",
+          summary: "No internalAction defined; no-op execution."
+        }
+      }
+    };
+  }
+
+  if (action.startsWith("ruflo.")) {
+    return runRufloWorkflowAction(job, action, payload);
+  }
+
+  const requestPayload: Record<string, unknown> = {
+    ...payload,
+    jobId: job.id,
+    ...(typeof payload.tenantId === "string" ? {} : { tenantId: job.tenantId }),
+    ...(typeof payload.projectId === "string" || !job.projectId ? {} : { projectId: job.projectId })
+  };
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+  if (internalRunnerToken) {
+    headers["x-runner-token"] = internalRunnerToken;
+  }
+
+  const response = await fetch(`${internalRunnerBaseUrl}/internal/runner/execute`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      action,
+      payload: requestPayload
+    })
+  });
+
+  if (!response.ok) {
+    const errorMessage = await toErrorMessage(response);
+    throw new Error(`internal action "${action}" failed: ${errorMessage}`);
+  }
+
+  const body = (await response.json()) as { item?: unknown };
+  const itemRecord = asRecord(body.item);
+  const usage = asUsageRecord(itemRecord?.usage);
+  const result =
+    itemRecord && usage
+      ? Object.fromEntries(Object.entries(itemRecord).filter(([key]) => key !== "usage"))
+      : body.item;
+  const shouldWaitForUser = action === "brainstorm.start_session" && payload.generatePlan === false;
+  return {
+    nextStatus: shouldWaitForUser ? "waiting_user" : "done",
+    actionRequired: shouldWaitForUser,
+    ...(shouldWaitForUser ? { actionType: "input" as const } : {}),
+    ...(usage ? { usage } : {}),
+    payloadPatch: {
+      output: {
+        stage: "internal_runner",
+        action,
+        ...(result !== undefined ? { result } : {})
+      }
+    }
+  };
+};
+
 export const agentRuntimeQueue = new Queue<AgentRuntimeJobData>(agentRuntimeQueueName, { connection });
 export const localRepoQueue = new Queue<LocalRepoJobData>(localRepoQueueName, { connection });
-
-const orchestrationWorker = new Worker(
-  orchestrationQueueName,
-  async (job) => {
-    // Placeholder for Ruflo orchestration runtime integration.
-    console.log("[worker] orchestration job received", job.id, job.name);
-  },
-  { connection }
-);
-
-const autoresearchWorker = new Worker(
-  autoresearchQueueName,
-  async (job) => {
-    // Placeholder for AutoResearch runner integration.
-    console.log("[worker] autoresearch job received", job.id, job.name);
-  },
-  { connection }
-);
 
 const runAgentRuntimeCommand = async (
   job: Job<AgentRuntimeJobData>,
@@ -191,6 +484,19 @@ const startTenantRunner = async (tenantId: string): Promise<void> => {
     queueName: `${dagQueuePrefix}:${tenantId}`,
     connection: queueConnection
   });
+  const promptBuilder = new PromptBuilderService({
+    disableRoleFileFallback: true,
+    requireRegistryPrompt: true,
+    resolveRoleInstructions: async (role, context) => {
+      const resolved = await jobStore.resolveActivePrompt({
+        tenantId,
+        ...(context?.projectId ? { projectId: context.projectId } : {}),
+        type: context?.type ?? "role",
+        target: context?.target ?? role
+      });
+      return resolved ?? undefined;
+    }
+  });
   const runner = new DagRunner({
     tenantId,
     store: jobStore,
@@ -198,7 +504,21 @@ const startTenantRunner = async (tenantId: string): Promise<void> => {
     maxConcurrent: 5,
     pollIntervalMs: 1000,
     jobTimeoutMs: 10 * 60_000,
-    rateLimiter: providerRateLimiter
+    rateLimiter: providerRateLimiter,
+    promptBuilder,
+    handlers: {
+      brainstorm: runInternalRunnerAction,
+      brainstorm_apply: runInternalRunnerAction,
+      system: runInternalRunnerAction
+    },
+    telemetry: {
+      recordAuditEvent: async (event) => {
+        await jobStore.recordAuditEvent(event);
+      },
+      recordUsageEvent: async (event) => {
+        await jobStore.recordUsageEvent(event);
+      }
+    }
   });
   await runner.start();
   dagRunners.set(tenantId, runner);
@@ -237,14 +557,10 @@ const stopDagRunners = async (): Promise<void> => {
 const shutdown = async () => {
   await stopDagRunners();
   await Promise.all([
-    orchestrationWorker.close(),
-    autoresearchWorker.close(),
     agentRuntimeWorker.close(),
     localRepoWorker.close()
   ]);
   await Promise.all([
-    orchestrationQueue.close(),
-    autoresearchQueue.close(),
     agentRuntimeQueue.close(),
     localRepoQueue.close()
   ]);

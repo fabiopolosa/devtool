@@ -288,9 +288,9 @@ This section tracks post-stabilization implementation progress while preserving 
   - `GET /agents/runtime/workflows`
   - `GET /agents/:agentId/jobs/:jobId`
   - `GET /agents/:agentId/jobs/:jobId/events` (SSE snapshot/stream)
-- Added worker runtime execution parity for Paperclip-style CLI diagnostics:
+- Added worker runtime execution parity for CLI diagnostics:
   - queue `agent-runtime-jobs`
-  - async command execution (`paperclipai heartbeat run`, `paperclipai doctor run`) with structured log capture
+  - async command execution (`devtools-agent heartbeat run`, `devtools-agent doctor run`) with structured log capture
 - Added command-center UI surface:
   - `/agents` list view with filtering and quick actions
   - `/agents/new` guided create flow (icon, role, manager, skills, adapter, runtime options, capabilities)

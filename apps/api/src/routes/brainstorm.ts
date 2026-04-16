@@ -1,13 +1,15 @@
 import type { FastifyPluginAsync } from "fastify";
 import {
-  applyBrainstormPlan,
-  approveBrainstormPlan,
   getBrainstormPlan,
   getBrainstormSession,
   listBrainstormPlans,
   listBrainstormSessions,
   startBrainstormSession
 } from "../services/brainstorming-service.js";
+import {
+  dispatchAndAwaitRunnerJob,
+  getRunnerJobOutput
+} from "../services/job-dispatch-service.js";
 import { requireTenantPermission } from "../tenant/rbac.js";
 
 interface StartBrainstormBody {
@@ -69,20 +71,46 @@ export const brainstormRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const item = await startBrainstormSession({
-        tenantId: request.tenantId ?? "tenant_default",
-        projectIntent: body.projectIntent,
-        ...(body.threadId ? { threadId: body.threadId } : {}),
-        ...(body.projectId ? { projectId: body.projectId } : {}),
-        ...(Array.isArray(body.selectedSubpromptIds)
-          ? { selectedSubpromptIds: body.selectedSubpromptIds }
-          : {}),
-        ...(body.guidedAnswers ? { guidedAnswers: body.guidedAnswers } : {}),
-        ...(body.actor ? { actor: body.actor } : request.authPrincipal?.userId ? { actor: request.authPrincipal.userId } : {}),
-        ...(typeof body.generatePlan === "boolean" ? { generatePlan: body.generatePlan } : {})
-      });
+      try {
+        const actor = body.actor ?? request.authPrincipal?.userId ?? "brainstorming_service";
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            type: "brainstorm",
+            title: `Brainstorm request: ${body.projectIntent.trim().slice(0, 80)}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "brainstorm.start_session",
+              tenantId: request.tenantId ?? "tenant_default",
+              projectIntent: body.projectIntent,
+              ...(body.threadId ? { threadId: body.threadId } : {}),
+              ...(body.projectId ? { projectId: body.projectId } : {}),
+              ...(Array.isArray(body.selectedSubpromptIds)
+                ? { selectedSubpromptIds: body.selectedSubpromptIds }
+                : {}),
+              ...(body.guidedAnswers ? { guidedAnswers: body.guidedAnswers } : {}),
+              actor,
+              ...(typeof body.generatePlan === "boolean" ? { generatePlan: body.generatePlan } : {})
+            },
+            resourceType: "brainstorm"
+          },
+          { timeoutMs: 180_000 }
+        );
 
-      return { item };
+        const output = getRunnerJobOutput<{
+          action?: string;
+          result?: Awaited<ReturnType<typeof startBrainstormSession>>;
+        }>(job);
+        if (!output?.result) {
+          throw new Error("Runner completed brainstorm job without result payload");
+        }
+        return { item: output.result };
+      } catch (error) {
+        return reply.code(400).send({
+          error: "brainstorm_runner_error",
+          message: error instanceof Error ? error.message : "Unable to start brainstorming session"
+        });
+      }
     }
   );
 
@@ -165,11 +193,25 @@ export const brainstormRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!requireTenantPermission(request, reply, "canApprove")) return;
       try {
-        const item = await approveBrainstormPlan(
-          request.params.planId,
-          request.body?.actor ?? request.authPrincipal?.userId ?? "brainstorming_approval"
+        const actor = request.body?.actor ?? request.authPrincipal?.userId ?? "brainstorming_approval";
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            type: "system",
+            title: `Approve brainstorm plan ${request.params.planId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "brainstorm.approve_plan",
+              planId: request.params.planId,
+              actor
+            },
+            resourceType: "brainstorm",
+            resourceId: request.params.planId
+          },
+          { timeoutMs: 90_000 }
         );
-        return { item };
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        return { item: output?.result ?? null };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Plan not found";
         if (isContractError(message)) {
@@ -197,19 +239,35 @@ export const brainstormRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!requireTenantPermission(request, reply, "canEdit")) return;
       try {
-        const result = await applyBrainstormPlan({
-          tenantId: request.tenantId ?? "tenant_default",
-          planId: request.params.planId,
-          ...(request.body?.actor ? { actor: request.body.actor } : request.authPrincipal?.userId ? { actor: request.authPrincipal.userId } : {}),
-          ...(request.body?.projectName ? { projectName: request.body.projectName } : {}),
-          ...(request.body?.projectKey ? { projectKey: request.body.projectKey } : {}),
-          ...(request.body?.description ? { description: request.body.description } : {}),
-          ...(Array.isArray(request.body?.repositoryIds) ? { repositoryIds: request.body.repositoryIds } : {}),
-          ...(Array.isArray(request.body?.repositoryUrls)
-            ? { repositoryUrls: request.body.repositoryUrls }
-            : {})
-        });
-        return { item: result };
+        const actor = request.body?.actor ?? request.authPrincipal?.userId ?? "brainstorming_service";
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            type: "brainstorm_apply",
+            title: `Apply brainstorm plan ${request.params.planId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "brainstorm.apply_plan",
+              tenantId: request.tenantId ?? "tenant_default",
+              planId: request.params.planId,
+              actor,
+              ...(request.body?.projectName ? { projectName: request.body.projectName } : {}),
+              ...(request.body?.projectKey ? { projectKey: request.body.projectKey } : {}),
+              ...(request.body?.description ? { description: request.body.description } : {}),
+              ...(Array.isArray(request.body?.repositoryIds)
+                ? { repositoryIds: request.body.repositoryIds }
+                : {}),
+              ...(Array.isArray(request.body?.repositoryUrls)
+                ? { repositoryUrls: request.body.repositoryUrls }
+                : {})
+            },
+            resourceType: "brainstorm",
+            resourceId: request.params.planId
+          },
+          { timeoutMs: 240_000 }
+        );
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        return { item: output?.result ?? null };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unable to apply brainstorm plan";
         if (isContractError(message)) {

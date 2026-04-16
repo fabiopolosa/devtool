@@ -76,7 +76,7 @@ const catalogDefinitions: CatalogProviderDefinition[] = [
 ];
 
 const chatCompletionBody = (request: ChatReasoningRequest, modelId: string) => ({
-  model: modelId,
+  model: request.modelId ?? modelId,
   messages: [
     ...(request.systemPrompt ? [{ role: "system", content: request.systemPrompt }] : []),
     { role: "user", content: request.prompt }
@@ -164,7 +164,7 @@ abstract class CatalogTextProviderBase<TCapability extends "chat_reasoning" | "c
     const firstChoice = response.choices?.[0]?.message?.content;
     return {
       outputText: this.normalizeOpenAIContent(firstChoice),
-      modelId: this.defaultModelId,
+      modelId: request.modelId ?? this.defaultModelId,
       ...(response.usage
         ? {
             tokenUsage: {

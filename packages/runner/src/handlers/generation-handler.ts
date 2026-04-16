@@ -6,6 +6,7 @@ import type {
   ProviderName,
   Subprompt
 } from "@cp/domain";
+import { providerNames } from "@cp/domain";
 import type { PromptBuilderService } from "@cp/prompt-builder";
 import type { ProviderRegistry } from "@cp/providers";
 import type { ProviderRateLimiter } from "../rate-limit.js";
@@ -42,7 +43,11 @@ const buildGenerationResult = (
   modelId: string,
   outputText: string,
   capability: "coding" | "chat_reasoning",
-  tokenUsage?: { input: number; output: number } | null
+  tokenUsage?: { input: number; output: number } | null,
+  options?: {
+    fallbackErrors?: string[];
+    providerResolution?: Record<string, unknown>;
+  }
 ): JobExecutionResult => {
   const result: JobExecutionResult = {
     nextStatus: "done",
@@ -52,7 +57,11 @@ const buildGenerationResult = (
         provider,
         modelId,
         text: outputText,
-        tokenUsage: tokenUsage ?? null
+        tokenUsage: tokenUsage ?? null,
+        ...(options?.providerResolution ? { providerResolution: options.providerResolution } : {}),
+        ...(options?.fallbackErrors && options.fallbackErrors.length > 0
+          ? { fallbackErrors: options.fallbackErrors }
+          : {})
       }
     }
   };
@@ -67,6 +76,7 @@ const buildGenerationResult = (
 
 export const createGenerationHandler = (options: GenerationHandlerOptions) => {
   const { promptBuilder, providerRegistry, providerOrder, rateLimiter } = options;
+  const validProviderNames = new Set<ProviderName>(providerNames);
 
   return async (job: Job): Promise<JobExecutionResult> => {
     const payload = asRecord(job.payload) ?? {};
@@ -74,6 +84,12 @@ export const createGenerationHandler = (options: GenerationHandlerOptions) => {
     const subpromptItems = Array.isArray(payload.subprompts) ? (payload.subprompts as Subprompt[]) : [];
     const planPayload = asRecord(payload.plan) as BrainstormPlanPayload | undefined;
     const additionalContext = asRecord(payload.context);
+    const projectId =
+      typeof payload.projectId === "string"
+        ? payload.projectId
+        : job.resourceType === "project" && job.resourceId
+          ? job.resourceId
+          : job.projectId;
 
     const instructionText =
       typeof payload.inputText === "string" && payload.inputText.trim().length > 0
@@ -82,7 +98,17 @@ export const createGenerationHandler = (options: GenerationHandlerOptions) => {
             role: roleName,
             subprompts: subpromptItems,
             ...(planPayload ? { plan: planPayload } : {}),
-            ...(additionalContext ? { context: additionalContext } : {})
+            ...(additionalContext ? { context: additionalContext } : {}),
+            registryContext: {
+              tenantId: job.tenantId,
+              ...(projectId ? { projectId } : {}),
+              type: typeof payload.promptType === "string" && payload.promptType.trim().length > 0
+                ? payload.promptType.trim()
+                : "role",
+              target: typeof payload.promptTarget === "string" && payload.promptTarget.trim().length > 0
+                ? payload.promptTarget.trim()
+                : roleName
+            }
           });
 
     const maxTokens = toNumberOr(payload.maxTokens, 1200);
@@ -90,17 +116,33 @@ export const createGenerationHandler = (options: GenerationHandlerOptions) => {
     const estimatedTotalTokens = estimatedInputTokens + maxTokens;
     const temperature = toNumberOr(payload.temperature, 0.2);
     const systemMessage = typeof payload.systemMessage === "string" ? payload.systemMessage : undefined;
-    const providers = Array.isArray(payload.providerOrder)
-      ? (payload.providerOrder.filter((item): item is ProviderName => typeof item === "string") as ProviderName[])
-      : providerOrder;
+    const requestedProviders = Array.isArray(payload.providerOrder)
+      ? payload.providerOrder
+          .map((item) => (typeof item === "string" ? item.trim().toLowerCase() : ""))
+          .filter((item): item is ProviderName => validProviderNames.has(item as ProviderName))
+      : [];
+    const providerResolution = asRecord(payload.providerResolution);
+    const resolvedProviderRaw =
+      (typeof providerResolution?.provider === "string" ? providerResolution.provider : undefined) ??
+      (typeof payload.providerId === "string" ? payload.providerId : undefined) ??
+      (typeof payload.provider === "string" ? payload.provider : undefined);
+    const resolvedProvider = resolvedProviderRaw?.trim().toLowerCase();
+    const selectedProvider = resolvedProvider && validProviderNames.has(resolvedProvider as ProviderName)
+      ? (resolvedProvider as ProviderName)
+      : undefined;
+    const selectedModelId =
+      (typeof providerResolution?.modelId === "string" ? providerResolution.modelId.trim() : "") ||
+      (typeof payload.modelId === "string" ? payload.modelId.trim() : "") ||
+      (typeof payload.model === "string" ? payload.model.trim() : "") ||
+      "";
+    const providers = [
+      ...(selectedProvider ? [selectedProvider] : []),
+      ...requestedProviders,
+      ...providerOrder
+    ].filter((item, index, all) => all.indexOf(item) === index);
 
     const providerContext = {
-      projectId:
-        typeof payload.projectId === "string"
-          ? payload.projectId
-          : job.resourceType === "project" && job.resourceId
-            ? job.resourceId
-            : "project_unknown",
+      projectId: projectId ?? "project_unknown",
       ...(typeof payload.taskId === "string" ? { taskId: payload.taskId } : {}),
       ...(typeof payload.runId === "string" ? { runId: payload.runId } : {}),
       role: "codex_builder" as const
@@ -124,7 +166,8 @@ export const createGenerationHandler = (options: GenerationHandlerOptions) => {
               prompt: instructionText,
               ...(systemMessage ? { systemPrompt: systemMessage } : {}),
               maxTokens,
-              temperature
+              temperature,
+              ...(selectedProvider === providerName && selectedModelId ? { modelId: selectedModelId } : {})
             },
             providerContext
           );
@@ -133,7 +176,11 @@ export const createGenerationHandler = (options: GenerationHandlerOptions) => {
             response.modelId,
             response.outputText,
             "coding",
-            response.tokenUsage ?? null
+            response.tokenUsage ?? null,
+            {
+              ...(errors.length > 0 ? { fallbackErrors: errors } : {}),
+              ...(providerResolution ? { providerResolution } : {})
+            }
           );
         } catch (error) {
           errors.push(`[coding:${providerName}] ${toText(error)}`);
@@ -155,7 +202,8 @@ export const createGenerationHandler = (options: GenerationHandlerOptions) => {
               prompt: instructionText,
               ...(systemMessage ? { systemPrompt: systemMessage } : {}),
               maxTokens,
-              temperature
+              temperature,
+              ...(selectedProvider === providerName && selectedModelId ? { modelId: selectedModelId } : {})
             },
             providerContext
           );
@@ -164,7 +212,11 @@ export const createGenerationHandler = (options: GenerationHandlerOptions) => {
             response.modelId,
             response.outputText,
             "chat_reasoning",
-            response.tokenUsage ?? null
+            response.tokenUsage ?? null,
+            {
+              ...(errors.length > 0 ? { fallbackErrors: errors } : {}),
+              ...(providerResolution ? { providerResolution } : {})
+            }
           );
         } catch (error) {
           errors.push(`[chat:${providerName}] ${toText(error)}`);

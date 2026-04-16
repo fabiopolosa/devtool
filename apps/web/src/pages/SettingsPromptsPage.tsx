@@ -49,7 +49,9 @@ export function SettingsPromptsPage() {
   const [notice, setNotice] = useState<string | undefined>();
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft());
 
-  const canManage = !auth.enabled || Boolean(auth.principal?.roles.includes("admin"));
+  const canManage =
+    !auth.enabled ||
+    Boolean(auth.principal?.roles.includes("owner") || auth.principal?.roles.includes("admin"));
 
   useEffect(() => onOwnerModeChange(setOwnerMode), []);
 
@@ -222,7 +224,7 @@ export function SettingsPromptsPage() {
         ) : null}
         {!canManage ? (
           <p className="text-sm text-[color:var(--muted)]">
-            Admin privileges are required to mutate prompt records when authentication is enabled.
+            Owner privileges are required to mutate prompt records when authentication is enabled.
           </p>
         ) : null}
         {error ? <p className="text-sm text-rose-300">{error}</p> : null}
@@ -398,4 +400,3 @@ export function SettingsPromptsPage() {
     </div>
   );
 }
-

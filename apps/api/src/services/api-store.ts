@@ -563,7 +563,28 @@ export class ApiStore {
     );
   }
   async listExperiments(): Promise<AutoResearchExperiment[]> { return this.repo("autoresearch_experiments").list(); }
+  async getExperiment(experimentId: string): Promise<AutoResearchExperiment | null> {
+    return this.repo("autoresearch_experiments").getById(experimentId);
+  }
+  async createExperiment(experiment: AutoResearchExperiment): Promise<AutoResearchExperiment> {
+    return this.repo("autoresearch_experiments").create(experiment);
+  }
+  async updateExperiment(
+    experimentId: string,
+    patch: Partial<AutoResearchExperiment>
+  ): Promise<AutoResearchExperiment> {
+    return this.repo("autoresearch_experiments").update(experimentId, patch);
+  }
   async listExperimentRuns(experimentId?: string): Promise<AutoResearchRun[]> { return this.repo("autoresearch_runs").list(experimentId ? { experimentId } : undefined); }
+  async getExperimentRun(runId: string): Promise<AutoResearchRun | null> {
+    return this.repo("autoresearch_runs").getById(runId);
+  }
+  async createExperimentRun(run: AutoResearchRun): Promise<AutoResearchRun> {
+    return this.repo("autoresearch_runs").create(run);
+  }
+  async updateExperimentRun(runId: string, patch: Partial<AutoResearchRun>): Promise<AutoResearchRun> {
+    return this.repo("autoresearch_runs").update(runId, patch);
+  }
   async listUsers(): Promise<User[]> { return this.repo("users").list(); }
   async getUserById(userId: string): Promise<User | null> { return this.repo("users").getById(userId); }
   async getUserByEmail(email: string): Promise<User | null> {
@@ -690,6 +711,7 @@ export class ApiStore {
     await this.seedTable("project_provider_bindings", this.seed.providerBindings);
     await this.seedTable("provider_healthchecks", this.seed.providerHealthchecks);
     await this.seedTable("provider_discovery_logs", this.seed.providerDiscoveryLogs);
+    await this.seedTable("prompt_registry", this.seed.promptRegistry);
     await this.seedTable("autoresearch_experiments", this.seed.experiments);
     await this.seedTable("autoresearch_runs", this.seed.experimentRuns);
     await this.seedTable("users", this.seed.users);

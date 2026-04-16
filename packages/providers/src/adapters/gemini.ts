@@ -37,7 +37,7 @@ export class GeminiChatProvider extends BaseProviderAdapter<"chat_reasoning"> im
   async run(request: Parameters<ChatReasoningProvider["run"]>[0], context: ProviderRequestContext) {
     const endpoint = this.resolveEndpoint("https://generativelanguage.googleapis.com/v1beta", "GEMINI_BASE_URL");
     const apiKey = this.requireApiKey();
-    const model = "gemini-2.5-pro";
+    const model = request.modelId ?? "gemini-2.5-pro";
     const runtime = this.withContext(context);
 
     const response = await this.requestJson<GeminiGenerateResponse>(
@@ -94,7 +94,7 @@ export class GeminiCodingProvider extends BaseProviderAdapter<"coding"> implemen
   async run(request: Parameters<CodingProvider["run"]>[0], context: ProviderRequestContext) {
     const endpoint = this.resolveEndpoint("https://generativelanguage.googleapis.com/v1beta", "GEMINI_BASE_URL");
     const apiKey = this.requireApiKey();
-    const model = "gemini-2.5-pro";
+    const model = request.modelId ?? "gemini-2.5-pro";
     const runtime = this.withContext(context);
     const requestText = request.codeContext
       ? `${request.prompt}\n\nCode context:\n${request.codeContext}`

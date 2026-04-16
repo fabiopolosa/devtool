@@ -39,7 +39,8 @@
       "@cp/prompt-builder": ["packages/prompt-builder/src/index.ts"],
       "@cp/runner": ["packages/runner/src/index.ts"],
       "@cp/knowledge": ["packages/knowledge/src/index.ts"],
-      "@cp/context": ["packages/context/src/index.ts"]
+      "@cp/context": ["packages/context/src/index.ts"],
+      "@cp/worker-local": ["packages/worker-local/index.ts"]
     }
   }
 }

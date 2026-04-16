@@ -131,6 +131,17 @@ export interface KnowledgeNodeStore {
   deleteKnowledgeNode(knowledgeNodeId: string): Promise<void>;
 }
 
+export interface KnowledgeSemanticStore {
+  searchKnowledge(input: {
+    tenantId: string;
+    projectId?: string;
+    queryEmbedding: number[];
+    limit: number;
+    threshold: number;
+  }): Promise<{ available: boolean; hits: SearchKnowledgeResult[] }>;
+  upsertKnowledgeEmbedding?(nodeId: string, embedding: number[]): Promise<boolean>;
+}
+
 export interface SearchKnowledgeInput {
   tenantId: string;
   projectId?: string;
@@ -199,6 +210,7 @@ export interface KnowledgeSyncResult {
 export interface KnowledgeServiceOptions {
   store: KnowledgeNodeStore;
   embeddingProvider?: EmbeddingProvider;
+  semanticStore?: KnowledgeSemanticStore;
   knowledgeRootDir?: string;
   now?: () => Date;
   idGenerator?: () => string;
@@ -251,7 +263,19 @@ export class KnowledgeService {
       updatedAt: nowIso,
       updatedBy: actor
     };
-    return this.options.store.createKnowledgeNode(node);
+    const created = await this.options.store.createKnowledgeNode(node);
+    if (Array.isArray(created.embedding) && created.embedding.length > 0) {
+      await this.syncSemanticEmbedding(created.id, created.embedding);
+      return created;
+    }
+
+    const ensured = await this.ensureEmbedding(created, input.projectId);
+    if (ensured.length === 0) {
+      return created;
+    }
+
+    const refreshed = await this.options.store.getKnowledgeNodeById(created.id);
+    return refreshed ?? created;
   }
 
   async updateKnowledgeNode(
@@ -272,13 +296,25 @@ export class KnowledgeService {
       }
     }
 
-    return this.options.store.updateKnowledgeNode(nodeId, {
+    const updated = await this.options.store.updateKnowledgeNode(nodeId, {
       ...(patch.path ? { path: nextPath } : {}),
       ...(typeof patch.content === "string" ? { content: safeTrim(patch.content) } : {}),
       ...(patch.embedding ? { embedding: patch.embedding } : {}),
       updatedAt: this.now().toISOString(),
       updatedBy: actor
     });
+    if (Array.isArray(updated.embedding) && updated.embedding.length > 0) {
+      await this.syncSemanticEmbedding(updated.id, updated.embedding);
+      return updated;
+    }
+
+    const ensured = await this.ensureEmbedding(updated, existing.projectId);
+    if (ensured.length === 0) {
+      return updated;
+    }
+
+    const refreshed = await this.options.store.getKnowledgeNodeById(updated.id);
+    return refreshed ?? updated;
   }
 
   async deleteKnowledgeNode(nodeId: string): Promise<void> {
@@ -313,11 +349,13 @@ export class KnowledgeService {
         continue;
       }
 
-      await this.options.store.updateKnowledgeNode(existing.id, {
-        content: safeTrim(draft.content),
-        updatedAt: this.now().toISOString(),
-        updatedBy: actor
-      });
+      await this.updateKnowledgeNode(
+        existing.id,
+        {
+          content: safeTrim(draft.content)
+        },
+        actor
+      );
       updated += 1;
     }
 
@@ -348,7 +386,6 @@ export class KnowledgeService {
         .filter((entry) => entry.score >= threshold);
     }
 
-    const shortlist = lexicalSorted.slice(0, Math.max(limit * 2, 12));
     let queryVector: number[];
     try {
       queryVector = await this.embedSingleText(query, {
@@ -361,6 +398,20 @@ export class KnowledgeService {
         .map(({ item, lexical }) => ({ item, score: lexical, source: "lexical" as const }));
     }
 
+    if (this.options.semanticStore) {
+      const semantic = await this.options.semanticStore.searchKnowledge({
+        tenantId: input.tenantId,
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+        queryEmbedding: queryVector,
+        limit,
+        threshold
+      });
+      if (semantic.available) {
+        return semantic.hits.slice(0, limit);
+      }
+    }
+
+    const shortlist = lexicalSorted.slice(0, Math.max(limit * 2, 12));
     const scored: SearchKnowledgeResult[] = [];
     for (const row of shortlist) {
       const item = row.item;
@@ -431,7 +482,7 @@ export class KnowledgeService {
     }
 
     const queryTokens = tokenize(input.query);
-    const noteEntries = input.contextNotes
+    const rankedNoteEntries = input.contextNotes
       .map((note) => {
         const excerpt = safeTrim(note.content).slice(0, 420);
         const score = note.score ?? lexicalTextScore(queryTokens, `${note.path}\n${note.title}\n${note.content}`);
@@ -444,14 +495,39 @@ export class KnowledgeService {
           score: Number(Math.max(0, Math.min(1, score)).toFixed(4)),
           sourceType: "context-note" as const
         };
-      })
+      });
+
+    const noteEntries = rankedNoteEntries
       .filter((entry) => entry.score >= policy.threshold)
       .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
       .slice(0, policy.contextNotesLimit);
+    const fallbackNotes =
+      noteEntries.length > 0 || policy.contextNotesLimit === 0
+        ? noteEntries
+        : rankedNoteEntries
+            .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+            .slice(0, policy.contextNotesLimit);
 
-    return [...knowledgeEntries, ...noteEntries]
+    const combined = [...knowledgeEntries, ...fallbackNotes]
       .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
       .slice(0, policy.limit);
+
+    if (fallbackNotes.length === 0) {
+      return combined;
+    }
+    if (combined.some((entry) => entry.sourceType === "context-note")) {
+      return combined;
+    }
+
+    const fallback = fallbackNotes[0];
+    if (!fallback) return combined;
+    if (combined.length === 0) {
+      return [fallback].slice(0, policy.limit);
+    }
+
+    return [...combined.slice(0, Math.max(0, policy.limit - 1)), fallback].sort(
+      (left, right) => right.score - left.score || left.path.localeCompare(right.path)
+    );
   }
 
   resolveRetrievalPolicy(input: {
@@ -507,9 +583,19 @@ export class KnowledgeService {
         updatedAt: this.now().toISOString(),
         updatedBy: "knowledge_embedding"
       });
+      await this.syncSemanticEmbedding(item.id, vector);
       return vector;
     } catch {
       return [];
+    }
+  }
+
+  private async syncSemanticEmbedding(nodeId: string, embedding: number[]): Promise<void> {
+    if (!this.options.semanticStore?.upsertKnowledgeEmbedding) return;
+    try {
+      await this.options.semanticStore.upsertKnowledgeEmbedding(nodeId, embedding);
+    } catch {
+      // Semantic index write failures should not block knowledge node writes.
     }
   }
 

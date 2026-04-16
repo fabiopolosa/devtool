@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentConfig, Job, Machine } from "@cp/domain";
 import { Panel, Pill, SectionHeading, StatCard } from "@/components/common";
 import { useAppStore } from "@/store/app-store";
@@ -31,6 +31,7 @@ const sumCost = (items: UsageItem[], threshold: number): number =>
 
 export function DashboardPage() {
   const { authActions } = useAppStore();
+  const mountedRef = useRef(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
@@ -41,6 +42,7 @@ export function DashboardPage() {
   const [error, setError] = useState<string | undefined>();
 
   const load = useCallback(async () => {
+    if (!mountedRef.current) return;
     setLoading(true);
     setError(undefined);
     try {
@@ -60,6 +62,7 @@ export function DashboardPage() {
       if (!usageData.response.ok) throw new Error(usageData.body.message ?? "Unable to load usage");
       if (!machinesData.response.ok) throw new Error(machinesData.body.message ?? "Unable to load machines");
 
+      if (!mountedRef.current) return;
       setJobs(jobsData.body.items ?? []);
       setAgents(agentsData.body.items ?? []);
       setProviderHealth(healthData.body.items ?? []);
@@ -67,16 +70,22 @@ export function DashboardPage() {
       setUsage(usageData.body.items ?? []);
       setMachines(machinesData.body.items ?? []);
     } catch (loadError) {
+      if (!mountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load dashboard");
     } finally {
+      if (!mountedRef.current) return;
       setLoading(false);
     }
   }, [authActions]);
 
   useEffect(() => {
+    mountedRef.current = true;
     void load();
     const timer = window.setInterval(() => void load(), 3500);
-    return () => window.clearInterval(timer);
+    return () => {
+      mountedRef.current = false;
+      window.clearInterval(timer);
+    };
   }, [load]);
 
   const stats = useMemo(() => {

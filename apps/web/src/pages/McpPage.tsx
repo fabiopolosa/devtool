@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { McpConnection, McpDelegationRun } from "@cp/domain";
 import { Button, Panel, Pill, SectionHeading } from "@/components/common";
 import { useAppStore } from "@/store/app-store";
@@ -7,6 +7,7 @@ type McpStatusResponse = { enabled: boolean; message?: string };
 
 export function McpPage() {
   const { auth, authActions } = useAppStore();
+  const mountedRef = useRef(false);
   const [status, setStatus] = useState<McpStatusResponse>({ enabled: false, message: "Loading..." });
   const [connections, setConnections] = useState<McpConnection[]>([]);
   const [runs, setRuns] = useState<McpDelegationRun[]>([]);
@@ -16,6 +17,7 @@ export function McpPage() {
   const [error, setError] = useState<string | undefined>();
 
   const refresh = useCallback(async () => {
+    if (!mountedRef.current) return;
     setError(undefined);
     try {
       const [statusResponse, connectionsResponse, runsResponse] = await Promise.all([
@@ -38,16 +40,22 @@ export function McpPage() {
         throw new Error(runsBody.message ?? `Unable to load MCP runs (HTTP ${runsResponse.status})`);
       }
 
+      if (!mountedRef.current) return;
       setStatus(statusBody);
       setConnections(connectionsBody.items ?? []);
       setRuns(runsBody.items ?? []);
     } catch (loadError) {
+      if (!mountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load MCP panel");
     }
   }, [authActions]);
 
   useEffect(() => {
+    mountedRef.current = true;
     void refresh();
+    return () => {
+      mountedRef.current = false;
+    };
   }, [refresh]);
 
   const createConnection = async (): Promise<void> => {

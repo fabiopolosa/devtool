@@ -45,11 +45,309 @@ export interface PreparedProviderCredentials {
 export interface ProviderValidationResult {
   status: "valid" | "invalid";
   lastValidatedAt: string;
+  latencyMs?: number;
   error?: string;
 }
 
+export type ProviderResolutionSource = "request" | "project" | "tenant" | "system";
+
+export interface ResolveProviderSelectionInput {
+  tenantId: string;
+  projectId?: string;
+  requestedProvider?: string;
+  requestedModelId?: string;
+  requestedProviderOrder?: string[];
+  capabilityClass?: "coding" | "chat_reasoning";
+}
+
+export interface ResolvedProviderSelection {
+  source: ProviderResolutionSource;
+  provider: ProviderName;
+  providerConfigId: string;
+  modelId?: string;
+  providerOrder: ProviderName[];
+}
+
+const defaultProviderMetadataKey = "isDefaultProvider";
+const defaultModelMetadataKey = "defaultModelId";
+const preferredSystemProviderOrder: ProviderName[] = ["openai", "anthropic", "gemini", "openrouter"];
+const providerNameSet = new Set<ProviderName>(Object.keys(providerEnvKeyMap) as ProviderName[]);
+
 const isReference = (value: string): boolean =>
   value.startsWith("env://") || value.startsWith("secret://");
+
+const normalizeProviderNameInput = (value: string | undefined): ProviderName | undefined => {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return providerNameSet.has(normalized as ProviderName) ? (normalized as ProviderName) : undefined;
+};
+
+const normalizeProviderOrderInput = (value: string[] | undefined): ProviderName[] =>
+  (value ?? [])
+    .map((item) => normalizeProviderNameInput(item))
+    .filter((item): item is ProviderName => Boolean(item));
+
+const providerFromConfig = (config: Pick<ProviderConfig, "provider" | "providerId">): ProviderName =>
+  (config.providerId ?? config.provider) as ProviderName;
+
+const isValidEnabledConfig = (config: ProviderConfig): boolean =>
+  config.enabled && (config.validationStatus ?? "unknown") === "valid";
+
+const parseDefaultModelIdFromMetadata = (config: ProviderConfig): string | undefined => {
+  const raw = config.metadata?.[defaultModelMetadataKey];
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined;
+};
+
+const providerPriority = (provider: ProviderName): number => {
+  const index = preferredSystemProviderOrder.indexOf(provider);
+  return index >= 0 ? index : preferredSystemProviderOrder.length + 10;
+};
+
+const resolveScopedProviderConfigs = async (tenantId: string): Promise<ProviderConfig[]> => {
+  const all = await apiStore.listProviderConfigs();
+  return all.filter((config) => !config.tenantId || config.tenantId === tenantId);
+};
+
+const resolveEnabledModelsByConfig = async (): Promise<Map<string, string[]>> => {
+  const allModels = await apiStore.listProviderModels();
+  const grouped = new Map<string, string[]>();
+  for (const model of allModels) {
+    if (!model.enabled) continue;
+    const current = grouped.get(model.providerConfigId) ?? [];
+    current.push(model.modelId);
+    grouped.set(model.providerConfigId, current);
+  }
+  for (const [providerConfigId, modelIds] of grouped.entries()) {
+    grouped.set(providerConfigId, [...new Set(modelIds)].sort((left, right) => left.localeCompare(right)));
+  }
+  return grouped;
+};
+
+const mergeProviderOrder = (input: {
+  selectedProvider: ProviderName;
+  requestOrder: ProviderName[];
+  validProviders: ProviderName[];
+}): ProviderName[] => {
+  const merged = [
+    input.selectedProvider,
+    ...input.requestOrder,
+    ...input.validProviders.sort((left, right) => providerPriority(left) - providerPriority(right)),
+    ...preferredSystemProviderOrder
+  ];
+  return [...new Set(merged)].filter((item) => providerNameSet.has(item));
+};
+
+const resolveDefaultModelForConfig = (
+  config: ProviderConfig,
+  enabledModelsByConfig: Map<string, string[]>,
+  requestedModelId?: string
+): string | undefined => {
+  const modelIds = enabledModelsByConfig.get(config.id) ?? [];
+  if (requestedModelId) {
+    if (modelIds.length > 0 && !modelIds.includes(requestedModelId)) {
+      throw new Error(
+        `Requested model "${requestedModelId}" is not enabled for provider ${(config.providerId ?? config.provider)}`
+      );
+    }
+    return requestedModelId;
+  }
+
+  const defaultFromMetadata = parseDefaultModelIdFromMetadata(config);
+  if (defaultFromMetadata && (modelIds.length === 0 || modelIds.includes(defaultFromMetadata))) {
+    return defaultFromMetadata;
+  }
+
+  return modelIds[0];
+};
+
+const resolveProjectDefaultSelection = async (input: {
+  projectId: string;
+  validConfigsById: Map<string, ProviderConfig>;
+  enabledModelsByConfig: Map<string, string[]>;
+  capabilityClass: "coding" | "chat_reasoning";
+}): Promise<{ provider: ProviderName; providerConfigId: string; modelId?: string } | null> => {
+  const bindings = (await apiStore.listProviderBindings(input.projectId)).filter(
+    (binding) => binding.projectId === input.projectId && binding.enabled
+  );
+  if (bindings.length === 0) return null;
+
+  const selectedBinding = [...bindings].sort((left, right) => {
+    const capabilityRank = (value: string): number => {
+      if (value === input.capabilityClass) return 0;
+      if (value === "coding") return 1;
+      if (value === "chat_reasoning") return 2;
+      return 10;
+    };
+    const roleRank = (value: string | undefined): number => {
+      if (value === "codex_builder") return 0;
+      if (!value) return 1;
+      return 2;
+    };
+    return capabilityRank(left.capabilityClass) - capabilityRank(right.capabilityClass)
+      || roleRank(left.role)
+      - roleRank(right.role)
+      || left.createdAt.localeCompare(right.createdAt);
+  })[0];
+  if (!selectedBinding) return null;
+
+  const allModels = await apiStore.listProviderModels();
+  const selectedModel = allModels.find((model) => model.id === selectedBinding.primaryModelId && model.enabled);
+  if (!selectedModel) return null;
+  const config = input.validConfigsById.get(selectedModel.providerConfigId);
+  if (!config) return null;
+
+  const modelIds = input.enabledModelsByConfig.get(config.id) ?? [];
+  const resolvedModelId = modelIds.includes(selectedModel.modelId) ? selectedModel.modelId : modelIds[0];
+  return {
+    provider: providerFromConfig(config),
+    providerConfigId: config.id,
+    ...(resolvedModelId ? { modelId: resolvedModelId } : {})
+  };
+};
+
+export const resolveProviderModelSelection = async (
+  input: ResolveProviderSelectionInput
+): Promise<ResolvedProviderSelection> => {
+  const configs = await resolveScopedProviderConfigs(input.tenantId);
+  const validConfigs = configs
+    .filter((config) => isValidEnabledConfig(config))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  if (validConfigs.length === 0) {
+    throw new Error(`No enabled valid provider configs available for tenant "${input.tenantId}"`);
+  }
+
+  const validConfigsById = new Map(validConfigs.map((config) => [config.id, config]));
+  const validConfigsByProvider = new Map<ProviderName, ProviderConfig[]>();
+  for (const config of validConfigs) {
+    const provider = providerFromConfig(config);
+    const current = validConfigsByProvider.get(provider) ?? [];
+    current.push(config);
+    validConfigsByProvider.set(provider, current);
+  }
+  const enabledModelsByConfig = await resolveEnabledModelsByConfig();
+  const requestedProvider = normalizeProviderNameInput(input.requestedProvider);
+  const requestedModelId = input.requestedModelId?.trim();
+  const requestOrder = normalizeProviderOrderInput(input.requestedProviderOrder);
+
+  if (requestedProvider) {
+    const providerConfigs = validConfigsByProvider.get(requestedProvider) ?? [];
+    const selectedConfig = providerConfigs
+      .slice()
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id))[0];
+    if (!selectedConfig) {
+      throw new Error(`Requested provider "${requestedProvider}" is not enabled/valid for tenant "${input.tenantId}"`);
+    }
+    const modelId = resolveDefaultModelForConfig(selectedConfig, enabledModelsByConfig, requestedModelId);
+    return {
+      source: "request",
+      provider: requestedProvider,
+      providerConfigId: selectedConfig.id,
+      ...(modelId ? { modelId } : {}),
+      providerOrder: mergeProviderOrder({
+        selectedProvider: requestedProvider,
+        requestOrder,
+        validProviders: [...validConfigsByProvider.keys()]
+      })
+    };
+  }
+
+  if (requestedModelId) {
+    const candidateConfigs = validConfigs.filter((config) => {
+      const modelIds = enabledModelsByConfig.get(config.id) ?? [];
+      return modelIds.includes(requestedModelId);
+    });
+
+    if (candidateConfigs.length === 0) {
+      throw new Error(`Requested model "${requestedModelId}" is not enabled for any valid provider`);
+    }
+    if (candidateConfigs.length > 1) {
+      throw new Error(
+        `Requested model "${requestedModelId}" is ambiguous across providers; provide an explicit provider`
+      );
+    }
+    const selectedConfig = candidateConfigs[0]!;
+    const selectedProvider = providerFromConfig(selectedConfig);
+    return {
+      source: "request",
+      provider: selectedProvider,
+      providerConfigId: selectedConfig.id,
+      modelId: requestedModelId,
+      providerOrder: mergeProviderOrder({
+        selectedProvider,
+        requestOrder,
+        validProviders: [...validConfigsByProvider.keys()]
+      })
+    };
+  }
+
+  if (input.projectId) {
+    const projectSelection = await resolveProjectDefaultSelection({
+      projectId: input.projectId,
+      validConfigsById,
+      enabledModelsByConfig,
+      capabilityClass: input.capabilityClass ?? "coding"
+    });
+    if (projectSelection) {
+      return {
+        source: "project",
+        provider: projectSelection.provider,
+        providerConfigId: projectSelection.providerConfigId,
+        ...(projectSelection.modelId ? { modelId: projectSelection.modelId } : {}),
+        providerOrder: mergeProviderOrder({
+          selectedProvider: projectSelection.provider,
+          requestOrder,
+          validProviders: [...validConfigsByProvider.keys()]
+        })
+      };
+    }
+  }
+
+  const tenantDefaultConfig = validConfigs
+    .filter((config) => config.metadata?.[defaultProviderMetadataKey] === true)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id))[0];
+  if (tenantDefaultConfig) {
+    const selectedProvider = providerFromConfig(tenantDefaultConfig);
+    const modelId = resolveDefaultModelForConfig(tenantDefaultConfig, enabledModelsByConfig);
+    return {
+      source: "tenant",
+      provider: selectedProvider,
+      providerConfigId: tenantDefaultConfig.id,
+      ...(modelId ? { modelId } : {}),
+      providerOrder: mergeProviderOrder({
+        selectedProvider,
+        requestOrder,
+        validProviders: [...validConfigsByProvider.keys()]
+      })
+    };
+  }
+
+  const systemConfig = validConfigs
+    .slice()
+    .sort((left, right) => {
+      const byProvider = providerPriority(providerFromConfig(left)) - providerPriority(providerFromConfig(right));
+      if (byProvider !== 0) return byProvider;
+      const byUpdated = right.updatedAt.localeCompare(left.updatedAt);
+      if (byUpdated !== 0) return byUpdated;
+      return left.id.localeCompare(right.id);
+    })[0];
+  if (!systemConfig) {
+    throw new Error("Unable to resolve system default provider");
+  }
+  const selectedProvider = providerFromConfig(systemConfig);
+  const modelId = resolveDefaultModelForConfig(systemConfig, enabledModelsByConfig);
+
+  return {
+    source: "system",
+    provider: selectedProvider,
+    providerConfigId: systemConfig.id,
+    ...(modelId ? { modelId } : {}),
+    providerOrder: mergeProviderOrder({
+      selectedProvider,
+      requestOrder,
+      validProviders: [...validConfigsByProvider.keys()]
+    })
+  };
+};
 
 const providerConfigSecretName = (
   tenantId: string,
@@ -235,12 +533,14 @@ export const validateProviderConfig = async (input: {
   timeoutMs?: number;
 }): Promise<ProviderValidationResult> => {
   const now = new Date().toISOString();
+  const startedAt = Date.now();
   const isTestBypass =
     process.env.NODE_ENV === "test" && process.env.PROVIDER_CONFIG_VALIDATE_LIVE !== "1";
   if (isTestBypass) {
     return {
       status: "valid",
-      lastValidatedAt: now
+      lastValidatedAt: now,
+      latencyMs: 0
     };
   }
 
@@ -252,6 +552,7 @@ export const validateProviderConfig = async (input: {
     return {
       status: "invalid",
       lastValidatedAt: now,
+      latencyMs: Date.now() - startedAt,
       error: `Missing credentials for ${input.provider}. Configure authRef/env before enabling live calls.`
     };
   }
@@ -272,18 +573,21 @@ export const validateProviderConfig = async (input: {
       return {
         status: "invalid",
         lastValidatedAt: now,
+        latencyMs: Date.now() - startedAt,
         error: `Validation failed (${response.status})${preview ? `: ${preview}` : ""}`
       };
     }
 
     return {
       status: "valid",
-      lastValidatedAt: now
+      lastValidatedAt: now,
+      latencyMs: Date.now() - startedAt
     };
   } catch (error) {
     return {
       status: "invalid",
       lastValidatedAt: now,
+      latencyMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : "Provider validation failed"
     };
   } finally {

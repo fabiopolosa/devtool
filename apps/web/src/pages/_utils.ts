@@ -1,7 +1,6 @@
-import { useRouterState } from '@tanstack/react-router';
-
 export const usePathParam = (segmentFromEnd = 1): string | undefined => {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  if (typeof window === 'undefined') return undefined;
+  const pathname = window.location.pathname;
   const parts = pathname.split('/').filter(Boolean);
   return parts[parts.length - segmentFromEnd];
 };

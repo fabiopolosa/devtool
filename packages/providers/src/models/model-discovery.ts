@@ -70,8 +70,9 @@ export const discoverNormalizedModels = async ({
   try {
     const raw = await source();
     const normalized = mergeNormalizedProviderModels(normalizeLiveProviderModels(raw));
+    const hasLiveModels = normalized.some((item) => item.source === "live");
 
-    if (normalized.length > 0) {
+    if (normalized.length > 0 && hasLiveModels) {
       const discoveredAt = new Date(currentTime).toISOString();
       cacheByKey.set(cacheKey, {
         items: normalized,
@@ -84,6 +85,16 @@ export const discoverNormalizedModels = async ({
         cached: false,
         refreshed: refresh,
         discoveredAt
+      };
+    }
+
+    if (normalized.length > 0) {
+      return {
+        items: fallbackModels.length > 0 ? fallbackModels : normalized,
+        source: "fallback",
+        cached: false,
+        refreshed: refresh,
+        discoveredAt: new Date(currentTime).toISOString()
       };
     }
   } catch (error) {

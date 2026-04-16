@@ -68,7 +68,7 @@ const resolveCliCommand = (agent: AgentConfig): string => {
   if (typeof runtimeCommand === "string" && runtimeCommand.trim().length > 0) {
     return runtimeCommand.trim();
   }
-  return "paperclipai";
+  return "devtools-agent";
 };
 
 const resolveCliCwd = (agent: AgentConfig): string | undefined => {

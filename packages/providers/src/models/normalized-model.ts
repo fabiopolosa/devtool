@@ -60,10 +60,16 @@ const normalizePricing = (metadata: Record<string, unknown> | undefined, pricing
   };
 };
 
-const normalizeDescriptorMetadata = (descriptor: ProviderModelDescriptor): Record<string, unknown> => ({
-  ...(descriptor.metadata ?? {}),
-  source: "live"
-});
+const normalizeDescriptorMetadata = (descriptor: ProviderModelDescriptor): Record<string, unknown> => {
+  const providerDiscovery =
+    descriptor.metadata && typeof descriptor.metadata === "object"
+      ? (descriptor.metadata as Record<string, unknown>).providerDiscovery
+      : undefined;
+  return {
+    ...(descriptor.metadata ?? {}),
+    source: providerDiscovery === "fallback" ? "fallback" : "live"
+  };
+};
 
 const normalizeGroup = (group: Array<ProviderModelDescriptor | PersistedProviderModelView>): NormalizedProviderModel => {
   if (group.length === 0) {
@@ -103,7 +109,11 @@ const normalizeGroup = (group: Array<ProviderModelDescriptor | PersistedProvider
   };
 
   const pricing = normalizePricing(metadata, firstPersisted?.model.pricingMeta);
-  const source = persistedEntries.length > 0 ? "persisted" : "live";
+  const hasLiveDiscovery = liveDescriptors.some((entry) => {
+    const metadata = entry.metadata as Record<string, unknown> | undefined;
+    return metadata?.source !== "fallback";
+  });
+  const source = persistedEntries.length > 0 ? "persisted" : hasLiveDiscovery ? "live" : "fallback";
 
   return {
     id: `${provider}:${modelId}`,

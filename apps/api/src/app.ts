@@ -13,6 +13,7 @@ import { applyRequestTenantContext, resolveTenantHeader } from "./tenant/runtime
 import {
   authRoutes,
   adminRoutes,
+  internalRunnerRoutes,
   brainstormRoutes,
   approvalsRoutes,
   artifactsRoutes,
@@ -22,6 +23,7 @@ import {
   healthRoutes,
   localRepositoriesRoutes,
   jobsRoutes,
+  executionRoutes,
   modelsRoutes,
   memoryRoutes,
   knowledgeRoutes,
@@ -135,10 +137,12 @@ export async function buildApp() {
   await app.register(environmentsRoutes);
   await app.register(localRepositoriesRoutes);
   await app.register(jobsRoutes);
+  await app.register(executionRoutes);
   await app.register(versioningRoutes);
   await app.register(chatRoutes);
   await app.register(authRoutes);
   await app.register(adminRoutes);
+  await app.register(internalRunnerRoutes);
 
   app.addHook("onClose", async () => {
     await apiStore.close();

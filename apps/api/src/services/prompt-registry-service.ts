@@ -248,9 +248,20 @@ export const promptRegistryService = {
       ...(input.target ? { target: input.target } : {}),
       status: "active"
     });
-    if (input.projectId) {
-      return candidates.find((item) => isVisiblePrompt(item, input.tenantId, input.projectId)) ?? null;
-    }
-    return candidates[0] ?? null;
+    const scoped = candidates
+      .filter((item) => isVisiblePrompt(item, input.tenantId, input.projectId))
+      .filter((item) => (input.projectId ? true : item.scope !== "project"))
+      .sort((left, right) => {
+        const rank = (item: PromptRegistryEntry): number => {
+          if (input.projectId && item.scope === "project" && item.projectId === input.projectId) return 0;
+          if (item.scope === "tenant" && item.tenantId === input.tenantId) return 1;
+          if (item.scope === "system") return 2;
+          return 99;
+        };
+        const byScope = rank(left) - rank(right);
+        if (byScope !== 0) return byScope;
+        return right.updatedAt.localeCompare(left.updatedAt);
+      });
+    return scoped[0] ?? null;
   }
 };

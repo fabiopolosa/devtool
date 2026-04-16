@@ -1,30 +1,37 @@
 import type { FastifyPluginAsync } from "fastify";
 import {
-  approvePatch,
-  approvePlan,
   createCodingWorkflow,
   getCodingWorkflow,
-  listCodingWorkflows,
-  rejectPatch,
-  rejectPlan,
-  requestPatchRevision,
-  requestPlanRevision
+  listCodingWorkflows
 } from "../services/coding-workflow-service.js";
+import {
+  dispatchAndAwaitRunnerJob,
+  getRunnerJobOutput
+} from "../services/job-dispatch-service.js";
 import { requireTenantPermission } from "../tenant/rbac.js";
 
 interface CodingWorkflowCreateBody {
   title?: string;
   request: string;
   actor?: string;
+  mode?: "remote" | "local" | "hybrid";
 }
 
 interface RevisionBody {
   actor?: string;
   note?: string;
+  mode?: "remote" | "local" | "hybrid";
 }
 
 const toActor = (request: { authPrincipal: { userId?: string } | undefined }, bodyActor?: string): string =>
   bodyActor ?? request.authPrincipal?.userId ?? "coding_workflow_service";
+
+const toExecutionMode = (value: unknown): "remote" | "local" | "hybrid" | undefined => {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "remote" || normalized === "local" || normalized === "hybrid") return normalized;
+  return undefined;
+};
 
 export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
@@ -62,14 +69,43 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const item = await createCodingWorkflow({
-        tenantId: request.tenantId ?? "tenant_default",
-        projectId: request.params.projectId,
-        title: request.body.title?.trim() || request.body.request.slice(0, 64),
-        request: request.body.request,
-        actor: toActor(request, request.body.actor)
-      });
-      return { item };
+      try {
+        const actor = toActor(request, request.body.actor);
+        const mode = toExecutionMode(request.body.mode);
+        const title = request.body.title?.trim() || request.body.request.slice(0, 64);
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            projectId: request.params.projectId,
+            type: "system",
+            title: `Create coding workflow: ${title.slice(0, 80)}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "coding.workflow.create",
+              tenantId: request.tenantId ?? "tenant_default",
+              projectId: request.params.projectId,
+              title,
+              request: request.body.request,
+              actor,
+              ...(mode ? { execution: { mode } } : {})
+            },
+            resourceType: "project",
+            resourceId: request.params.projectId
+          },
+          { timeoutMs: 120_000 }
+        );
+
+        const output = getRunnerJobOutput<{ result?: Awaited<ReturnType<typeof createCodingWorkflow>> }>(job);
+        if (!output?.result) {
+          throw new Error("Runner completed coding workflow create job without result payload");
+        }
+        return { item: output.result };
+      } catch (error) {
+        return reply.code(400).send({
+          error: "coding_workflow_runner_error",
+          message: error instanceof Error ? error.message : "Unable to create coding workflow"
+        });
+      }
     }
   );
 
@@ -98,13 +134,42 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!requireTenantPermission(request, reply, "canApprove")) return;
       try {
-        const result = await approvePlan(
-          request.params.workflowId,
-          request.params.projectId,
-          request.tenantId ?? "tenant_default",
-          toActor(request, request.body?.actor)
+        const actor = toActor(request, request.body?.actor);
+        const mode = toExecutionMode(request.body?.mode);
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            projectId: request.params.projectId,
+            type: "system",
+            title: `Approve coding workflow plan ${request.params.workflowId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "coding.plan.approve",
+              workflowId: request.params.workflowId,
+              projectId: request.params.projectId,
+              tenantId: request.tenantId ?? "tenant_default",
+              actor,
+              ...(mode ? { execution: { mode } } : {})
+            },
+            resourceType: "project",
+            resourceId: request.params.projectId
+          },
+          { timeoutMs: 120_000 }
         );
-        return { item: result.item, generatedTasks: result.generatedTasks };
+
+        const output = getRunnerJobOutput<{
+          result?: {
+            item: Awaited<ReturnType<typeof getCodingWorkflow>>;
+            generatedTasks?: Array<Record<string, unknown>>;
+          };
+        }>(job);
+        if (!output?.result) {
+          throw new Error("Runner completed plan approval job without result payload");
+        }
+        return {
+          item: output.result.item,
+          ...(output.result.generatedTasks ? { generatedTasks: output.result.generatedTasks } : {})
+        };
       } catch (error) {
         return reply.code(404).send({
           error: "not_found",
@@ -120,14 +185,35 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!requireTenantPermission(request, reply, "canApprove")) return;
       try {
-        const item = await rejectPlan(
-          request.params.workflowId,
-          request.params.projectId,
-          request.tenantId ?? "tenant_default",
-          toActor(request, request.body?.actor),
-          request.body?.note
+        const actor = toActor(request, request.body?.actor);
+        const mode = toExecutionMode(request.body?.mode);
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            projectId: request.params.projectId,
+            type: "system",
+            title: `Reject coding workflow plan ${request.params.workflowId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "coding.plan.reject",
+              workflowId: request.params.workflowId,
+              projectId: request.params.projectId,
+              tenantId: request.tenantId ?? "tenant_default",
+              actor,
+              ...(request.body?.note ? { note: request.body.note } : {}),
+              ...(mode ? { execution: { mode } } : {})
+            },
+            resourceType: "project",
+            resourceId: request.params.projectId
+          },
+          { timeoutMs: 120_000 }
         );
-        return { item };
+
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        if (!output?.result) {
+          throw new Error("Runner completed plan reject job without result payload");
+        }
+        return { item: output.result };
       } catch (error) {
         return reply.code(404).send({
           error: "not_found",
@@ -143,14 +229,35 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!requireTenantPermission(request, reply, "canEdit")) return;
       try {
-        const item = await requestPlanRevision(
-          request.params.workflowId,
-          request.params.projectId,
-          request.tenantId ?? "tenant_default",
-          toActor(request, request.body?.actor),
-          request.body?.note
+        const actor = toActor(request, request.body?.actor);
+        const mode = toExecutionMode(request.body?.mode);
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            projectId: request.params.projectId,
+            type: "system",
+            title: `Request coding workflow plan revision ${request.params.workflowId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "coding.plan.request_revision",
+              workflowId: request.params.workflowId,
+              projectId: request.params.projectId,
+              tenantId: request.tenantId ?? "tenant_default",
+              actor,
+              ...(request.body?.note ? { note: request.body.note } : {}),
+              ...(mode ? { execution: { mode } } : {})
+            },
+            resourceType: "project",
+            resourceId: request.params.projectId
+          },
+          { timeoutMs: 120_000 }
         );
-        return { item };
+
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        if (!output?.result) {
+          throw new Error("Runner completed plan revision job without result payload");
+        }
+        return { item: output.result };
       } catch (error) {
         return reply.code(404).send({
           error: "not_found",
@@ -166,13 +273,34 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!requireTenantPermission(request, reply, "canApprove")) return;
       try {
-        const item = await approvePatch(
-          request.params.workflowId,
-          request.params.projectId,
-          request.tenantId ?? "tenant_default",
-          toActor(request, request.body?.actor)
+        const actor = toActor(request, request.body?.actor);
+        const mode = toExecutionMode(request.body?.mode);
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            projectId: request.params.projectId,
+            type: "system",
+            title: `Approve coding workflow patch ${request.params.workflowId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "coding.patch.approve",
+              workflowId: request.params.workflowId,
+              projectId: request.params.projectId,
+              tenantId: request.tenantId ?? "tenant_default",
+              actor,
+              ...(mode ? { execution: { mode } } : {})
+            },
+            resourceType: "project",
+            resourceId: request.params.projectId
+          },
+          { timeoutMs: 120_000 }
         );
-        return { item };
+
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        if (!output?.result) {
+          throw new Error("Runner completed patch approve job without result payload");
+        }
+        return { item: output.result };
       } catch (error) {
         return reply.code(404).send({
           error: "not_found",
@@ -188,14 +316,35 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!requireTenantPermission(request, reply, "canApprove")) return;
       try {
-        const item = await rejectPatch(
-          request.params.workflowId,
-          request.params.projectId,
-          request.tenantId ?? "tenant_default",
-          toActor(request, request.body?.actor),
-          request.body?.note
+        const actor = toActor(request, request.body?.actor);
+        const mode = toExecutionMode(request.body?.mode);
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            projectId: request.params.projectId,
+            type: "system",
+            title: `Reject coding workflow patch ${request.params.workflowId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "coding.patch.reject",
+              workflowId: request.params.workflowId,
+              projectId: request.params.projectId,
+              tenantId: request.tenantId ?? "tenant_default",
+              actor,
+              ...(request.body?.note ? { note: request.body.note } : {}),
+              ...(mode ? { execution: { mode } } : {})
+            },
+            resourceType: "project",
+            resourceId: request.params.projectId
+          },
+          { timeoutMs: 120_000 }
         );
-        return { item };
+
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        if (!output?.result) {
+          throw new Error("Runner completed patch reject job without result payload");
+        }
+        return { item: output.result };
       } catch (error) {
         return reply.code(404).send({
           error: "not_found",
@@ -211,14 +360,35 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       if (!requireTenantPermission(request, reply, "canEdit")) return;
       try {
-        const item = await requestPatchRevision(
-          request.params.workflowId,
-          request.params.projectId,
-          request.tenantId ?? "tenant_default",
-          toActor(request, request.body?.actor),
-          request.body?.note
+        const actor = toActor(request, request.body?.actor);
+        const mode = toExecutionMode(request.body?.mode);
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            projectId: request.params.projectId,
+            type: "system",
+            title: `Request coding workflow patch revision ${request.params.workflowId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "coding.patch.request_revision",
+              workflowId: request.params.workflowId,
+              projectId: request.params.projectId,
+              tenantId: request.tenantId ?? "tenant_default",
+              actor,
+              ...(request.body?.note ? { note: request.body.note } : {}),
+              ...(mode ? { execution: { mode } } : {})
+            },
+            resourceType: "project",
+            resourceId: request.params.projectId
+          },
+          { timeoutMs: 120_000 }
         );
-        return { item };
+
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        if (!output?.result) {
+          throw new Error("Runner completed patch revision job without result payload");
+        }
+        return { item: output.result };
       } catch (error) {
         return reply.code(404).send({
           error: "not_found",

@@ -1,8 +1,41 @@
 import { randomUUID } from "node:crypto";
-import type { Job, JobActionType, JobStatus, JobType } from "@cp/domain";
+import { providerNames, type Job, type JobActionType, type JobStatus, type JobType, type ProviderName } from "@cp/domain";
 import { apiStore } from "./api-store.js";
+import { resolveProviderModelSelection } from "./provider-config-service.js";
+import { resolveExecutionRoute } from "./execution-router-service.js";
 
 const nowIso = (): string => new Date().toISOString();
+const providerNameSet = new Set<ProviderName>(providerNames);
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+const asString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+
+const asProviderName = (value: unknown): ProviderName | undefined => {
+  const normalized = asString(value)?.toLowerCase();
+  if (!normalized) return undefined;
+  return providerNameSet.has(normalized as ProviderName) ? (normalized as ProviderName) : undefined;
+};
+
+const readRequestedProviderOrder = (payload: Record<string, unknown> | undefined): ProviderName[] => {
+  if (!payload || !Array.isArray(payload.providerOrder)) return [];
+  return payload.providerOrder
+    .map((entry) => asProviderName(entry))
+    .filter((entry): entry is ProviderName => Boolean(entry));
+};
+
+const readRequestedProvider = (payload: Record<string, unknown> | undefined): ProviderName | undefined => {
+  const explicit = asProviderName(payload?.providerId) ?? asProviderName(payload?.provider);
+  if (explicit) return explicit;
+  return readRequestedProviderOrder(payload)[0];
+};
+
+const readRequestedModel = (payload: Record<string, unknown> | undefined): string | undefined =>
+  asString(payload?.modelId) ?? asString(payload?.model);
 
 const uniqueDependencies = (dependencies?: string[]): string[] =>
   [...new Set((dependencies ?? []).map((item) => item.trim()).filter((item) => item.length > 0))];
@@ -405,6 +438,59 @@ export const createJob = async (input: CreateJobInput): Promise<Job> => {
   const startedAt = status === "running" ? timestamp : undefined;
   const completedAt = status === "done" || status === "error" ? timestamp : undefined;
   const projectId = await resolveProjectScope(input);
+  const payloadProvided = asRecord(input.payload);
+  let payloadRecord = payloadProvided ?? {};
+
+  if (input.type === "generation") {
+    const requestedProvider = readRequestedProvider(payloadRecord);
+    const requestedModelId = readRequestedModel(payloadRecord);
+    const requestedProviderOrder = readRequestedProviderOrder(payloadRecord);
+    const hasRequestedSelection =
+      Boolean(requestedProvider) || Boolean(requestedModelId) || requestedProviderOrder.length > 0;
+    const shouldResolveSelection = Boolean(payloadProvided) || hasRequestedSelection;
+
+    if (shouldResolveSelection) {
+      const providerSelection = await resolveProviderModelSelection({
+        tenantId: input.tenantId,
+        ...(projectId ? { projectId } : {}),
+        ...(requestedProvider ? { requestedProvider } : {}),
+        ...(requestedModelId ? { requestedModelId } : {}),
+        ...(requestedProviderOrder.length > 0 ? { requestedProviderOrder } : {}),
+        capabilityClass: "coding"
+      });
+
+      payloadRecord = {
+        ...payloadRecord,
+        provider: providerSelection.provider,
+        providerId: providerSelection.provider,
+        providerOrder: providerSelection.providerOrder,
+        ...(providerSelection.modelId ? { modelId: providerSelection.modelId, model: providerSelection.modelId } : {}),
+        providerResolution: {
+          source: providerSelection.source,
+          provider: providerSelection.provider,
+          providerConfigId: providerSelection.providerConfigId,
+          ...(providerSelection.modelId ? { modelId: providerSelection.modelId } : {}),
+          resolvedAt: timestamp
+        }
+      };
+    }
+  }
+
+  const executionRoute = await resolveExecutionRoute({
+    tenantId: input.tenantId,
+    ...(projectId ? { projectId } : {}),
+    type: input.type,
+    title: input.title,
+    payload: payloadRecord
+  });
+  const existingExecution = asRecord(payloadRecord.execution) ?? {};
+  const payload = {
+    ...payloadRecord,
+    execution: {
+      ...existingExecution,
+      ...executionRoute
+    }
+  };
 
   const item = await apiStore.createJob({
     id: draftId,
@@ -420,7 +506,7 @@ export const createJob = async (input: CreateJobInput): Promise<Job> => {
     ...(input.actionType ? { actionType: input.actionType } : {}),
     ...(input.resourceType ? { resourceType: input.resourceType } : {}),
     ...(input.resourceId ? { resourceId: input.resourceId } : {}),
-    ...(input.payload ? { payload: input.payload } : {}),
+    payload,
     dependencies,
     dependsOnCount: dependencies.length,
     ready: initialReady,

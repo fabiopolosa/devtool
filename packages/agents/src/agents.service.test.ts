@@ -44,7 +44,7 @@ const baseAgent = (overrides: Partial<AgentConfig> = {}): AgentConfig => ({
   role: "codex_builder",
   icon: "🛠️",
   description: "Builder agent",
-  adapterType: "paperclip_cli",
+  adapterType: "legacy_cli",
   desiredSkills: ["checks"],
   runtimeConfig: {},
   capabilities: ["coding"],
@@ -69,9 +69,9 @@ describe("@cp/agents AgentService", () => {
       role: "codex_builder",
       icon: "⚙️",
       description: "Runtime managed agent",
-      adapterType: "paperclip_cli",
+      adapterType: "legacy_cli",
       desiredSkills: ["checks"],
-      runtimeConfig: { commandPrefix: "paperclipai" },
+      runtimeConfig: { commandPrefix: "devtools-agent" },
       capabilities: ["coding"],
       status: "active"
     });

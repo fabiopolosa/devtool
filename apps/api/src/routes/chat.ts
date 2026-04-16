@@ -1,6 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { apiStore } from "../services/api-store.js";
-import { getJob, updateJobStatus } from "../services/jobs-service.js";
+import {
+  dispatchAndAwaitRunnerJob,
+  getRunnerJobOutput
+} from "../services/job-dispatch-service.js";
 import { requireTenantPermission } from "../tenant/rbac.js";
 
 interface AgentChatBody {
@@ -30,57 +33,46 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const normalized = message.toLowerCase();
-      const context = request.body.context ?? {};
-      const jobId = request.body.jobId;
-      let updatedJob = null;
+      try {
+        const actor = request.authPrincipal?.userId ?? "chat_runtime";
+        const runnerJob = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            type: "system",
+            title: `Process chat message${request.body.jobId ? ` for job ${request.body.jobId}` : ""}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "chat.process_message",
+              message,
+              ...(request.body.jobId ? { jobId: request.body.jobId } : {}),
+              ...(request.body.context ? { context: request.body.context } : {})
+            },
+            resourceType: "chat",
+            ...(request.body.jobId ? { resourceId: request.body.jobId } : {})
+          },
+          { timeoutMs: 90_000 }
+        );
 
-      if (jobId) {
-        const existing = await getJob(jobId);
-        if (!existing) {
-          return reply.code(404).send({
-            error: "not_found",
-            message: "Job not found"
-          });
+        const output = getRunnerJobOutput<{
+          action?: string;
+          result?: {
+            response: string;
+            job?: Record<string, unknown>;
+            context?: Record<string, unknown>;
+          };
+        }>(runnerJob);
+        const result = output?.result;
+        if (!result) {
+          throw new Error("Runner completed chat job without result payload");
         }
 
-        if (/(need|missing|input|details?)/.test(normalized)) {
-          updatedJob = await updateJobStatus(jobId, "waiting_user", {
-            actionRequired: true,
-            actionType: "input"
-          });
-        } else if (/(approve|approval)/.test(normalized)) {
-          updatedJob = await updateJobStatus(jobId, "waiting_user", {
-            actionRequired: true,
-            actionType: "approve"
-          });
-        } else if (/(review|check|validate)/.test(normalized)) {
-          updatedJob = await updateJobStatus(jobId, "waiting_user", {
-            actionRequired: true,
-            actionType: "review"
-          });
-        } else if (/(done|complete|completed|resolved|fixed)/.test(normalized)) {
-          updatedJob = await updateJobStatus(jobId, "done", {
-            actionRequired: false
-          });
-        }
+        return { item: result };
+      } catch (error) {
+        return reply.code(400).send({
+          error: "chat_runner_error",
+          message: error instanceof Error ? error.message : "Unable to process chat message"
+        });
       }
-
-      const planId = typeof context.planId === "string" ? context.planId : undefined;
-      const responseText = updatedJob
-        ? `Context received for job ${updatedJob.id}. Status is now ${updatedJob.status}.`
-        : `Message received${jobId ? ` for job ${jobId}` : ""}${planId ? ` (plan ${planId})` : ""}. No job transition was required.`;
-
-      return {
-        item: {
-          response: responseText,
-          ...(updatedJob ? { job: updatedJob } : {}),
-          context: {
-            ...(jobId ? { jobId } : {}),
-            ...(planId ? { planId } : {})
-          }
-        }
-      };
     }
   );
 };

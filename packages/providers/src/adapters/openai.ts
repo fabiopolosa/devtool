@@ -164,7 +164,7 @@ export class OpenAIChatProvider extends BaseProviderAdapter<"chat_reasoning"> im
   async run(request: Parameters<ChatReasoningProvider["run"]>[0], context: ProviderRequestContext) {
     const endpoint = this.resolveEndpoint("https://api.openai.com/v1", "OPENAI_BASE_URL");
     const apiKey = this.requireApiKey();
-    const model = "gpt-5.1";
+    const model = request.modelId ?? "gpt-5.1";
     const runtime = this.withContext(context);
 
     const response = await this.requestJson<OpenAIChatCompletionResponse>(
@@ -234,7 +234,7 @@ export class OpenAICodingProvider extends BaseProviderAdapter<"coding"> implemen
   async run(request: Parameters<CodingProvider["run"]>[0], context: ProviderRequestContext) {
     const endpoint = this.resolveEndpoint("https://api.openai.com/v1", "OPENAI_BASE_URL");
     const apiKey = this.requireApiKey();
-    const model = "gpt-5.1-codex";
+    const model = request.modelId ?? "gpt-5.1-codex";
     const runtime = this.withContext(context);
     const requestText = request.codeContext
       ? `${request.prompt}\n\nCode context:\n${request.codeContext}`

@@ -49,7 +49,9 @@ export function SettingsKnowledgePage() {
   const [error, setError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
 
-  const canManage = !auth.enabled || Boolean(auth.principal?.roles.includes("admin"));
+  const canManage =
+    !auth.enabled ||
+    Boolean(auth.principal?.roles.includes("owner") || auth.principal?.roles.includes("admin"));
   const effectiveLabel = useMemo(() => {
     if (source === "default") return "default policy";
     if (source === "project") return "project override";
@@ -167,7 +169,7 @@ export function SettingsKnowledgePage() {
         ) : null}
         {!canManage ? (
           <p className="text-sm text-rose-300">
-            Admin role required when authentication is enabled.
+            Owner role required when authentication is enabled.
           </p>
         ) : null}
         {error ? <p className="text-sm text-rose-300">{error}</p> : null}
@@ -304,4 +306,3 @@ export function SettingsKnowledgePage() {
     </div>
   );
 }
-

@@ -29,6 +29,7 @@ export interface ProviderHealthStatus {
 
 export interface ChatReasoningRequest {
   prompt: string;
+  modelId?: string;
   systemPrompt?: string;
   maxTokens?: number;
   temperature?: number;

@@ -3,7 +3,7 @@ import { capabilityClasses } from "../capabilities.js";
 import { idSchema } from "./common.schema.js";
 
 export const agentConfigStatusSchema = z.enum(["active", "paused", "degraded", "error"]);
-export const agentRuntimeAdapterTypeSchema = z.enum(["paperclip_cli", "custom_cli", "mcp_runtime"]);
+export const agentRuntimeAdapterTypeSchema = z.enum(["legacy_cli", "custom_cli", "mcp_runtime"]);
 
 export const agentConfigSchema = z.object({
   id: idSchema,

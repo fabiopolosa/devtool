@@ -50,7 +50,8 @@ import type {
   AutoResearchRun,
   ResearchNote,
   RoutingRule,
-  Policy
+  Policy,
+  PromptRegistryEntry
 } from "@cp/domain";
 
 export interface ApiSeedData {
@@ -78,6 +79,7 @@ export interface ApiSeedData {
   providerBindings: ProjectProviderBinding[];
   providerHealthchecks: ProviderHealthcheck[];
   providerDiscoveryLogs: ProviderDiscoveryLog[];
+  promptRegistry: PromptRegistryEntry[];
   experiments: AutoResearchExperiment[];
   experimentRuns: AutoResearchRun[];
   users: User[];

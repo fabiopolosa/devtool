@@ -31,6 +31,8 @@ export interface BrainstormingServiceOptions {
   subpromptCatalog: BrainstormSubpromptCatalog;
   rolesDir?: string;
   resolveRoleInstructions?: PromptBuilderServiceOptions["resolveRoleInstructions"];
+  disableRoleFileFallback?: boolean;
+  requireRegistryPrompt?: boolean;
   now?: () => Date;
   idGenerator?: () => string;
 }
@@ -221,6 +223,12 @@ export class BrainstormingService {
       ...(options.rolesDir ? { rolesDir: options.rolesDir } : {}),
       ...(options.resolveRoleInstructions
         ? { resolveRoleInstructions: options.resolveRoleInstructions }
+        : {}),
+      ...(typeof options.disableRoleFileFallback === "boolean"
+        ? { disableRoleFileFallback: options.disableRoleFileFallback }
+        : {}),
+      ...(typeof options.requireRegistryPrompt === "boolean"
+        ? { requireRegistryPrompt: options.requireRegistryPrompt }
         : {})
     });
   }
@@ -323,8 +331,8 @@ export class BrainstormingService {
       registryContext: {
         ...(input.tenantId ? { tenantId: input.tenantId } : {}),
         ...(input.projectId ? { projectId: input.projectId } : {}),
-        type: "planner",
-        target: "default"
+        type: "role",
+        target: "planner"
       }
     };
     const composedPrompt = await this.promptBuilderService.buildPrompt(promptInput);

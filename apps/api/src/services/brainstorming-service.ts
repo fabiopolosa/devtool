@@ -38,6 +38,7 @@ export interface StartBrainstormInput {
   guidedAnswers?: Record<string, string>;
   actor?: string;
   generatePlan?: boolean;
+  jobManaged?: boolean;
 }
 
 export interface ApplyBrainstormPlanInput {
@@ -49,6 +50,7 @@ export interface ApplyBrainstormPlanInput {
   description?: string;
   repositoryIds?: string[];
   repositoryUrls?: string[];
+  jobManaged?: boolean;
 }
 
 export interface BrainstormStartResult {
@@ -83,6 +85,8 @@ const brainstormingService = new BrainstormingService({
     get: (subpromptId) => getSubprompt(subpromptId)
   },
   rolesDir: promptRolesDir,
+  disableRoleFileFallback: true,
+  requireRegistryPrompt: true,
   resolveRoleInstructions: async (role, context) => {
     const activeEntry = await promptRegistryService.resolveActivePrompt({
       tenantId: context?.tenantId ?? "tenant_default",
@@ -398,22 +402,26 @@ export async function startBrainstormSession(input: StartBrainstormInput): Promi
     updatedAt: createdAt,
     updatedBy: actor
   });
-  const brainstormJob = await createJob({
-    tenantId,
-    type: "brainstorm",
-    title: `Brainstorm session: ${input.projectIntent.trim().slice(0, 80)}`,
-    status: "running",
-    actionRequired: false,
-    resourceType: "brainstorm",
-    resourceId: session.id,
-    createdBy: actor
-  });
+  const brainstormJob = input.jobManaged
+    ? null
+    : await createJob({
+        tenantId,
+        type: "brainstorm",
+        title: `Brainstorm session: ${input.projectIntent.trim().slice(0, 80)}`,
+        status: "running",
+        actionRequired: false,
+        resourceType: "brainstorm",
+        resourceId: session.id,
+        createdBy: actor
+      });
 
   if (input.generatePlan === false) {
-    await updateJobStatus(brainstormJob.id, "waiting_user", {
-      actionRequired: true,
-      actionType: "input"
-    });
+    if (brainstormJob) {
+      await updateJobStatus(brainstormJob.id, "waiting_user", {
+        actionRequired: true,
+        actionType: "input"
+      });
+    }
     return { session };
   }
 
@@ -438,19 +446,23 @@ export async function startBrainstormSession(input: StartBrainstormInput): Promi
       updatedAt: nowIso(),
       updatedBy: actor
     });
-    await updateJobStatus(brainstormJob.id, "done", {
-      actionRequired: false,
-      resourceId: persistedPlan.id
-    });
+    if (brainstormJob) {
+      await updateJobStatus(brainstormJob.id, "done", {
+        actionRequired: false,
+        resourceId: persistedPlan.id
+      });
+    }
     return {
       session: updatedSession,
       plan: persistedPlan
     };
   } catch (error) {
-    await updateJobStatus(brainstormJob.id, "error", {
-      actionRequired: true,
-      actionType: "review"
-    });
+    if (brainstormJob) {
+      await updateJobStatus(brainstormJob.id, "error", {
+        actionRequired: true,
+        actionType: "review"
+      });
+    }
     throw error;
   }
 }
@@ -494,28 +506,36 @@ export async function applyBrainstormPlan(
 ): Promise<BrainstormApplyResult> {
   const actor = input.actor?.trim() || "brainstorming_service";
   const tenantId = input.tenantId ?? "tenant_default";
-  const applyJob = await createJob({
-    tenantId,
-    type: "brainstorm_apply",
-    title: `Apply brainstorm plan ${input.planId}`,
-    status: "running",
-    actionRequired: false,
-    resourceType: "brainstorm",
-    resourceId: input.planId,
-    createdBy: actor
-  });
+  const applyJob = input.jobManaged
+    ? null
+    : await createJob({
+        tenantId,
+        type: "brainstorm_apply",
+        title: `Apply brainstorm plan ${input.planId}`,
+        status: "running",
+        actionRequired: false,
+        resourceType: "brainstorm",
+        resourceId: input.planId,
+        createdBy: actor
+      });
   const plan = await apiStore.getBrainstormPlan(input.planId);
   if (!plan) {
-    await updateJobStatus(applyJob.id, "error", { actionRequired: true, actionType: "review" });
+    if (applyJob) {
+      await updateJobStatus(applyJob.id, "error", { actionRequired: true, actionType: "review" });
+    }
     throw new Error(`Brainstorm plan not found: ${input.planId}`);
   }
   const session = await apiStore.getBrainstormSession(plan.sessionId);
   if (!session) {
-    await updateJobStatus(applyJob.id, "error", { actionRequired: true, actionType: "review" });
+    if (applyJob) {
+      await updateJobStatus(applyJob.id, "error", { actionRequired: true, actionType: "review" });
+    }
     throw new Error(`Brainstorm session not found: ${plan.sessionId}`);
   }
   if (session.status !== "approved" && session.status !== "applied") {
-    await updateJobStatus(applyJob.id, "error", { actionRequired: true, actionType: "approve" });
+    if (applyJob) {
+      await updateJobStatus(applyJob.id, "error", { actionRequired: true, actionType: "approve" });
+    }
     throw new Error(
       `Brainstorm session ${session.id} must be approved before project creation (current status: ${session.status}).`
     );
@@ -577,10 +597,12 @@ export async function applyBrainstormPlan(
     updatedAt: appliedAt,
     updatedBy: actor
   });
-  await updateJobStatus(applyJob.id, "done", {
-    actionRequired: false,
-    resourceId: project.id
-  });
+  if (applyJob) {
+    await updateJobStatus(applyJob.id, "done", {
+      actionRequired: false,
+      resourceId: project.id
+    });
+  }
 
   return {
     session: updatedSession,

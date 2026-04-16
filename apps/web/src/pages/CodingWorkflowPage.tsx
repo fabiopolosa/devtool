@@ -19,6 +19,22 @@ const decisionTone = (state: CodingWorkflowDecisionStatus) => {
   return 'default';
 };
 
+const workflowSteps = [
+  'Request',
+  'Plan',
+  'Approve or Revise',
+  'Execute',
+  'Result'
+] as const;
+
+const workflowStepIndex = (state: CodingWorkflowState): number => {
+  if (state === 'request') return 0;
+  if (state === 'planning' || state === 'awaiting_plan_approval' || state === 'plan_rejected') return 1;
+  if (state === 'plan_approved' || state === 'task_generation' || state === 'awaiting_patch_approval') return 2;
+  if (state === 'executing' || state === 'review') return 3;
+  return 4;
+};
+
 export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
   const { authActions } = useAppStore();
   const routeProjectId = usePathParam(2);
@@ -36,6 +52,35 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
     () => items.find((item) => item.id === selectedWorkflowId) ?? items[0],
     [items, selectedWorkflowId]
   );
+  const activeStep = selectedWorkflow ? workflowStepIndex(selectedWorkflow.state) : 0;
+  const canPlanDecision = Boolean(
+    selectedWorkflow &&
+      (selectedWorkflow.state === 'awaiting_plan_approval' || selectedWorkflow.state === 'planning')
+  );
+  const canPatchDecision = Boolean(selectedWorkflow && selectedWorkflow.state === 'awaiting_patch_approval');
+
+  const nextActionHint = useMemo(() => {
+    if (!selectedWorkflow) return 'Create a request to start the flow.';
+    if (selectedWorkflow.state === 'awaiting_plan_approval' || selectedWorkflow.state === 'planning') {
+      return 'Review the plan, then approve or request revision.';
+    }
+    if (selectedWorkflow.state === 'awaiting_patch_approval') {
+      return 'Approve patch execution or request patch revision.';
+    }
+    if (selectedWorkflow.state === 'executing') {
+      return 'Execution is running through the runner.';
+    }
+    if (selectedWorkflow.state === 'review') {
+      return 'Review generated outputs and timeline details.';
+    }
+    if (selectedWorkflow.state === 'completed') {
+      return 'Workflow completed. Start a new request for the next change.';
+    }
+    if (selectedWorkflow.state === 'plan_rejected' || selectedWorkflow.state === 'rejected') {
+      return 'Rejected flow. Create a new request or reopen with revision.';
+    }
+    return 'Flow is progressing.';
+  }, [selectedWorkflow]);
 
   const loadWorkflows = useCallback(async () => {
     if (!scopedProjectId) return;
@@ -207,6 +252,24 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
           title={selectedWorkflow?.title ?? 'Workflow detail'}
           subtitle={selectedWorkflow ? selectedWorkflow.request : 'Select a workflow to inspect plan, tasks, and timeline'}
         />
+        <div className="border border-white/10 bg-black/20 p-3">
+          <div className="label">Workflow steps</div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-5">
+            {workflowSteps.map((step, index) => {
+              const tone = index < activeStep ? 'good' : index === activeStep ? 'accent' : 'default';
+              return (
+                <div key={step} className="border border-white/10 bg-white/5 p-2">
+                  <div className="text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">Step {index + 1}</div>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <span className="text-sm text-[color:var(--text)]">{step}</span>
+                    <Pill tone={tone}>{index < activeStep ? 'done' : index === activeStep ? 'current' : 'next'}</Pill>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-sm text-[color:var(--muted)]">{nextActionHint}</p>
+        </div>
 
         {selectedWorkflow ? (
           <div className="space-y-4">
@@ -245,28 +308,53 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
 
               <div className="border border-white/10 bg-black/20 p-3">
                 <div className="label">Gate actions</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Button onClick={() => void runAction(selectedWorkflow.id, 'plan/approve')}>
-                    {actionBusy === 'plan/approve' ? 'Approving...' : 'Approve plan'}
-                  </Button>
-                  <Button variant="secondary" onClick={() => void runAction(selectedWorkflow.id, 'plan/request-revision')}>
-                    {actionBusy === 'plan/request-revision' ? 'Requesting...' : 'Request plan revision'}
-                  </Button>
-                  <Button variant="secondary" onClick={() => void runAction(selectedWorkflow.id, 'plan/reject')}>
-                    Reject plan
-                  </Button>
+                <div className="mt-2 space-y-3">
+                  <div className="text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">Plan gate</div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => (canPlanDecision ? void runAction(selectedWorkflow.id, 'plan/approve') : undefined)}>
+                      {actionBusy === 'plan/approve' ? 'Approving...' : 'Approve plan'}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        canPlanDecision ? void runAction(selectedWorkflow.id, 'plan/request-revision') : undefined
+                      }
+                    >
+                      {actionBusy === 'plan/request-revision' ? 'Requesting...' : 'Request plan revision'}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => (canPlanDecision ? void runAction(selectedWorkflow.id, 'plan/reject') : undefined)}
+                    >
+                      Reject plan
+                    </Button>
+                  </div>
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button onClick={() => void runAction(selectedWorkflow.id, 'patch/approve')}>
-                    {actionBusy === 'patch/approve' ? 'Executing...' : 'Approve patch'}
-                  </Button>
-                  <Button variant="secondary" onClick={() => void runAction(selectedWorkflow.id, 'patch/request-revision')}>
-                    Request patch revision
-                  </Button>
-                  <Button variant="secondary" onClick={() => void runAction(selectedWorkflow.id, 'patch/reject')}>
-                    Reject patch
-                  </Button>
+                <div className="mt-3 space-y-3">
+                  <div className="text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">Patch gate</div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => (canPatchDecision ? void runAction(selectedWorkflow.id, 'patch/approve') : undefined)}>
+                      {actionBusy === 'patch/approve' ? 'Executing...' : 'Approve patch'}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        canPatchDecision ? void runAction(selectedWorkflow.id, 'patch/request-revision') : undefined
+                      }
+                    >
+                      Request patch revision
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => (canPatchDecision ? void runAction(selectedWorkflow.id, 'patch/reject') : undefined)}
+                    >
+                      Reject patch
+                    </Button>
+                  </div>
                 </div>
+                {!canPlanDecision && !canPatchDecision ? (
+                  <p className="mt-2 text-sm text-[color:var(--muted)]">No gate action currently required for this workflow state.</p>
+                ) : null}
                 <div className="mt-3">
                   <Input value={revisionNote} onChange={setRevisionNote} placeholder="Optional revision note" />
                 </div>
@@ -297,6 +385,15 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
               </div>
             ) : null}
 
+            {(selectedWorkflow.state === 'completed' || selectedWorkflow.state === 'review' || selectedWorkflow.reviewSummary) ? (
+              <div className="border border-emerald-400/20 bg-emerald-500/10 p-3">
+                <div className="label">Result</div>
+                <p className="mt-1 text-sm text-[color:var(--text)]">
+                  {selectedWorkflow.reviewSummary ?? 'Execution finished successfully and artifacts are available in the project workspace.'}
+                </p>
+              </div>
+            ) : null}
+
             <div className="border border-white/10 bg-black/20 p-3">
               <div className="label">Timeline</div>
               <div className="mt-2 space-y-2">
@@ -319,4 +416,3 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
     </div>
   );
 }
-

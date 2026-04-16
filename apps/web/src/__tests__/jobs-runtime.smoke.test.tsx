@@ -1,8 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { RouterProvider } from "@tanstack/react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { router } from "../router/router";
-import { AppStoreProvider } from "../store/app-store";
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -13,9 +10,18 @@ const jsonResponse = (body: unknown, status = 200): Response =>
 describe("Jobs operations rail smoke", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("renders launcher + operations rail with live queue stats", async () => {
+    vi.stubEnv("VITE_ALLOW_MOCK_DATA", "true");
+    vi.resetModules();
+    const [{ RouterProvider }, { router }, { AppStoreProvider }] = await Promise.all([
+      import("@tanstack/react-router"),
+      import("../router/router"),
+      import("../store/app-store")
+    ]);
+
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {

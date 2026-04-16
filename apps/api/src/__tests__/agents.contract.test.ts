@@ -42,11 +42,11 @@ describe("Agents API contract", () => {
         role: "claude_debugger",
         icon: "stethoscope",
         description: "Runtime diagnostics agent",
-        adapterType: "paperclip_cli",
+        adapterType: "legacy_cli",
         desiredSkills: ["checks"],
         reportTo: "planner",
         runtimeConfig: {
-          commandPrefix: "paperclipai",
+          commandPrefix: "devtools-agent",
           timeoutMs: 15000
         },
         capabilities: ["chat_reasoning", "coding"],

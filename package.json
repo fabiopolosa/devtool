@@ -16,7 +16,8 @@
     "brainstorm:migrate:legacy": "node scripts/migrations/migrate-brainstorm-plan-legacy.mjs",
     "verify:smoke": "pnpm --filter @cp/web test -- --run src/__tests__/dashboard.smoke.test.tsx",
     "verify:visual": "node scripts/verifier/visual-regression.mjs",
-    "verify:performance": "node scripts/verifier/performance-benchmark.mjs"
+    "verify:performance": "node scripts/verifier/performance-benchmark.mjs",
+    "devtools": "pnpm --filter @cp/cli run devtools"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

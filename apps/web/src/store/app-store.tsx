@@ -113,6 +113,7 @@ const parseFlag = (value: string | undefined, defaultValue: boolean): boolean =>
 };
 
 const authEnabledFromEnv = (): boolean => parseFlag(import.meta.env.VITE_AUTH_ENABLED, false);
+const mockDataEnabledFromEnv = (): boolean => parseFlag(import.meta.env.VITE_ALLOW_MOCK_DATA, false);
 const apiBaseUrlFromEnv = (): string => {
   const configured = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '');
   if (configured) return configured;
@@ -137,14 +138,14 @@ type Action =
   | { type: 'splitRoadmap'; roadmapItemId: string }
   | { type: 'mergeRoadmap'; roadmapItemId: string; targetRoadmapId: string }
   | { type: 'addMessage'; threadId: string; content: string }
-  | { type: 'createProject'; name: string; description: string }
+  | { type: 'replaceProjects'; projects: Project[] }
   | { type: 'linkRepository'; projectId: string; repositoryId: string }
   | { type: 'proposeRoadmapFromChat'; projectId: string; content: string }
   | { type: 'convertRoadmapToTask'; roadmapItemId: string }
   | { type: 'setTaskSkills'; taskId: string; skills: string[] }
   | { type: 'setTaskAssignedAgent'; taskId: string; agentId?: string };
 
-const initialState: AppState = {
+const mockState: AppState = {
   projects: initialProjects,
   repositories: initialRepositories,
   projectRepositoryLinks: initialProjectRepositoryLinks,
@@ -173,6 +174,38 @@ const initialState: AppState = {
   taskSpecSkills: {},
   taskAssignedAgents: {}
 };
+
+const createEmptyState = (): AppState => ({
+  projects: [],
+  repositories: [],
+  projectRepositoryLinks: [],
+  roadmapItems: [],
+  tasks: [],
+  taskRuns: [],
+  approvals: [],
+  artifacts: [],
+  verificationResults: [],
+  verificationSteps: [],
+  memoryEntries: [],
+  memoryChunks: [],
+  retrievalLogs: [],
+  researchNotes: [],
+  promptVersions: [],
+  routingRules: [],
+  experiments: [],
+  experimentRuns: [],
+  threads: [],
+  messages: [],
+  providers: [],
+  providerCapabilities: [],
+  providerModels: [],
+  projectBindings: [],
+  providerHealthchecks: [],
+  taskSpecSkills: {},
+  taskAssignedAgents: {}
+});
+
+const initialState: AppState = mockDataEnabledFromEnv() ? mockState : createEmptyState();
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -262,30 +295,11 @@ function reducer(state: AppState, action: Action): AppState {
       };
       return { ...state, messages: [...state.messages, nextMessage] };
     }
-    case 'createProject': {
-      const now = new Date().toISOString();
-      const project: Project = {
-        ...(state.projects[0] ?? {
-          tenantId: 'tenant_default',
-          createdAt: now,
-          createdBy: 'you',
-          updatedAt: now,
-          updatedBy: 'you'
-        }),
-        id: `proj-${state.projects.length + 1}`,
-        tenantId: (state.projects[0]?.tenantId ?? 'tenant_default'),
-        key: action.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
-        name: action.name,
-        description: action.description,
-        status: 'active',
-        policySetId: 'policy-main',
-        createdAt: now,
-        createdBy: 'you',
-        updatedAt: now,
-        updatedBy: 'you'
+    case 'replaceProjects':
+      return {
+        ...state,
+        projects: [...action.projects]
       };
-      return { ...state, projects: [...state.projects, project] };
-    }
     case 'linkRepository': {
       const now = new Date().toISOString();
       const link: ProjectRepositoryLink = {
@@ -483,6 +497,7 @@ export function AppStoreProvider({
   children: React.ReactNode;
   authEnabledOverride?: boolean;
 }) {
+  const allowMockData = useMemo(() => mockDataEnabledFromEnv(), []);
   const [state, dispatch] = useReducer(reducer, initialState);
   const [auth, setAuth] = useState<AuthState>({
     enabled: authEnabledOverride ?? authEnabledFromEnv(),
@@ -795,6 +810,26 @@ export function AppStoreProvider({
   useEffect(() => {
     void bootstrapSession();
   }, [bootstrapSession]);
+
+  const syncProjects = useCallback(async (): Promise<void> => {
+    if (allowMockData) return;
+    if (auth.enabled && auth.required) return;
+    try {
+      const { response, body } = await apiFetchJson<{ items?: Project[]; message?: string }>('/projects');
+      if (!response.ok) {
+        throw new Error(body.message ?? `Unable to load projects (HTTP ${response.status})`);
+      }
+      dispatch({ type: 'replaceProjects', projects: body.items ?? [] });
+    } catch (error) {
+      if (import.meta.env.MODE !== 'test') {
+        console.error('Unable to sync projects from API', error);
+      }
+    }
+  }, [allowMockData, apiFetchJson, auth.enabled, auth.required]);
+
+  useEffect(() => {
+    void syncProjects();
+  }, [syncProjects]);
 
   const login = useCallback(
     async (email: string, password: string): Promise<{ ok: boolean; error?: string }> => {

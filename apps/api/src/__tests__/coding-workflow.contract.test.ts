@@ -1,10 +1,11 @@
 import Fastify from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CodingWorkflow, Task } from "@cp/domain";
+import type { CodingWorkflow, Job, Task } from "@cp/domain";
 import { codingWorkflowRoutes } from "../routes/coding-workflow.js";
 
 const codingWorkflows = new Map<string, CodingWorkflow>();
 const tasks = new Map<string, Task>();
+const jobs = new Map<string, Job>();
 
 vi.mock("../services/api-store.js", () => ({
   apiStore: {
@@ -29,6 +30,8 @@ vi.mock("../services/api-store.js", () => ({
       return updated;
     },
     getTask: async (taskId: string) => tasks.get(taskId) ?? null,
+    listTasks: async (projectId?: string) =>
+      [...tasks.values()].filter((item) => (projectId ? item.projectId === projectId : true)),
     createTask: async (task: Task) => {
       tasks.set(task.id, task);
       return task;
@@ -41,7 +44,26 @@ vi.mock("../services/api-store.js", () => ({
       const updated = { ...existing, ...patch } as Task;
       tasks.set(taskId, updated);
       return updated;
-    }
+    },
+    listJobs: async () => [...jobs.values()],
+    getJob: async (jobId: string) => jobs.get(jobId) ?? null,
+    createJob: async (job: Job) => {
+      jobs.set(job.id, job);
+      return job;
+    },
+    updateJob: async (jobId: string, patch: Partial<Job>) => {
+      const existing = jobs.get(jobId);
+      if (!existing) {
+        throw new Error(`Record not found: jobs/${jobId}`);
+      }
+      const updated = { ...existing, ...patch } as Job;
+      jobs.set(jobId, updated);
+      return updated;
+    },
+    getBrainstormSession: async () => null,
+    getBrainstormPlan: async () => null,
+    listBrainstormSessions: async () => [],
+    listBrainstormPlans: async () => []
   }
 }));
 
@@ -53,6 +75,7 @@ describe("Coding workflow API contract", () => {
   beforeEach(() => {
     codingWorkflows.clear();
     tasks.clear();
+    jobs.clear();
   });
 
   afterEach(() => {

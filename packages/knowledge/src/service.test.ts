@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import type { KnowledgeNode, KnowledgeScope } from "@cp/domain";
+import type { EmbeddingProvider, KnowledgeNode, KnowledgeScope } from "@cp/domain";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { KnowledgeService, type KnowledgeNodeStore } from "./service.js";
 
@@ -185,5 +185,145 @@ describe("KnowledgeService", () => {
     expect(compact.some((entry) => entry.sourceType === "context-note")).toBe(true);
     expect(compact.some((entry) => entry.scope === "project")).toBe(true);
     expect(compact.length).toBeLessThanOrEqual(5);
+  });
+
+  it("keeps at least one context note in generation context when notes exist", async () => {
+    await service.createKnowledgeNode(
+      {
+        scope: "project",
+        projectId: "proj_context_keep",
+        path: "/projects/proj_context_keep/notes/runtime.md",
+        content: "# Runtime\nKeep retrieval deterministic."
+      },
+      "test"
+    );
+
+    const compact = await service.buildGenerationKnowledgeContext({
+      tenantId: "tenant_default",
+      projectId: "proj_context_keep",
+      query: "deterministic retrieval",
+      limit: 3,
+      threshold: 0.95,
+      contextNotesLimit: 2,
+      contextNotes: [
+        {
+          id: "ctx_low_score",
+          path: "/projects/proj_context_keep/context/meeting.md",
+          title: "Meeting",
+          content: "Follow-up checklist."
+        }
+      ]
+    });
+
+    expect(compact.some((entry) => entry.sourceType === "context-note")).toBe(true);
+  });
+
+  it("generates embeddings on create and syncs semantic store when missing", async () => {
+    const localStore = new InMemoryKnowledgeStore();
+    const upserts: Array<{ nodeId: string; embedding: number[] }> = [];
+    const embeddingProvider: EmbeddingProvider = {
+      provider: "openai",
+      capabilityClass: "embedding",
+      discoverModels: async () => [],
+      healthcheck: async () => ({ status: "healthy", checkedAt: new Date().toISOString() }),
+      embed: async ({ texts }) => ({
+        vectors: texts.map((text) => [
+          text.toLowerCase().includes("runner") ? 1 : 0.25,
+          text.toLowerCase().includes("knowledge") ? 1 : 0.1,
+          0.5
+        ]),
+        dimensions: 3,
+        modelId: "test-embedding"
+      })
+    };
+
+    const serviceWithSemanticStore = new KnowledgeService({
+      store: localStore,
+      embeddingProvider,
+      semanticStore: {
+        searchKnowledge: async () => ({ available: true, hits: [] }),
+        upsertKnowledgeEmbedding: async (nodeId, embedding) => {
+          upserts.push({ nodeId, embedding });
+          return true;
+        }
+      }
+    });
+
+    const created = await serviceWithSemanticStore.createKnowledgeNode(
+      {
+        scope: "project",
+        tenantId: "tenant_default",
+        projectId: "proj_semantic",
+        path: "/projects/proj_semantic/runtime/runner.md",
+        content: "# Runner\nKnowledge retrieval should use pgvector."
+      },
+      "test"
+    );
+
+    expect(Array.isArray(created.embedding)).toBe(true);
+    expect((created.embedding ?? []).length).toBeGreaterThan(0);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]?.nodeId).toBe(created.id);
+    expect(upserts[0]?.embedding.length).toBeGreaterThan(0);
+  });
+
+  it("falls back to local semantic scoring when pgvector is unavailable", async () => {
+    const localStore = new InMemoryKnowledgeStore();
+    const embeddingProvider: EmbeddingProvider = {
+      provider: "openai",
+      capabilityClass: "embedding",
+      discoverModels: async () => [],
+      healthcheck: async () => ({ status: "healthy", checkedAt: new Date().toISOString() }),
+      embed: async ({ texts }) => ({
+        vectors: texts.map((text) => [
+          text.toLowerCase().includes("runner") ? 1 : 0.2,
+          text.toLowerCase().includes("knowledge") ? 1 : 0.1,
+          text.length / 100
+        ]),
+        dimensions: 3,
+        modelId: "test-embedding"
+      })
+    };
+
+    const serviceWithFallback = new KnowledgeService({
+      store: localStore,
+      embeddingProvider,
+      semanticStore: {
+        searchKnowledge: async () => ({ available: false, hits: [] })
+      }
+    });
+
+    await serviceWithFallback.createKnowledgeNode(
+      {
+        scope: "project",
+        tenantId: "tenant_default",
+        projectId: "proj_fallback",
+        path: "/projects/proj_fallback/runtime/runner.md",
+        content: "# Runner\nRunner injects knowledge context."
+      },
+      "test"
+    );
+    await serviceWithFallback.createKnowledgeNode(
+      {
+        scope: "project",
+        tenantId: "tenant_default",
+        projectId: "proj_fallback",
+        path: "/projects/proj_fallback/misc/note.md",
+        content: "# Misc\nLow relevance note."
+      },
+      "test"
+    );
+
+    const results = await serviceWithFallback.searchKnowledge({
+      tenantId: "tenant_default",
+      projectId: "proj_fallback",
+      query: "runner knowledge context",
+      limit: 1,
+      threshold: 0.2
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.source).toBe("semantic");
+    expect(results[0]?.score).toBeGreaterThanOrEqual(0.2);
   });
 });

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import type { ProviderConfig, ProviderName } from "@cp/domain";
-import { resetNormalizedModelDiscoveryCache } from "@cp/providers";
+import { createDefaultProviderRegistry, resetNormalizedModelDiscoveryCache } from "@cp/providers";
 import { apiStore } from "../services/api-store.js";
 import { runProviderAutoDiscovery } from "../services/provider-discovery-service.js";
 import { auditLogService } from "../services/audit-log-service.js";
@@ -11,6 +11,7 @@ import {
   toProviderConfigResponse,
   validateProviderConfig
 } from "../services/provider-config-service.js";
+import { usageService } from "../services/usage-service.js";
 
 type UpsertProviderConfigBody = {
   provider?: ProviderName;
@@ -27,7 +28,14 @@ type UpsertProviderConfigBody = {
   metadata?: Record<string, unknown>;
 };
 
+type ProviderDefaultsBody = {
+  defaultProviderConfigId?: string | null;
+  defaultModelId?: string | null;
+};
+
 const defaultTimeoutMs = 30_000;
+const defaultProviderMetadataKey = "isDefaultProvider";
+const defaultModelMetadataKey = "defaultModelId";
 
 const requireOwnerRole = (
   request: FastifyRequest,
@@ -62,6 +70,104 @@ const normalizeRateLimits = (body: UpsertProviderConfigBody): Pick<ProviderConfi
 const changedFields = (before: Record<string, unknown> | undefined, after: Record<string, unknown>): string[] => {
   if (!before) return Object.keys(after);
   return Object.keys(after).filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
+};
+
+const parseTruthy = (value: string | undefined): boolean => {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+};
+
+const toMetadata = (metadata: Record<string, unknown> | undefined): Record<string, unknown> => ({
+  ...(metadata ?? {})
+});
+
+const isDefaultProviderConfig = (config: ProviderConfig): boolean =>
+  config.metadata?.[defaultProviderMetadataKey] === true;
+
+const defaultModelIdFromConfig = (config: ProviderConfig): string | undefined => {
+  const raw = config.metadata?.[defaultModelMetadataKey];
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined;
+};
+
+const resolveProviderDefaults = (
+  configs: ProviderConfig[]
+): {
+  defaultProviderConfigId?: string;
+  defaultProvider?: ProviderName;
+  defaultModelId?: string;
+} => {
+  const selected = configs.find((config) => isDefaultProviderConfig(config));
+  if (!selected) return {};
+  const defaultModelId = defaultModelIdFromConfig(selected);
+  return {
+    defaultProviderConfigId: selected.id,
+    defaultProvider: selected.providerId ?? selected.provider,
+    ...(defaultModelId ? { defaultModelId } : {})
+  };
+};
+
+const withDefaultsMetadata = (
+  existing: Record<string, unknown> | undefined,
+  input: { isDefaultProvider: boolean; defaultModelId?: string }
+): Record<string, unknown> => {
+  const next = toMetadata(existing);
+  delete next[defaultProviderMetadataKey];
+  delete next[defaultModelMetadataKey];
+  if (input.isDefaultProvider) {
+    next[defaultProviderMetadataKey] = true;
+    if (input.defaultModelId) {
+      next[defaultModelMetadataKey] = input.defaultModelId;
+    }
+  }
+  return next;
+};
+
+const enabledFromValidation = (
+  requestedEnabled: boolean,
+  validationStatus: ProviderConfig["validationStatus"]
+): boolean => requestedEnabled && validationStatus === "valid";
+
+const resolveAvailableModelIds = async (
+  provider: ProviderName,
+  providerConfigId: string
+): Promise<string[]> => {
+  const persistedModels = (await apiStore.listProviderModels())
+    .filter((model) => model.providerConfigId === providerConfigId && model.enabled)
+    .map((model) => model.modelId);
+
+  try {
+    const registry = createDefaultProviderRegistry();
+    const discoveredModels = (await registry.discoverAllModels())
+      .filter((model) => model.provider === provider)
+      .map((model) => model.modelId);
+    return [...new Set([...persistedModels, ...discoveredModels])].sort((left, right) =>
+      left.localeCompare(right)
+    );
+  } catch {
+    return [...new Set(persistedModels)].sort((left, right) => left.localeCompare(right));
+  }
+};
+
+const resolveProviderRateLimitUsage = async (
+  tenantId: string,
+  provider: ProviderName
+): Promise<{ rpmUsed: number; tpmUsed: number }> => {
+  const windowStartMs = Date.now() - 60_000;
+  const events = await usageService.list({ tenantId, provider });
+  return events.reduce(
+    (acc, event) => {
+      const occurredAt = Date.parse(event.createdAt);
+      if (Number.isNaN(occurredAt) || occurredAt < windowStartMs) {
+        return acc;
+      }
+      return {
+        rpmUsed: acc.rpmUsed + 1,
+        tpmUsed: acc.tpmUsed + Math.max(0, event.inputTokens + event.outputTokens)
+      };
+    },
+    { rpmUsed: 0, tpmUsed: 0 }
+  );
 };
 
 export const providersRoutes: FastifyPluginAsync = async (fastify) => {
@@ -111,6 +217,8 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
         ...(request.body?.endpoint !== undefined ? { endpoint: request.body.endpoint } : {}),
         timeoutMs: request.body?.timeoutMs ?? defaultTimeoutMs
       });
+      const requestedEnabled = request.body?.enabled ?? true;
+      const enabled = enabledFromValidation(requestedEnabled, validation.status);
 
       const created = await apiStore.createProviderConfig({
         id: providerConfigId,
@@ -120,7 +228,7 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
         ...(request.body?.endpoint ? { endpoint: request.body.endpoint } : {}),
         authRef: credentials.authRef,
         ...(credentials.secretRef ? { secretRef: credentials.secretRef } : {}),
-        enabled: request.body?.enabled ?? true,
+        enabled,
         timeoutMs: request.body?.timeoutMs ?? defaultTimeoutMs,
         validationStatus: validation.status,
         lastValidatedAt: validation.lastValidatedAt,
@@ -144,7 +252,9 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
         status: "success",
         metadata: {
           after: redactedProviderConfigForAudit(created),
-          validationStatus: created.validationStatus
+          validationStatus: created.validationStatus,
+          requestedEnabled,
+          enabled
         },
         actor
       });
@@ -189,13 +299,15 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
           : {}),
         timeoutMs: request.body?.timeoutMs ?? current.timeoutMs
       });
+      const requestedEnabled = request.body?.enabled ?? current.enabled;
+      const enabled = enabledFromValidation(requestedEnabled, validation.status);
 
       const patch: Partial<ProviderConfig> = {
         ...(provider ? { provider: effectiveProvider, providerId: effectiveProvider } : {}),
         ...(request.body?.endpoint !== undefined ? { endpoint: request.body.endpoint } : {}),
         authRef: credentials.authRef,
         ...(credentials.secretRef ? { secretRef: credentials.secretRef } : {}),
-        ...(request.body?.enabled !== undefined ? { enabled: request.body.enabled } : {}),
+        enabled,
         ...(request.body?.timeoutMs !== undefined ? { timeoutMs: request.body.timeoutMs } : {}),
         ...normalizeRateLimits(request.body ?? {}),
         validationStatus: validation.status,
@@ -223,7 +335,9 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
             before,
             after,
             changedFields: changedFields(before, after),
-            validationStatus: updated.validationStatus
+            validationStatus: updated.validationStatus,
+            requestedEnabled,
+            enabled
           },
           actor
         });
@@ -241,12 +355,187 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  fastify.post<{ Params: { id: string } }>(
+    "/providers/config/:id/test",
+    { schema: { tags: ["providers"], summary: "Test provider configuration credentials and endpoint" } },
+    async (request, reply) => {
+      if (!requireOwnerRole(request, reply)) return;
+
+      const current = (await apiStore.listProviderConfigs()).find((item) => item.id === request.params.id);
+      if (!current) {
+        return reply.code(404).send({
+          error: "not_found",
+          message: "Provider config not found for current tenant."
+        });
+      }
+
+      const provider = current.providerId ?? current.provider;
+      const actor = request.authPrincipal?.userId ?? "system";
+      const validation = await validateProviderConfig({
+        provider,
+        tenantId: request.tenantId,
+        authRef: current.authRef,
+        ...(current.endpoint ? { endpoint: current.endpoint } : {}),
+        timeoutMs: current.timeoutMs
+      });
+
+      const metadata =
+        validation.status === "valid"
+          ? current.metadata
+          : withDefaultsMetadata(current.metadata, { isDefaultProvider: false });
+      const enabled = enabledFromValidation(current.enabled, validation.status);
+      const updated = await apiStore.updateProviderConfig(current.id, {
+        validationStatus: validation.status,
+        lastValidatedAt: validation.lastValidatedAt,
+        validationError: validation.error ?? "",
+        enabled,
+        metadata,
+        updatedAt: new Date().toISOString(),
+        updatedBy: actor
+      });
+      resetNormalizedModelDiscoveryCache(request.tenantId);
+
+      const availableModels = await resolveAvailableModelIds(provider, updated.id);
+      await auditLogService.record({
+        tenantId: request.tenantId,
+        userId: actor,
+        action: "provider.config.test",
+        resourceType: "provider_config",
+        resourceId: updated.id,
+        status: validation.status === "valid" ? "success" : "failure",
+        metadata: {
+          validationStatus: validation.status,
+          availableModelCount: availableModels.length
+        },
+        actor
+      });
+      const usageWindow = await resolveProviderRateLimitUsage(request.tenantId, provider);
+
+      return {
+        status: validation.status === "valid" ? "ok" : "error",
+        latencyMs: validation.latencyMs ?? 0,
+        models: availableModels,
+        ...(validation.error ? { error: validation.error } : {}),
+        rateLimit: {
+          rpm: {
+            used: usageWindow.rpmUsed,
+            limit: updated.requestsPerMinute ?? null
+          },
+          tpm: {
+            used: usageWindow.tpmUsed,
+            limit: updated.tokensPerMinute ?? null
+          }
+        },
+        item: await toProviderConfigResponse(updated),
+        // Compatibility alias for existing clients.
+        availableModels
+      };
+    }
+  );
+
+  fastify.get(
+    "/providers/defaults",
+    { schema: { tags: ["providers"], summary: "Get tenant default provider/model selection" } },
+    async () => {
+      const configs = await apiStore.listProviderConfigs();
+      return { item: resolveProviderDefaults(configs) };
+    }
+  );
+
+  fastify.patch<{ Body: ProviderDefaultsBody }>(
+    "/providers/defaults",
+    { schema: { tags: ["providers"], summary: "Set tenant default provider/model selection" } },
+    async (request, reply) => {
+      if (!requireOwnerRole(request, reply)) return;
+      const actor = request.authPrincipal?.userId ?? "system";
+      const configs = await apiStore.listProviderConfigs();
+      const defaultProviderConfigId = request.body?.defaultProviderConfigId?.trim();
+      const defaultModelId = request.body?.defaultModelId?.trim();
+
+      if (defaultModelId && !defaultProviderConfigId) {
+        return reply.code(400).send({
+          error: "invalid_request",
+          message: "defaultProviderConfigId is required when defaultModelId is set."
+        });
+      }
+
+      if (!defaultProviderConfigId) {
+        for (const config of configs) {
+          if (!isDefaultProviderConfig(config) && !defaultModelIdFromConfig(config)) continue;
+          await apiStore.updateProviderConfig(config.id, {
+            metadata: withDefaultsMetadata(config.metadata, { isDefaultProvider: false }),
+            updatedAt: new Date().toISOString(),
+            updatedBy: actor
+          });
+        }
+        return { item: {} };
+      }
+
+      const selectedConfig = configs.find((config) => config.id === defaultProviderConfigId);
+      if (!selectedConfig) {
+        return reply.code(404).send({
+          error: "not_found",
+          message: "Default provider config not found for current tenant."
+        });
+      }
+
+      if (!selectedConfig.enabled || selectedConfig.validationStatus !== "valid") {
+        return reply.code(400).send({
+          error: "invalid_provider",
+          message: "Default provider must be enabled and valid."
+        });
+      }
+
+      const providerModels = (await apiStore.listProviderModels()).filter(
+        (model) => model.providerConfigId === selectedConfig.id && model.enabled
+      );
+      const nextDefaultModelId =
+        defaultModelId ??
+        defaultModelIdFromConfig(selectedConfig) ??
+        providerModels[0]?.modelId;
+      if (nextDefaultModelId) {
+        const modelExists = providerModels.some((model) => model.modelId === nextDefaultModelId);
+        if (!modelExists) {
+          return reply.code(400).send({
+            error: "invalid_model",
+            message: "defaultModelId must belong to the selected default provider and be enabled."
+          });
+        }
+      }
+
+      for (const config of configs) {
+        const isDefault = config.id === selectedConfig.id;
+        const metadata = withDefaultsMetadata(config.metadata, {
+          isDefaultProvider: isDefault,
+          ...(isDefault && nextDefaultModelId ? { defaultModelId: nextDefaultModelId } : {})
+        });
+        if (JSON.stringify(metadata) === JSON.stringify(toMetadata(config.metadata))) continue;
+        await apiStore.updateProviderConfig(config.id, {
+          metadata,
+          updatedAt: new Date().toISOString(),
+          updatedBy: actor
+        });
+      }
+
+      return {
+        item: {
+          defaultProviderConfigId: selectedConfig.id,
+          defaultProvider: selectedConfig.providerId ?? selectedConfig.provider,
+          ...(nextDefaultModelId ? { defaultModelId: nextDefaultModelId } : {})
+        }
+      };
+    }
+  );
+
   fastify.get("/providers/capabilities", { schema: { tags: ["providers"], summary: "List provider capabilities" } }, async () => ({
     items: await apiStore.listProviderCapabilities()
   }));
 
-  fastify.get("/providers/models", { schema: { tags: ["providers"], summary: "List provider models" } }, async () => {
+  fastify.get<{ Querystring: { includeDisabled?: string } }>("/providers/models", { schema: { tags: ["providers"], summary: "List provider models" } }, async (request) => {
     const [configs, models] = await Promise.all([apiStore.listProviderConfigs(), apiStore.listProviderModels()]);
+    if (parseTruthy(request.query.includeDisabled)) {
+      return { items: models };
+    }
     const enabledIds = new Set(configs.filter((item) => item.enabled).map((item) => item.id));
     const items = enabledIds.size > 0 ? models.filter((model) => enabledIds.has(model.providerConfigId)) : models;
     return { items };

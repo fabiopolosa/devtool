@@ -1,11 +1,11 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { capabilityClasses, type AgentConfig, type CapabilityClass, type Skill } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
 import { useAppStore } from "@/store/app-store";
 
 const defaultRuntimeConfig = {
-  commandPrefix: "paperclipai",
+  commandPrefix: "devtools-agent",
   timeoutMs: 60000,
   maxRetries: 2
 };
@@ -21,13 +21,14 @@ const parseRuntimeConfig = (raw: string): Record<string, unknown> => {
 export function AgentCreatePage() {
   const navigate = useNavigate();
   const { authActions } = useAppStore();
+  const mountedRef = useRef(false);
   const [availableManagers, setAvailableManagers] = useState<AgentConfig[]>([]);
   const [installedSkills, setInstalledSkills] = useState<Skill[]>([]);
   const [name, setName] = useState("");
   const [role, setRole] = useState("codex_builder");
   const [icon, setIcon] = useState("tool");
   const [description, setDescription] = useState("");
-  const [adapterType, setAdapterType] = useState<"paperclip_cli" | "custom_cli" | "mcp_runtime">("paperclip_cli");
+  const [adapterType, setAdapterType] = useState<"legacy_cli" | "custom_cli" | "mcp_runtime">("mcp_runtime");
   const [reportTo, setReportTo] = useState("");
   const [desiredSkills, setDesiredSkills] = useState<string[]>([]);
   const [selectedCapabilities, setSelectedCapabilities] = useState<CapabilityClass[]>(["coding"]);
@@ -36,6 +37,7 @@ export function AgentCreatePage() {
   const [saving, setSaving] = useState(false);
 
   const loadSources = useCallback(async () => {
+    if (!mountedRef.current) return;
     setError(undefined);
     try {
       const [agentsResponse, skillsResponse] = await Promise.all([
@@ -53,15 +55,21 @@ export function AgentCreatePage() {
         throw new Error(skillsBody.message ?? `Unable to load skills (HTTP ${skillsResponse.status})`);
       }
 
+      if (!mountedRef.current) return;
       setAvailableManagers(agentsBody.items ?? []);
       setInstalledSkills(skillsBody.items ?? []);
     } catch (loadError) {
+      if (!mountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load create-agent dependencies");
     }
   }, [authActions]);
 
   useEffect(() => {
+    mountedRef.current = true;
     void loadSources();
+    return () => {
+      mountedRef.current = false;
+    };
   }, [loadSources]);
 
   const toggleDesiredSkill = (skillName: string): void => {
@@ -135,7 +143,7 @@ export function AgentCreatePage() {
       <Panel>
         <SectionHeading
           title="Create Agent"
-          subtitle="Paperclip-style creation workflow"
+          subtitle="Role-based creation workflow"
           action={
             <Button variant="secondary" onClick={() => void navigate({ to: "/settings/agents" })}>
               Back to Agents
@@ -156,12 +164,12 @@ export function AgentCreatePage() {
           <Input value={icon} onChange={setIcon} placeholder="Icon label (e.g. tool, brain, search)" />
           <select
             value={adapterType}
-            onChange={(event) => setAdapterType(event.target.value as "paperclip_cli" | "custom_cli" | "mcp_runtime")}
+            onChange={(event) => setAdapterType(event.target.value as "legacy_cli" | "custom_cli" | "mcp_runtime")}
             className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
           >
-            <option value="paperclip_cli">paperclip_cli</option>
-            <option value="custom_cli">custom_cli</option>
             <option value="mcp_runtime">mcp_runtime</option>
+            <option value="custom_cli">custom_cli</option>
+            <option value="legacy_cli">legacy_cli</option>
           </select>
         </div>
         <div className="mt-2">

@@ -82,7 +82,7 @@ export class AnthropicChatProvider extends BaseProviderAdapter<"chat_reasoning">
   async run(request: Parameters<ChatReasoningProvider["run"]>[0], context: ProviderRequestContext) {
     const endpoint = this.resolveEndpoint("https://api.anthropic.com/v1", "ANTHROPIC_BASE_URL");
     const apiKey = this.requireApiKey();
-    const model = "claude-opus-4.1";
+    const model = request.modelId ?? "claude-opus-4.1";
     const runtime = this.withContext(context);
 
     const response = await this.requestJson<AnthropicMessageResponse>(
@@ -158,7 +158,7 @@ export class AnthropicCodingProvider extends BaseProviderAdapter<"coding"> imple
   async run(request: Parameters<CodingProvider["run"]>[0], context: ProviderRequestContext) {
     const endpoint = this.resolveEndpoint("https://api.anthropic.com/v1", "ANTHROPIC_BASE_URL");
     const apiKey = this.requireApiKey();
-    const model = "claude-sonnet-4.5";
+    const model = request.modelId ?? "claude-sonnet-4.5";
     const runtime = this.withContext(context);
     const requestText = request.codeContext
       ? `${request.prompt}\n\nCode context:\n${request.codeContext}`

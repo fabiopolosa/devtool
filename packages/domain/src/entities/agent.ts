@@ -1,6 +1,6 @@
 import type { CapabilityClass } from "../capabilities.js";
 
-export type AgentRuntimeAdapterType = "paperclip_cli" | "custom_cli" | "mcp_runtime";
+export type AgentRuntimeAdapterType = "legacy_cli" | "custom_cli" | "mcp_runtime";
 export type AgentConfigStatus = "active" | "paused" | "degraded" | "error";
 
 export interface AgentConfig {

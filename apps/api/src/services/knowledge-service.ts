@@ -8,6 +8,7 @@ import {
   updateKnowledgeNodeSchema
 } from "@cp/domain";
 import {
+  PgVectorStoreAdapter,
   KnowledgeService,
   type CompactKnowledgeContextEntry,
   type CompactKnowledgeContextNote,
@@ -15,12 +16,49 @@ import {
   type SearchKnowledgeInput,
   type UpdateKnowledgeNodeInput
 } from "@cp/knowledge";
+import type { EmbeddingProvider, ProviderName } from "@cp/domain";
+import { createDefaultProviderRegistry } from "@cp/providers";
+import { createPostgresClient } from "@cp/db";
 import { apiStore } from "./api-store.js";
 import { resolveEffectiveKnowledgeConfig } from "./knowledge-config-service.js";
 
 const nowIso = (): string => new Date().toISOString();
 
+const resolveEmbeddingProvider = (): EmbeddingProvider | undefined => {
+  const registry = createDefaultProviderRegistry();
+  const preferredProviders: ProviderName[] = ["openai", "gemini"];
+  for (const providerName of preferredProviders) {
+    const provider = registry.get(providerName, "embedding");
+    if (provider) {
+      return provider as EmbeddingProvider;
+    }
+  }
+  return undefined;
+};
+
+const embeddingProvider = resolveEmbeddingProvider();
+const semanticStore =
+  process.env.API_STORE_MODE === "in_memory"
+    ? undefined
+    : (() => {
+        try {
+          const client = createPostgresClient();
+          return new PgVectorStoreAdapter({
+            executor: client.pool,
+            logger: {
+              warn: (message, metadata) => {
+                console.warn("[knowledge/pgvector]", message, metadata ?? {});
+              }
+            }
+          });
+        } catch {
+          return undefined;
+        }
+      })();
+
 const knowledgeService = new KnowledgeService({
+  ...(embeddingProvider ? { embeddingProvider } : {}),
+  ...(semanticStore ? { semanticStore } : {}),
   store: {
     listKnowledgeNodes: async (filters) =>
       typeof apiStore.listKnowledgeNodes === "function" ? apiStore.listKnowledgeNodes(filters) : [],

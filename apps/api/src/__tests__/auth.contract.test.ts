@@ -7,6 +7,7 @@ describe("Auth + RBAC slice", () => {
     process.env.API_STORE_MODE = "in_memory";
     process.env.AUTH_ENABLED = "1";
     process.env.AUTH_SESSION_TTL_HOURS = "24";
+    process.env.DEVTOOLS_API_KEY = "test-api-key";
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
@@ -18,6 +19,7 @@ describe("Auth + RBAC slice", () => {
     }
     delete process.env.AUTH_ENABLED;
     delete process.env.AUTH_SESSION_TTL_HOURS;
+    delete process.env.DEVTOOLS_API_KEY;
   });
 
   it("authenticates valid credentials and returns a session token", async () => {
@@ -117,5 +119,18 @@ describe("Auth + RBAC slice", () => {
     });
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: "not_found" });
+  });
+
+  it("authenticates using configured x-api-key header", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/auth/users",
+      headers: {
+        "x-api-key": "test-api-key"
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { items?: Array<{ email?: string }> };
+    expect(Array.isArray(body.items)).toBe(true);
   });
 });

@@ -4,6 +4,11 @@ import type { AgentConfig } from "@cp/domain";
 import { agentConfigSchema } from "@cp/domain";
 import type { AgentCreateInput, AgentRuntimeInvocationOptions } from "@cp/agents";
 import { agentsService, listWorkflowRuntimeDefinitions } from "../services/agents-service.js";
+import {
+  dispatchAndAwaitRunnerJob,
+  getRunnerJobOutput
+} from "../services/job-dispatch-service.js";
+import { requireTenantPermission } from "../tenant/rbac.js";
 
 const createAgentBodySchema = agentConfigSchema
   .omit({
@@ -72,6 +77,71 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
     },
     async () => ({ items: listWorkflowRuntimeDefinitions() })
+  );
+
+  fastify.post<{
+    Params: { workflowId: string };
+    Body?: {
+      taskId: string;
+      actor?: string;
+      budget?: {
+        maxRetries?: number;
+        maxInputTokens?: number;
+        maxOutputTokens?: number;
+        maxCostUsd?: number;
+      };
+      autoApprove?: boolean;
+    };
+  }>(
+    "/agents/runtime/workflows/:workflowId/run",
+    {
+      schema: {
+        tags: ["agents"],
+        summary: "Execute a Ruflo workflow via runner"
+      }
+    },
+    async (request, reply) => {
+      if (!requireTenantPermission(request, reply, "canRunAgent")) return;
+      const taskId = request.body?.taskId?.trim();
+      if (!taskId) {
+        return reply.code(400).send({
+          error: "invalid_request",
+          message: "taskId is required"
+        });
+      }
+
+      const actor = request.body?.actor ?? request.authPrincipal?.userId ?? "ruflo_runtime";
+      try {
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            type: "system",
+            title: `Ruflo workflow ${request.params.workflowId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "ruflo.execute_workflow",
+              workflowId: request.params.workflowId,
+              taskId,
+              actor,
+              ...(request.body?.budget ? { budget: request.body.budget } : {}),
+              ...(typeof request.body?.autoApprove === "boolean"
+                ? { autoApprove: request.body.autoApprove }
+                : {})
+            },
+            resourceType: "task",
+            resourceId: taskId
+          },
+          { timeoutMs: 180_000 }
+        );
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        return { item: output?.result ?? null };
+      } catch (error) {
+        return reply.code(400).send({
+          error: "workflow_run_failed",
+          message: error instanceof Error ? error.message : "Unable to execute workflow"
+        });
+      }
+    }
   );
 
   fastify.get(
@@ -155,6 +225,7 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
     "/agents/:agentId/heartbeat",
     { schema: { tags: ["agents"], summary: "Schedule heartbeat run for an agent" } },
     async (request, reply) => {
+      if (!requireTenantPermission(request, reply, "canRunAgent")) return;
       const parse = operationBodySchema.safeParse(request.body);
       if (!parse.success) {
         return reply.code(400).send({
@@ -164,11 +235,28 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        const item = await agentsService.runHeartbeat(
-          request.params.agentId,
-          toOperationOptions(parse.data)
+        const actor = request.authPrincipal?.userId ?? "agent_runtime";
+        const options = toOperationOptions(parse.data);
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            type: "system",
+            title: `Agent heartbeat ${request.params.agentId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "agent.runtime.heartbeat",
+              agentId: request.params.agentId,
+              ...(options?.reason ? { reason: options.reason } : {}),
+              ...(typeof options?.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
+              ...(options?.metadata ? { metadata: options.metadata } : {})
+            },
+            resourceType: "agent",
+            resourceId: request.params.agentId
+          },
+          { timeoutMs: 90_000 }
         );
-        return { item };
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        return { item: output?.result ?? null };
       } catch (error) {
         return reply.code(404).send({
           error: "not_found",
@@ -182,6 +270,7 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
     "/agents/:agentId/diagnose",
     { schema: { tags: ["agents"], summary: "Schedule diagnostic run for an agent" } },
     async (request, reply) => {
+      if (!requireTenantPermission(request, reply, "canRunAgent")) return;
       const parse = operationBodySchema.safeParse(request.body);
       if (!parse.success) {
         return reply.code(400).send({
@@ -191,11 +280,28 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        const item = await agentsService.diagnoseAgent(
-          request.params.agentId,
-          toOperationOptions(parse.data)
+        const actor = request.authPrincipal?.userId ?? "agent_runtime";
+        const options = toOperationOptions(parse.data);
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            type: "system",
+            title: `Agent diagnose ${request.params.agentId}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "agent.runtime.diagnose",
+              agentId: request.params.agentId,
+              ...(options?.reason ? { reason: options.reason } : {}),
+              ...(typeof options?.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
+              ...(options?.metadata ? { metadata: options.metadata } : {})
+            },
+            resourceType: "agent",
+            resourceId: request.params.agentId
+          },
+          { timeoutMs: 90_000 }
         );
-        return { item };
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        return { item: output?.result ?? null };
       } catch (error) {
         return reply.code(404).send({
           error: "not_found",

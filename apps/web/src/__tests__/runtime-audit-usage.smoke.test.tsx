@@ -41,7 +41,7 @@ describe("Runtime telemetry tabs smoke", () => {
                 role: "verifier",
                 icon: "⚙",
                 description: "Runtime agent",
-                adapterType: "paperclip_cli",
+                adapterType: "legacy_cli",
                 desiredSkills: [],
                 runtimeConfig: {},
                 capabilities: ["chat_reasoning"],

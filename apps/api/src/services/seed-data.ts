@@ -25,6 +25,7 @@ import {
   type Project,
   type ProjectProviderBinding,
   type ProjectRoleBinding,
+  type PromptRegistryEntry,
   type SchemaDoc,
   type SecretConfig,
   type ProviderCapability,
@@ -416,6 +417,66 @@ const providerDiscoveryLog: ProviderDiscoveryLog = {
   searchFinishedAt: now,
   notes: "Seeded fallback snapshot before first live discovery run.",
   rawResults: { seeded: true },
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const codexBuilderPrompt: PromptRegistryEntry = {
+  id: "prompt_role_codex_builder_v1",
+  type: "role",
+  scope: "system",
+  target: "codex_builder",
+  version: "v1",
+  content:
+    "Implement requested changes with strict scope discipline, deterministic verification steps, and concise output.",
+  status: "active",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const plannerPrompt: PromptRegistryEntry = {
+  id: "prompt_role_planner_v1",
+  type: "role",
+  scope: "system",
+  target: "planner",
+  version: "v1",
+  content:
+    "Produce structured plans with explicit tasks, risks, and acceptance criteria. Keep execution-ready detail.",
+  status: "active",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const claudeDebuggerPrompt: PromptRegistryEntry = {
+  id: "prompt_role_claude_debugger_v1",
+  type: "role",
+  scope: "system",
+  target: "claude_debugger",
+  version: "v1",
+  content:
+    "Diagnose failures with evidence-first reasoning, propose minimal safe fixes, and include regression checks.",
+  status: "active",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const geminiResearcherPrompt: PromptRegistryEntry = {
+  id: "prompt_role_gemini_researcher_v1",
+  type: "role",
+  scope: "system",
+  target: "gemini_researcher",
+  version: "v1",
+  content:
+    "Run structured multi-step research, preserve source provenance, and return concise evidence-backed conclusions.",
+  status: "active",
   createdAt: now,
   createdBy: "system",
   updatedAt: now,
@@ -1051,21 +1112,72 @@ const tenantKnowledgeConfig: KnowledgeConfig = {
   updatedBy: "system"
 };
 
-const builderAgent: AgentConfig = {
+const plannerAgent: AgentConfig = {
   id: "agent_001",
-  name: "codex-builder-primary",
+  name: "planner",
+  role: "planner",
+  icon: "plan",
+  description: "Default planning agent for scoped roadmap and task decomposition.",
+  adapterType: "mcp_runtime",
+  desiredSkills: [],
+  runtimeConfig: {
+    promptSource: "registry"
+  },
+  capabilities: ["chat_reasoning"],
+  createdAt: now,
+  updatedAt: now,
+  status: "active"
+};
+
+const coderAgent: AgentConfig = {
+  id: "agent_002",
+  name: "coder",
   role: "codex_builder",
-  icon: "🛠️",
-  description: "Primary implementation agent with deterministic verification discipline.",
-  adapterType: "paperclip_cli",
+  icon: "code",
+  description: "Default coding agent for implementation and patch generation.",
+  adapterType: "mcp_runtime",
   desiredSkills: ["checks"],
   reportTo: "planner",
   runtimeConfig: {
-    commandPrefix: "paperclipai",
-    maxRetries: 2,
-    heartbeatTimeoutMs: 30000
+    promptSource: "registry"
   },
   capabilities: ["coding"],
+  createdAt: now,
+  updatedAt: now,
+  status: "active"
+};
+
+const reviewerAgent: AgentConfig = {
+  id: "agent_003",
+  name: "reviewer",
+  role: "claude_debugger",
+  icon: "review",
+  description: "Default review agent for diagnostics and regression checks.",
+  adapterType: "mcp_runtime",
+  desiredSkills: [],
+  reportTo: "planner",
+  runtimeConfig: {
+    promptSource: "registry"
+  },
+  capabilities: ["chat_reasoning", "coding"],
+  createdAt: now,
+  updatedAt: now,
+  status: "active"
+};
+
+const researcherAgent: AgentConfig = {
+  id: "agent_004",
+  name: "researcher",
+  role: "gemini_researcher",
+  icon: "research",
+  description: "Default research agent for source gathering and synthesis.",
+  adapterType: "mcp_runtime",
+  desiredSkills: [],
+  reportTo: "planner",
+  runtimeConfig: {
+    promptSource: "registry"
+  },
+  capabilities: ["chat_reasoning"],
   createdAt: now,
   updatedAt: now,
   status: "active"
@@ -1102,7 +1214,7 @@ export const seedData: ApiSeedData = {
   machines: [machine],
   localRepositories: [localRepository],
   versionSnapshots: [versionSnapshot],
-  agents: [builderAgent],
+  agents: [plannerAgent, coderAgent, reviewerAgent, researcherAgent],
   projects: [project],
   repositories: [repository],
   roadmap: [roadmapItem],
@@ -1128,6 +1240,7 @@ export const seedData: ApiSeedData = {
   providerBindings: [providerBinding],
   providerHealthchecks: [providerHealthcheck],
   providerDiscoveryLogs: [providerDiscoveryLog],
+  promptRegistry: [codexBuilderPrompt, plannerPrompt, claudeDebuggerPrompt, geminiResearcherPrompt],
   experiments: [experiment],
   experimentRuns: [experimentRun],
   tenants: [defaultTenant],

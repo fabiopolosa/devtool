@@ -20,6 +20,8 @@ export interface BuildPromptInput {
 export interface PromptBuilderServiceOptions {
   rolesDir?: string;
   roleFallbackInstructions?: string;
+  disableRoleFileFallback?: boolean;
+  requireRegistryPrompt?: boolean;
   resolveRoleInstructions?: (
     role: string,
     context?: BuildPromptInput["registryContext"]
@@ -62,12 +64,16 @@ const roleCandidates = (role: string): string[] => {
 export class PromptBuilderService {
   private readonly rolesDir: string;
   private readonly roleFallbackInstructions: string;
+  private readonly disableRoleFileFallback: boolean;
+  private readonly requireRegistryPrompt: boolean;
   private readonly resolveRoleInstructions?: PromptBuilderServiceOptions["resolveRoleInstructions"];
   private readonly fallbackWarnings = new Set<string>();
 
   constructor(options: PromptBuilderServiceOptions = {}) {
     this.rolesDir = options.rolesDir ?? resolveDefaultRolesDir();
     this.roleFallbackInstructions = options.roleFallbackInstructions ?? defaultRoleFallbackInstructions;
+    this.disableRoleFileFallback = options.disableRoleFileFallback ?? false;
+    this.requireRegistryPrompt = options.requireRegistryPrompt ?? false;
     this.resolveRoleInstructions = options.resolveRoleInstructions;
   }
 
@@ -128,7 +134,17 @@ export class PromptBuilderService {
       if (typeof resolved === "string" && resolved.trim().length > 0) {
         return resolved.trim();
       }
+      if (this.requireRegistryPrompt) {
+        throw new Error(`Prompt registry entry not found for role "${role}"`);
+      }
       this.warnRegistryFallback(role, context, "active registry prompt not found");
+    } else if (this.requireRegistryPrompt) {
+      throw new Error(`Prompt registry resolver is required for role "${role}"`);
+    }
+
+    if (this.disableRoleFileFallback) {
+      this.warnRegistryFallback(role, context, "role file fallback disabled; using default fallback instructions");
+      return this.roleFallbackInstructions;
     }
 
     for (const candidate of roleCandidates(role)) {

@@ -153,7 +153,7 @@ describe("retrieval service", () => {
         role: "claude_debugger",
         runtimeConfig: {
           timeoutMs: 45000,
-          commandPrefix: "paperclipai"
+          commandPrefix: "devtools-agent"
         },
         skillInstructions: [
           {

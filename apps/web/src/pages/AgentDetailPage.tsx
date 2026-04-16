@@ -37,7 +37,7 @@ export function AgentDetailPage() {
   const [role, setRole] = useState("");
   const [icon, setIcon] = useState("");
   const [description, setDescription] = useState("");
-  const [adapterType, setAdapterType] = useState<"paperclip_cli" | "custom_cli" | "mcp_runtime">("paperclip_cli");
+  const [adapterType, setAdapterType] = useState<"legacy_cli" | "custom_cli" | "mcp_runtime">("mcp_runtime");
   const [reportTo, setReportTo] = useState("");
   const [status, setStatus] = useState<"active" | "paused" | "degraded" | "error">("active");
   const [desiredSkills, setDesiredSkills] = useState<string[]>([]);
@@ -247,12 +247,12 @@ export function AgentDetailPage() {
           <Input value={icon} onChange={setIcon} placeholder="Icon label" />
           <select
             value={adapterType}
-            onChange={(event) => setAdapterType(event.target.value as "paperclip_cli" | "custom_cli" | "mcp_runtime")}
+            onChange={(event) => setAdapterType(event.target.value as "legacy_cli" | "custom_cli" | "mcp_runtime")}
             className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
           >
-            <option value="paperclip_cli">paperclip_cli</option>
-            <option value="custom_cli">custom_cli</option>
             <option value="mcp_runtime">mcp_runtime</option>
+            <option value="custom_cli">custom_cli</option>
+            <option value="legacy_cli">legacy_cli</option>
           </select>
           <select
             value={status}

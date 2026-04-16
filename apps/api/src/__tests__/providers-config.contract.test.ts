@@ -161,6 +161,143 @@ describe("Provider config API contract", () => {
     expect(body.item.apiKeyMasked).toBe("sk-****");
   });
 
+  it("supports setting tenant default provider/model selection", async () => {
+    const token = await login("admin@control-plane.local", "admin123!");
+    const configsResponse = await app.inject({
+      method: "GET",
+      url: "/providers/config",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-tenant-id": "tenant_default"
+      }
+    });
+    expect(configsResponse.statusCode).toBe(200);
+    const configsBody = configsResponse.json() as {
+      items: Array<{ id: string; providerId?: string; enabled: boolean; validationStatus?: string }>;
+    };
+    let candidate = configsBody.items.find(
+      (item) => item.enabled && (item.validationStatus ?? "unknown") === "valid"
+    );
+    if (!candidate) {
+      const created = await app.inject({
+        method: "POST",
+        url: "/providers/config",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-tenant-id": "tenant_default"
+        },
+        payload: {
+          providerId: "openrouter",
+          apiKey: "env://OPENROUTER_API_KEY",
+          enabled: true
+        }
+      });
+      expect(created.statusCode).toBe(200);
+      const createdBody = created.json() as {
+        item: { id: string; providerId?: string; enabled: boolean; validationStatus?: string };
+      };
+      candidate = createdBody.item;
+    }
+
+    const modelsResponse = await app.inject({
+      method: "GET",
+      url: "/providers/models?includeDisabled=1",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-tenant-id": "tenant_default"
+      }
+    });
+    expect(modelsResponse.statusCode).toBe(200);
+    const modelsBody = modelsResponse.json() as {
+      items: Array<{ providerConfigId: string; modelId: string; enabled: boolean }>;
+    };
+    const modelForCandidate = modelsBody.items.find(
+      (item) => item.providerConfigId === candidate.id && item.enabled
+    );
+
+    const setDefaults = await app.inject({
+      method: "PATCH",
+      url: "/providers/defaults",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-tenant-id": "tenant_default"
+      },
+      payload: {
+        defaultProviderConfigId: candidate.id,
+        ...(modelForCandidate ? { defaultModelId: modelForCandidate.modelId } : {})
+      }
+    });
+    expect(setDefaults.statusCode).toBe(200);
+    const setBody = setDefaults.json() as {
+      item: { defaultProviderConfigId?: string; defaultModelId?: string };
+    };
+    expect(setBody.item.defaultProviderConfigId).toBe(candidate.id);
+    if (modelForCandidate) {
+      expect(setBody.item.defaultModelId).toBe(modelForCandidate.modelId);
+    }
+
+    const fetched = await app.inject({
+      method: "GET",
+      url: "/providers/defaults",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-tenant-id": "tenant_default"
+      }
+    });
+    expect(fetched.statusCode).toBe(200);
+    const fetchedBody = fetched.json() as {
+      item: { defaultProviderConfigId?: string; defaultModelId?: string };
+    };
+    expect(fetchedBody.item.defaultProviderConfigId).toBe(candidate.id);
+  });
+
+  it("tests provider config connectivity and returns model candidates", async () => {
+    const token = await login("admin@control-plane.local", "admin123!");
+    const configsResponse = await app.inject({
+      method: "GET",
+      url: "/providers/config",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-tenant-id": "tenant_default"
+      }
+    });
+    expect(configsResponse.statusCode).toBe(200);
+    const configsBody = configsResponse.json() as { items: Array<{ id: string }> };
+    const firstConfig = configsBody.items[0];
+    expect(firstConfig).toBeDefined();
+    if (!firstConfig) return;
+
+    const testResponse = await app.inject({
+      method: "POST",
+      url: `/providers/config/${firstConfig.id}/test`,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-tenant-id": "tenant_default"
+      }
+    });
+    expect(testResponse.statusCode).toBe(200);
+    const body = testResponse.json() as {
+      status: "ok" | "error";
+      latencyMs: number;
+      models: string[];
+      error?: string;
+      rateLimit?: {
+        rpm?: { used?: number; limit?: number | null };
+        tpm?: { used?: number; limit?: number | null };
+      };
+      item: { id: string; validationStatus?: string };
+      availableModels?: string[];
+    };
+    expect(body.item.id).toBe(firstConfig.id);
+    expect(body.status === "ok" || body.status === "error").toBe(true);
+    expect(typeof body.latencyMs).toBe("number");
+    expect(Array.isArray(body.models)).toBe(true);
+    expect(Array.isArray(body.availableModels)).toBe(true);
+    expect(body.models).toEqual(body.availableModels);
+    expect(typeof body.rateLimit?.rpm?.used).toBe("number");
+    expect(typeof body.rateLimit?.tpm?.used).toBe("number");
+  });
+
   it("rejects writes when user is not a member of requested tenant", async () => {
     const token = await login("admin@control-plane.local", "admin123!");
     const response = await app.inject({

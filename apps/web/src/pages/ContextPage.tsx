@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { ContextNote } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
 import { useAppStore } from "@/store/app-store";
+import { usePathParam } from "./_utils";
 
 type ContextDraft = {
   path: string;
@@ -17,6 +18,53 @@ const splitList = (value: string): string[] =>
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+
+const parseWikiLinks = (value: string): string[] => {
+  const links: string[] = [];
+  const regex = /\[\[([^\]]+)\]\]/g;
+  for (let match = regex.exec(value); match; match = regex.exec(value)) {
+    const token = (match[1] ?? "").trim();
+    if (token.length > 0) {
+      links.push(token);
+    }
+  }
+  return [...new Set(links)];
+};
+
+const slugifyTitle = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const noteReferenceKeys = (item: ContextNote): Set<string> => {
+  const keys = new Set<string>();
+  keys.add(item.path.trim().toLowerCase());
+  keys.add(item.title.trim().toLowerCase());
+  const basename = item.path.split("/").filter(Boolean).pop()?.replace(/\.md$/i, "");
+  if (basename) {
+    keys.add(basename.toLowerCase());
+  }
+  return keys;
+};
+
+const resolveWikiLinkTarget = (
+  token: string,
+  notes: ContextNote[],
+  projectId: string
+): ContextNote | undefined => {
+  const normalized = token.trim().toLowerCase();
+  if (!normalized) return undefined;
+  const explicitPath = normalized.startsWith("/")
+    ? normalized
+    : `/projects/${projectId}/context/${slugifyTitle(token)}.md`;
+
+  return notes.find((item) => {
+    const keys = noteReferenceKeys(item);
+    return keys.has(normalized) || keys.has(explicitPath);
+  });
+};
 
 const defaultDraft = (projectId?: string): ContextDraft => ({
   path: projectId ? `/projects/${projectId}/context/new-note.md` : "/projects/project/context/new-note.md",
@@ -91,13 +139,8 @@ const renderMarkdown = (content: string) => {
 
 export function ContextPage({ projectId: projectIdOverride }: { projectId?: string }) {
   const { state, authActions } = useAppStore();
-  const routeProjectId = (() => {
-    if (typeof window === "undefined") return undefined;
-    const parts = window.location.pathname.split("/").filter(Boolean);
-    if (parts[0] === "project" && parts[1]) return parts[1];
-    return undefined;
-  })();
-  const projectId = projectIdOverride ?? routeProjectId ?? state.projects[0]?.id ?? "proj-control-plane";
+  const routeProjectId = usePathParam(2);
+  const projectId = projectIdOverride ?? routeProjectId ?? state.projects[0]?.id;
   const mountedRef = useRef(false);
   const [items, setItems] = useState<ContextNote[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
@@ -113,6 +156,30 @@ export function ContextPage({ projectId: projectIdOverride }: { projectId?: stri
     () => items.find((item) => item.id === selectedId),
     [items, selectedId]
   );
+  const wikiLinks = useMemo(() => parseWikiLinks(draft.content), [draft.content]);
+  const wikiLinkTargets = useMemo(
+    () =>
+      wikiLinks.map((token) => ({
+        token,
+        target: resolveWikiLinkTarget(token, items, projectId ?? "project")
+      })),
+    [wikiLinks, items, projectId]
+  );
+  const backlinks = useMemo(() => {
+    if (!selectedItem) return [];
+    const selectedKeys = noteReferenceKeys(selectedItem);
+    return items.filter((item) => {
+      if (item.id === selectedItem.id) return false;
+      const refs = [...item.linkRefs, ...parseWikiLinks(item.content)];
+      return refs.some((ref) => {
+        const normalized = ref.trim().toLowerCase();
+        if (!normalized) return false;
+        if (selectedKeys.has(normalized)) return true;
+        const resolved = resolveWikiLinkTarget(ref, items, projectId ?? "project");
+        return resolved?.id === selectedItem.id;
+      });
+    });
+  }, [items, projectId, selectedItem]);
 
   const hydrateDraft = useCallback((item: ContextNote | undefined) => {
     if (!item) return;
@@ -129,7 +196,7 @@ export function ContextPage({ projectId: projectIdOverride }: { projectId?: stri
 
   const resetDraft = useCallback(() => {
     setSelectedId(undefined);
-    setDraft(defaultDraft(projectId));
+    setDraft(defaultDraft(projectId ?? "project"));
     setReaderMode(false);
   }, [projectId]);
 
@@ -145,6 +212,7 @@ export function ContextPage({ projectId: projectIdOverride }: { projectId?: stri
   }, [projectId, resetDraft]);
 
   const loadContextNotes = useCallback(async () => {
+    if (!projectId) return;
     if (!mountedRef.current) return;
     setLoading(true);
     setError(undefined);
@@ -189,6 +257,7 @@ export function ContextPage({ projectId: projectIdOverride }: { projectId?: stri
   }, [loadContextNotes]);
 
   const saveContextNote = async (): Promise<void> => {
+    if (!projectId) return;
     if (!mountedRef.current) return;
     if (!draft.path.trim() || !draft.title.trim() || !draft.content.trim()) {
       setError("Path, title and content are required.");
@@ -204,7 +273,7 @@ export function ContextPage({ projectId: projectIdOverride }: { projectId?: stri
         title: draft.title,
         content: draft.content,
         tags: splitList(draft.tags),
-        linkRefs: splitList(draft.linkRefs),
+        linkRefs: [...new Set([...splitList(draft.linkRefs), ...parseWikiLinks(draft.content)])],
         pinned: draft.pinned
       };
       if (selectedItem) {
@@ -245,6 +314,7 @@ export function ContextPage({ projectId: projectIdOverride }: { projectId?: stri
   };
 
   const deleteContextNote = async (): Promise<void> => {
+    if (!projectId) return;
     if (!selectedItem) return;
     if (!mountedRef.current) return;
     setSaving(true);
@@ -270,6 +340,20 @@ export function ContextPage({ projectId: projectIdOverride }: { projectId?: stri
       }
     }
   };
+
+  if (!projectId) {
+    return (
+      <Panel>
+        <SectionHeading
+          title="Context"
+          subtitle="Obsidian-like project memory workspace"
+        />
+        <p className="text-sm text-[color:var(--muted)]">
+          Select or create a project first to open its context notes.
+        </p>
+      </Panel>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -427,6 +511,34 @@ export function ContextPage({ projectId: projectIdOverride }: { projectId?: stri
                 {renderMarkdown(draft.content)}
               </div>
               <div className="space-y-1 text-xs text-[color:var(--muted)]">
+                <div>Wiki links</div>
+                <div className="flex flex-wrap gap-1">
+                  {wikiLinkTargets.length > 0 ? (
+                    wikiLinkTargets.map(({ token, target }) =>
+                      target ? (
+                        <button
+                          key={`wikilink:${token}`}
+                          type="button"
+                          className="pill pill-default underline decoration-dotted"
+                          onClick={() => {
+                            setSelectedId(target.id);
+                            hydrateDraft(target);
+                          }}
+                        >
+                          [[{token}]]
+                        </button>
+                      ) : (
+                        <span key={`wikilink:${token}`} className="pill pill-default opacity-70">
+                          [[{token}]]
+                        </span>
+                      )
+                    )
+                  ) : (
+                    <span>No wiki links.</span>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1 text-xs text-[color:var(--muted)]">
                 <div>Link refs</div>
                 <div className="flex flex-wrap gap-1">
                   {splitList(draft.linkRefs).length > 0 ? (
@@ -437,6 +549,28 @@ export function ContextPage({ projectId: projectIdOverride }: { projectId?: stri
                     ))
                   ) : (
                     <span>No links yet.</span>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1 text-xs text-[color:var(--muted)]">
+                <div>Backlinks</div>
+                <div className="flex flex-wrap gap-1">
+                  {backlinks.length > 0 ? (
+                    backlinks.map((item) => (
+                      <button
+                        key={`backlink:${item.id}`}
+                        type="button"
+                        className="pill pill-default underline decoration-dotted"
+                        onClick={() => {
+                          setSelectedId(item.id);
+                          hydrateDraft(item);
+                        }}
+                      >
+                        {item.title}
+                      </button>
+                    ))
+                  ) : (
+                    <span>No backlinks.</span>
                   )}
                 </div>
               </div>

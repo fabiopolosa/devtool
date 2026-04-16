@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { timingSafeEqual } from "node:crypto";
 import {
   AuthService,
   createOidcClientFromEnv,
@@ -39,6 +40,7 @@ export interface ApiAuthRuntime {
   oidcRedirectUri?: string;
   service: AuthService;
   bypassPrincipal: SessionPrincipal;
+  apiKeys: string[];
 }
 
 const boolFlag = (value: string | undefined, defaultValue: boolean): boolean => {
@@ -51,6 +53,35 @@ const numberFlag = (value: string | undefined, defaultValue: number): number => 
   if (!value) return defaultValue;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
+};
+
+const normalizeApiKeys = (...values: Array<string | undefined>): string[] => {
+  const entries = values
+    .flatMap((value) =>
+      (value ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+    );
+  return [...new Set(entries)];
+};
+
+const parseSingleHeader = (value: string | string[] | undefined): string | null => {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+  if (Array.isArray(value) && value.length > 0) {
+    return parseSingleHeader(value[0]);
+  }
+  return null;
+};
+
+const apiKeyEquals = (left: string, right: string): boolean => {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 };
 
 class ApiStoreAuthAdapter implements AuthStore {
@@ -239,7 +270,8 @@ export const createAuthRuntime = async (): Promise<ApiAuthRuntime> => {
       roleNames: ["admin"],
       permissions: ["*"],
       authBypass: true
-    }
+    },
+    apiKeys: normalizeApiKeys(process.env.DEVTOOLS_API_KEY, process.env.DEVTOOLS_API_KEYS)
   };
 };
 
@@ -260,16 +292,26 @@ export const resolveRequestPrincipal = async (
   }
 
   const token = parseBearer(request.headers.authorization);
-  if (!token) {
-    return undefined;
+  if (token) {
+    const principal = await runtime.service.resolvePrincipalFromToken(token);
+    if (principal) {
+      return principal;
+    }
   }
 
-  const principal = await runtime.service.resolvePrincipalFromToken(token);
-  if (!principal) {
+  const apiKey = parseSingleHeader(request.headers["x-api-key"]);
+  if (!apiKey) return undefined;
+  if (!runtime.apiKeys.some((candidate) => apiKeyEquals(candidate, apiKey))) {
     return undefined;
   }
-
-  return principal;
+  return {
+    ...runtime.bypassPrincipal,
+    userId: "api_key",
+    email: "api-key@local",
+    displayName: "API Key",
+    roleNames: runtime.bypassPrincipal.roleNames,
+    authBypass: true
+  };
 };
 
 export const requireAuthenticated = (request: FastifyRequest, reply: FastifyReply): SessionPrincipal | null => {

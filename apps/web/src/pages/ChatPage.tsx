@@ -54,7 +54,7 @@ export function ChatPage() {
 
       <PlannerOutputCard
         title="Chat to roadmap"
-        summary="When a chat request contains execution intent, the UI mock proposes a roadmap item and opens an approval gate."
+        summary="When a chat request contains execution intent, it can propose roadmap items and open approval gates."
       />
     </div>
   );

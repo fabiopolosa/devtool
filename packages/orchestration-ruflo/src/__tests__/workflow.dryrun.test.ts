@@ -167,7 +167,7 @@ describe("Ruflo workflow dry-run", () => {
           name: "builder-primary",
           role: "codex_builder",
           status: "active",
-          runtimeConfig: { commandPrefix: "paperclipai" },
+          runtimeConfig: { commandPrefix: "devtools-agent" },
           desiredSkills: ["checks"]
         }
       ]

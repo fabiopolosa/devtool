@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { providerNames, type ProviderConfig } from "@cp/domain";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { providerNames, type ProviderConfig, type ProviderModel } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
 import { getOwnerMode, onOwnerModeChange } from "@/owner-mode";
 import { useAppStore } from "@/store/app-store";
@@ -17,6 +17,19 @@ type RowDraft = {
   tpm: string;
 };
 
+type ProviderDefaults = {
+  defaultProviderConfigId?: string;
+  defaultProvider?: string;
+  defaultModelId?: string;
+};
+
+type ProviderRateLimitSnapshot = {
+  rpmUsed: number;
+  rpmLimit: number | null;
+  tpmUsed: number;
+  tpmLimit: number | null;
+};
+
 const emptyDraft: RowDraft = {
   endpoint: "",
   authRef: "",
@@ -29,6 +42,7 @@ const providerNameOptions = [...providerNames];
 
 export function SettingsProvidersPage() {
   const { auth, authActions } = useAppStore();
+  const mountedRef = useRef(true);
   const [ownerMode, setOwnerMode] = useState<boolean>(() => getOwnerMode());
   const [items, setItems] = useState<ProviderConfig[]>([]);
   const [tenants, setTenants] = useState<TenantItem[]>([]);
@@ -39,14 +53,28 @@ export function SettingsProvidersPage() {
   const [createEndpoint, setCreateEndpoint] = useState<string>("");
   const [createRpm, setCreateRpm] = useState<string>("");
   const [createTpm, setCreateTpm] = useState<string>("");
+  const [providerModelsByConfig, setProviderModelsByConfig] = useState<Record<string, string[]>>({});
+  const [providerRateLimitsByConfig, setProviderRateLimitsByConfig] = useState<Record<string, ProviderRateLimitSnapshot>>({});
+  const [defaultProviderConfigId, setDefaultProviderConfigId] = useState<string>("");
+  const [defaultModelId, setDefaultModelId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [testingConfigId, setTestingConfigId] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
 
-  const canManage = !auth.enabled || Boolean(auth.principal?.roles.includes("admin"));
+  const canManage =
+    !auth.enabled ||
+    Boolean(auth.principal?.roles.includes("owner") || auth.principal?.roles.includes("admin"));
 
-  useEffect(() => onOwnerModeChange(setOwnerMode), []);
+  useEffect(() => {
+    mountedRef.current = true;
+    const off = onOwnerModeChange(setOwnerMode);
+    return () => {
+      mountedRef.current = false;
+      off();
+    };
+  }, []);
 
   const hydrateDrafts = useCallback((configs: ProviderConfig[]) => {
     setDrafts(
@@ -71,37 +99,126 @@ export function SettingsProvidersPage() {
     );
   }, []);
 
+  const hydrateModelOptions = useCallback((items: ProviderModel[]) => {
+    const grouped = items.reduce<Record<string, Set<string>>>((acc, item) => {
+      if (!acc[item.providerConfigId]) {
+        acc[item.providerConfigId] = new Set<string>();
+      }
+      acc[item.providerConfigId]?.add(item.modelId);
+      return acc;
+    }, {});
+    setProviderModelsByConfig(
+      Object.fromEntries(
+        Object.entries(grouped).map(([providerConfigId, modelIds]) => [
+          providerConfigId,
+          [...modelIds].sort((left, right) => left.localeCompare(right))
+        ])
+      )
+    );
+  }, []);
+
+  const hydrateRateLimits = useCallback(
+    (
+      configs: ProviderConfig[],
+      usageItems: Array<{ provider: string; inputTokens: number; outputTokens: number; createdAt: string }>
+    ) => {
+      const cutoff = Date.now() - 60_000;
+      const usageByProvider = usageItems.reduce<Record<string, { rpm: number; tpm: number }>>((acc, item) => {
+        const occurredAt = Date.parse(item.createdAt);
+        if (Number.isNaN(occurredAt) || occurredAt < cutoff) return acc;
+        const providerKey = item.provider.trim().toLowerCase();
+        const current = acc[providerKey] ?? { rpm: 0, tpm: 0 };
+        current.rpm += 1;
+        current.tpm += Math.max(0, item.inputTokens + item.outputTokens);
+        acc[providerKey] = current;
+        return acc;
+      }, {});
+
+      setProviderRateLimitsByConfig(
+        Object.fromEntries(
+          configs.map((config) => {
+            const providerKey = (config.providerId ?? config.provider).trim().toLowerCase();
+            const usage = usageByProvider[providerKey] ?? { rpm: 0, tpm: 0 };
+            return [
+              config.id,
+              {
+                rpmUsed: usage.rpm,
+                rpmLimit:
+                  typeof config.requestsPerMinute === "number" && config.requestsPerMinute > 0
+                    ? config.requestsPerMinute
+                    : null,
+                tpmUsed: usage.tpm,
+                tpmLimit:
+                  typeof config.tokensPerMinute === "number" && config.tokensPerMinute > 0
+                    ? config.tokensPerMinute
+                    : null
+              } satisfies ProviderRateLimitSnapshot
+            ];
+          })
+        )
+      );
+    },
+    []
+  );
+
+  const templateAuthRef = (providerId: string): string => {
+    if (providerId === "openai") return "env://OPENAI_API_KEY";
+    if (providerId === "openrouter") return "env://OPENROUTER_API_KEY";
+    return `secret://${providerId}/api-key`;
+  };
+
   const load = useCallback(async () => {
+    if (!mountedRef.current) return;
     setLoading(true);
     setError(undefined);
     try {
-      const providersResponse = await authActions.apiFetchJson<{ items?: ProviderConfig[]; message?: string }>(
-        "/providers/config"
-      );
+      const [providersResponse, modelsResponse, defaultsResponse, tenantsResponse, usageResponse] = await Promise.all([
+        authActions.apiFetchJson<{ items?: ProviderConfig[]; message?: string }>("/providers/config"),
+        authActions.apiFetchJson<{ items?: ProviderModel[]; message?: string }>("/providers/models?includeDisabled=1"),
+        authActions.apiFetchJson<{ item?: ProviderDefaults; message?: string }>("/providers/defaults"),
+        authActions.apiFetchJson<{ items?: TenantItem[]; message?: string }>("/tenants"),
+        authActions.apiFetchJson<{ items?: Array<{
+          provider: string;
+          inputTokens: number;
+          outputTokens: number;
+          createdAt: string;
+        }>; message?: string }>("/usage")
+      ]);
       if (!providersResponse.response.ok) {
         throw new Error(
           providersResponse.body.message ??
             `Unable to load provider configs (HTTP ${providersResponse.response.status})`
         );
       }
+      if (!mountedRef.current) return;
       const nextItems = providersResponse.body.items ?? [];
       setItems(nextItems);
       hydrateDrafts(nextItems);
+      hydrateModelOptions(modelsResponse.body.items ?? []);
+      hydrateRateLimits(nextItems, usageResponse.response.ok ? usageResponse.body.items ?? [] : []);
 
-      const tenantsResponse = await authActions.apiFetchJson<{ items?: TenantItem[]; message?: string }>(
-        "/tenants"
-      );
       if (tenantsResponse.response.ok) {
         setTenants(tenantsResponse.body.items ?? []);
       } else {
         setTenants([]);
       }
+
+      if (defaultsResponse.response.ok) {
+        const defaults = defaultsResponse.body.item;
+        setDefaultProviderConfigId(defaults?.defaultProviderConfigId ?? "");
+        setDefaultModelId(defaults?.defaultModelId ?? "");
+      } else {
+        setDefaultProviderConfigId("");
+        setDefaultModelId("");
+      }
     } catch (loadError) {
+      if (!mountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load owner provider settings.");
     } finally {
+      if (!mountedRef.current) return;
       setLoading(false);
     }
-  }, [authActions, hydrateDrafts]);
+  }, [authActions, hydrateDrafts, hydrateModelOptions, hydrateRateLimits]);
 
   useEffect(() => {
     void load();
@@ -152,6 +269,33 @@ export function SettingsProvidersPage() {
     }
   };
 
+  const createProviderTemplate = async (providerId: string): Promise<void> => {
+    if (!canManage) return;
+    setSaving(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const response = await authActions.apiFetch("/providers/config", {
+        method: "POST",
+        body: JSON.stringify({
+          providerId,
+          authRef: templateAuthRef(providerId),
+          enabled: false
+        })
+      });
+      const body = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        throw new Error(body.message ?? `Unable to create provider template (HTTP ${response.status})`);
+      }
+      setNotice(`Provider template created for ${providerId}. Add credentials and test connection.`);
+      await load();
+    } catch (templateError) {
+      setError(templateError instanceof Error ? templateError.message : "Unable to create provider template.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const patchConfig = async (item: ProviderConfig, patch: Partial<ProviderConfig>): Promise<void> => {
     if (!canManage) return;
     setSaving(true);
@@ -175,12 +319,121 @@ export function SettingsProvidersPage() {
     }
   };
 
+  const testConnection = async (item: ProviderConfig): Promise<void> => {
+    if (!canManage) return;
+    setTestingConfigId(item.id);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const { response, body } = await authActions.apiFetchJson<{
+        status?: "ok" | "error";
+        latencyMs?: number;
+        models?: string[];
+        error?: string;
+        rateLimit?: {
+          rpm?: { used?: number; limit?: number | null };
+          tpm?: { used?: number; limit?: number | null };
+        };
+        item?: ProviderConfig;
+        availableModels?: string[];
+        message?: string;
+      }>(`/providers/config/${item.id}/test`, { method: "POST" });
+      if (!response.ok || !body.item) {
+        throw new Error(body.message ?? `Unable to test provider config (HTTP ${response.status})`);
+      }
+      setItems((current) =>
+        current.map((entry) => (entry.id === item.id ? body.item ?? entry : entry))
+      );
+      hydrateDrafts((items.map((entry) => (entry.id === item.id ? body.item ?? entry : entry))));
+      const discoveredModels = body.models ?? body.availableModels;
+      if (discoveredModels) {
+        setProviderModelsByConfig((current) => ({
+          ...current,
+          [item.id]: [...new Set(discoveredModels)].sort((left, right) =>
+            left.localeCompare(right)
+          )
+        }));
+      }
+      if (body.rateLimit) {
+        setProviderRateLimitsByConfig((current) => ({
+          ...current,
+          [item.id]: {
+            rpmUsed:
+              typeof body.rateLimit?.rpm?.used === "number" ? body.rateLimit.rpm.used : 0,
+            rpmLimit:
+              typeof body.rateLimit?.rpm?.limit === "number" ? body.rateLimit.rpm.limit : null,
+            tpmUsed:
+              typeof body.rateLimit?.tpm?.used === "number" ? body.rateLimit.tpm.used : 0,
+            tpmLimit:
+              typeof body.rateLimit?.tpm?.limit === "number" ? body.rateLimit.tpm.limit : null
+          }
+        }));
+      }
+      setNotice(
+        body.status === "ok"
+          ? `Connection successful for ${item.providerId ?? item.provider} (${body.latencyMs ?? 0}ms).`
+          : `Connection failed for ${item.providerId ?? item.provider}${body.error ? `: ${body.error}` : "."}`
+      );
+      await load();
+    } catch (testError) {
+      setError(testError instanceof Error ? testError.message : "Unable to test provider config.");
+    } finally {
+      setTestingConfigId(undefined);
+    }
+  };
+
+  const saveDefaults = async (): Promise<void> => {
+    if (!canManage || saving) return;
+    setSaving(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const payload: { defaultProviderConfigId?: string | null; defaultModelId?: string | null } = {};
+      if (defaultProviderConfigId) {
+        payload.defaultProviderConfigId = defaultProviderConfigId;
+        payload.defaultModelId = defaultModelId || null;
+      } else {
+        payload.defaultProviderConfigId = null;
+        payload.defaultModelId = null;
+      }
+      const { response, body } = await authActions.apiFetchJson<{ item?: ProviderDefaults; message?: string }>(
+        "/providers/defaults",
+        {
+          method: "PATCH",
+          body: JSON.stringify(payload)
+        }
+      );
+      if (!response.ok) {
+        throw new Error(body.message ?? `Unable to save defaults (HTTP ${response.status})`);
+      }
+      setNotice(defaultProviderConfigId ? "Default provider settings saved." : "Default provider settings cleared.");
+      await load();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save defaults.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const sortedItems = useMemo(
     () =>
       [...items].sort((left, right) =>
         (left.providerId ?? left.provider).localeCompare(right.providerId ?? right.provider)
       ),
     [items]
+  );
+
+  const defaultProviderOptions = useMemo(
+    () =>
+      sortedItems.filter(
+        (item) => item.enabled && item.validationStatus === "valid"
+      ),
+    [sortedItems]
+  );
+
+  const defaultModelOptions = useMemo(
+    () => (defaultProviderConfigId ? providerModelsByConfig[defaultProviderConfigId] ?? [] : []),
+    [defaultProviderConfigId, providerModelsByConfig]
   );
 
   return (
@@ -194,7 +447,7 @@ export function SettingsProvidersPage() {
         ) : null}
         {!canManage ? (
           <p className="text-sm text-rose-300">
-            Admin role required when authentication is enabled.
+            Owner role required when authentication is enabled.
           </p>
         ) : null}
         {error ? <p className="text-sm text-rose-300">{error}</p> : null}
@@ -257,13 +510,113 @@ export function SettingsProvidersPage() {
       </Panel>
 
       <Panel>
+        <SectionHeading title="Default Provider" subtitle="Tenant default provider/model selection" />
+        <div className="grid gap-2 md:grid-cols-3">
+          <label className="text-xs text-slate-400">
+            Default provider
+            <select
+              className="mt-1 w-full rounded-xl border border-white/10 bg-slate-950/40 px-2 py-1 text-sm text-white"
+              value={defaultProviderConfigId}
+              onChange={(event) => {
+                const next = event.target.value;
+                setDefaultProviderConfigId(next);
+                const nextModels = next ? providerModelsByConfig[next] ?? [] : [];
+                setDefaultModelId(nextModels[0] ?? "");
+              }}
+            >
+              <option value="">None</option>
+              {defaultProviderOptions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.providerId ?? item.provider}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-slate-400">
+            Default model
+            <select
+              className="mt-1 w-full rounded-xl border border-white/10 bg-slate-950/40 px-2 py-1 text-sm text-white"
+              value={defaultModelId}
+              onChange={(event) => setDefaultModelId(event.target.value)}
+            >
+              <option value="">Auto-select first available</option>
+              {defaultModelOptions.map((modelId) => (
+                <option key={modelId} value={modelId}>
+                  {modelId}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-end justify-end">
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (saving || !canManage || loading) return;
+                void saveDefaults();
+              }}
+            >
+              Save defaults
+            </Button>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel>
         <SectionHeading title="Configured Providers" subtitle="Enable/disable + key rotation" />
         {loading ? <p className="text-sm text-slate-300">Loading provider configs…</p> : null}
-        {!loading && sortedItems.length === 0 ? <p className="text-sm text-slate-300">No provider configs found.</p> : null}
+        {!loading && sortedItems.length === 0 ? (
+          <div className="space-y-3 rounded-xl border border-dashed border-white/20 bg-white/[0.03] p-4">
+            <p className="text-sm text-slate-200">No providers configured</p>
+            <p className="text-xs text-slate-400">
+              Add at least one provider before running coding, chat, or research workloads.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (saving || !canManage) return;
+                  void createProviderTemplate("openai");
+                }}
+              >
+                Add OpenAI
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (saving || !canManage) return;
+                  void createProviderTemplate("openrouter");
+                }}
+              >
+                Add OpenRouter
+              </Button>
+            </div>
+          </div>
+        ) : null}
         {!loading && sortedItems.length > 0 ? (
           <div className="space-y-3">
             {sortedItems.map((item) => {
               const draft = drafts[item.id] ?? emptyDraft;
+              const availableModels = providerModelsByConfig[item.id] ?? [];
+              const rateLimit = providerRateLimitsByConfig[item.id] ?? {
+                rpmUsed: 0,
+                rpmLimit:
+                  typeof item.requestsPerMinute === "number" && item.requestsPerMinute > 0
+                    ? item.requestsPerMinute
+                    : null,
+                tpmUsed: 0,
+                tpmLimit:
+                  typeof item.tokensPerMinute === "number" && item.tokensPerMinute > 0
+                    ? item.tokensPerMinute
+                    : null
+              };
+              const connectionStatus =
+                item.enabled && item.validationStatus === "valid"
+                  ? "connected"
+                  : item.validationStatus === "invalid"
+                    ? "invalid"
+                    : item.enabled
+                      ? "pending"
+                      : "disabled";
               return (
                 <div key={item.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -274,10 +627,25 @@ export function SettingsProvidersPage() {
                         variant="secondary"
                         onClick={() => {
                           if (saving || !canManage) return;
+                          if (!item.enabled && item.validationStatus !== "valid") {
+                            setNotice(
+                              `Run Test connection first. ${item.providerId ?? item.provider} must be valid before enabling.`
+                            );
+                            return;
+                          }
                           void patchConfig(item, { enabled: !item.enabled });
                         }}
                       >
                         {item.enabled ? "Disable" : "Enable"}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          if (testingConfigId || !canManage) return;
+                          void testConnection(item);
+                        }}
+                      >
+                        {testingConfigId === item.id ? "Testing..." : "Test connection"}
                       </Button>
                     </div>
                   </div>
@@ -285,11 +653,26 @@ export function SettingsProvidersPage() {
                     <Pill tone={item.validationStatus === "valid" ? "good" : item.validationStatus === "invalid" ? "warn" : "default"}>
                       validation: {item.validationStatus ?? "unknown"}
                     </Pill>
+                    <Pill tone={connectionStatus === "connected" ? "good" : connectionStatus === "invalid" ? "bad" : "default"}>
+                      status: {connectionStatus}
+                    </Pill>
                     <span>last check: {item.lastValidatedAt ? new Date(item.lastValidatedAt).toLocaleString() : "n/a"}</span>
                     {item.apiKeyMasked ? <span>key: {item.apiKeyMasked}</span> : null}
+                    <span>
+                      models:{" "}
+                      {availableModels.length === 0
+                        ? "n/a"
+                        : availableModels.length <= 4
+                          ? availableModels.join(", ")
+                          : `${availableModels.slice(0, 4).join(", ")} +${availableModels.length - 4}`}
+                    </span>
                     {item.validationError ? (
                       <span className="text-rose-300">error: {item.validationError}</span>
                     ) : null}
+                    <span>
+                      Rate limit: {rateLimit.rpmUsed}/{rateLimit.rpmLimit ?? "∞"} rpm, {rateLimit.tpmUsed}/
+                      {rateLimit.tpmLimit ?? "∞"} tpm
+                    </span>
                   </div>
                   <div className="grid gap-2 md:grid-cols-5">
                     <label className="text-xs text-slate-400">

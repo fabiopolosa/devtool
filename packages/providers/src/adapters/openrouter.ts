@@ -107,7 +107,7 @@ export class OpenRouterChatProvider extends BaseProviderAdapter<"chat_reasoning"
   async run(request: Parameters<ChatReasoningProvider["run"]>[0], context: ProviderRequestContext) {
     const endpoint = this.resolveEndpoint("https://openrouter.ai/api/v1", "OPENROUTER_BASE_URL");
     const apiKey = this.requireApiKey();
-    const model = "openrouter-chat-default";
+    const model = request.modelId ?? "openrouter-chat-default";
     const runtime = this.withContext(context);
 
     const response = await this.requestJson<OpenRouterChatResponse>(
@@ -178,7 +178,7 @@ export class OpenRouterCodingProvider extends BaseProviderAdapter<"coding"> impl
   async run(request: Parameters<CodingProvider["run"]>[0], context: ProviderRequestContext) {
     const endpoint = this.resolveEndpoint("https://openrouter.ai/api/v1", "OPENROUTER_BASE_URL");
     const apiKey = this.requireApiKey();
-    const model = "openrouter-coding-default";
+    const model = request.modelId ?? "openrouter-coding-default";
     const runtime = this.withContext(context);
     const requestText = request.codeContext
       ? `${request.prompt}\n\nCode context:\n${request.codeContext}`

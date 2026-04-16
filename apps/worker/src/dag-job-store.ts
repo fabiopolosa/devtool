@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { PostgresDatabase, createPostgresClient, runWithTenantContext } from "@cp/db";
-import type { ContextNote, Job, KnowledgeConfig, ProviderName, Tenant } from "@cp/domain";
-import { KnowledgeService } from "@cp/knowledge";
+import type { ContextNote, EmbeddingProvider, Job, KnowledgeConfig, ProviderName, Tenant } from "@cp/domain";
+import type { RunnerAuditEventInput, RunnerUsageEventInput } from "@cp/runner";
+import { KnowledgeService, PgVectorStoreAdapter } from "@cp/knowledge";
 import type { JobRunnerStore } from "@cp/runner";
+import { createDefaultProviderRegistry } from "@cp/providers";
 
 const rowToJob = (row: Record<string, unknown>): Job => {
   const item: Job = {
@@ -43,7 +46,23 @@ export class DagWorkerJobStore implements JobRunnerStore {
     const client = createPostgresClient();
     this.pool = client.pool;
     this.db = new PostgresDatabase(client);
+    const providerRegistry = createDefaultProviderRegistry();
+    const embeddingProvider = (
+      providerRegistry.get("openai", "embedding") ??
+      providerRegistry.get("gemini", "embedding")
+    ) as EmbeddingProvider | undefined;
+    const semanticStore = new PgVectorStoreAdapter({
+      executor: this.pool,
+      logger: {
+        warn: (message, metadata) => {
+          console.warn("[worker/knowledge/pgvector]", message, metadata ?? {});
+        }
+      }
+    });
+
     this.knowledgeService = new KnowledgeService({
+      ...(embeddingProvider ? { embeddingProvider } : {}),
+      semanticStore,
       store: {
         listKnowledgeNodes: async (filters) => {
           if (!filters || Object.keys(filters).length === 0) {
@@ -149,6 +168,7 @@ export class DagWorkerJobStore implements JobRunnerStore {
         WHERE tenant_id = $1
           AND status = 'idle'
           AND ready = true
+          AND COALESCE(payload->'execution'->>'dispatchTarget', 'remote_worker') IN ('remote_worker', 'hybrid')
         ORDER BY priority DESC, created_at ASC
         LIMIT $2
         FOR UPDATE SKIP LOCKED
@@ -389,6 +409,44 @@ export class DagWorkerJobStore implements JobRunnerStore {
     );
   }
 
+  async resolveActivePrompt(input: {
+    tenantId: string;
+    projectId?: string;
+    type: string;
+    target: string;
+  }): Promise<string | null> {
+    const result = await this.pool.query<{ content: string }>(
+      `
+      SELECT content
+      FROM prompt_registry
+      WHERE status = 'active'
+        AND type = $1
+        AND target = $2
+        AND (
+          ($3::text IS NOT NULL AND scope = 'project' AND tenant_id = $4 AND project_id = $3)
+          OR (scope = 'tenant' AND tenant_id = $4)
+          OR (scope = 'system')
+        )
+      ORDER BY
+        CASE
+          WHEN scope = 'project' THEN 1
+          WHEN scope = 'tenant' THEN 2
+          WHEN scope = 'system' THEN 3
+          ELSE 99
+        END,
+        updated_at DESC
+      LIMIT 1
+      `,
+      [input.type, input.target, input.projectId ?? null, input.tenantId]
+    );
+
+    const row = result.rows[0];
+    if (!row || typeof row.content !== "string" || row.content.trim().length === 0) {
+      return null;
+    }
+    return row.content.trim();
+  }
+
   private toCompactContextNote(note: ContextNote): { id: string; path: string; title: string; content: string } {
     return {
       id: note.id,
@@ -396,5 +454,49 @@ export class DagWorkerJobStore implements JobRunnerStore {
       title: note.title,
       content: note.content
     };
+  }
+
+  async recordAuditEvent(event: RunnerAuditEventInput): Promise<void> {
+    const now = event.occurredAt ?? new Date().toISOString();
+    await runWithTenantContext({ tenantId: event.tenantId }, async () => {
+      await this.db.repository("audit_events").create({
+        id: randomUUID(),
+        tenantId: event.tenantId,
+        ...(event.projectId ? { projectId: event.projectId } : {}),
+        ...(event.jobId ? { jobId: event.jobId } : {}),
+        ...(event.resourceId ? { resourceId: event.resourceId } : {}),
+        action: event.action,
+        resourceType: event.resourceType,
+        status: event.status,
+        occurredAt: now,
+        metadata: event.metadata ?? {},
+        createdAt: now,
+        createdBy: event.actor,
+        updatedAt: now,
+        updatedBy: event.actor
+      });
+    });
+  }
+
+  async recordUsageEvent(event: RunnerUsageEventInput): Promise<void> {
+    const now = event.occurredAt ?? new Date().toISOString();
+    await runWithTenantContext({ tenantId: event.tenantId }, async () => {
+      await this.db.repository("usage_events").create({
+        id: randomUUID(),
+        tenantId: event.tenantId,
+        ...(event.projectId ? { projectId: event.projectId } : {}),
+        ...(event.jobId ? { jobId: event.jobId } : {}),
+        provider: event.provider,
+        model: event.model,
+        inputTokens: Math.max(0, Math.trunc(event.inputTokens)),
+        outputTokens: Math.max(0, Math.trunc(event.outputTokens)),
+        cost: Number(event.cost.toFixed(6)),
+        metadata: event.metadata ?? {},
+        createdAt: now,
+        createdBy: event.actor,
+        updatedAt: now,
+        updatedBy: event.actor
+      });
+    });
   }
 }

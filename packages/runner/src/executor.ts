@@ -81,6 +81,14 @@ const captureEligibleJobTypes = new Set<Job["type"]>([
   "review"
 ]);
 
+const knowledgeInjectionEligibleJobTypes = new Set<Job["type"]>([
+  "generation",
+  "brainstorm",
+  "brainstorm_apply",
+  "agent_runtime",
+  "system"
+]);
+
 const meaningfulKnowledgePatterns = [
   /^#{1,3}\s+\S+/m,
   /\b(decision|insight|pattern|principle|guideline|finding|lesson|trade[- ]?off|recommendation|constraint|architecture)\b/i,
@@ -143,6 +151,7 @@ export class JobExecutor {
       const payloadWithDependencies = await mergeDependencyPayload(this.store, this.tenantId, job);
       const hydrated = payloadWithDependencies ? { ...job, payload: payloadWithDependencies } : job;
       const withKnowledge = await this.withKnowledgeContext(hydrated);
+      await this.appendProviderResolutionLog(withKnowledge);
       const result = await this.dispatchToHandler(withKnowledge);
       await this.completeJob(withKnowledge, result);
     } catch (error) {
@@ -302,8 +311,23 @@ export class JobExecutor {
     }
   }
 
+  private async appendProviderResolutionLog(job: Job): Promise<void> {
+    if (job.type !== "generation") return;
+    const payload = asRecord(job.payload);
+    const resolution = asRecord(payload?.providerResolution);
+    if (!resolution) return;
+    const source = typeof resolution.source === "string" ? resolution.source : "unknown";
+    const provider = typeof resolution.provider === "string" ? resolution.provider : "";
+    const modelId = typeof resolution.modelId === "string" ? resolution.modelId : "";
+    if (!provider) return;
+    await this.appendLog(
+      job.id,
+      `provider resolved source=${source} provider=${provider}${modelId ? ` model=${modelId}` : ""}`
+    );
+  }
+
   private async withKnowledgeContext(job: Job): Promise<Job> {
-    if (job.type !== "generation" || !this.store.searchKnowledgeContext) {
+    if (!knowledgeInjectionEligibleJobTypes.has(job.type) || !this.store.searchKnowledgeContext) {
       return job;
     }
 
