@@ -8,7 +8,28 @@ coverage
 .env.local
 .DS_Store
 *.log
-artifacts/runtime
-artifacts/screenshots
-artifacts/performance
-artifacts/visual
+
+# Runtime artifacts
+artifacts/tmp/
+artifacts/logs/
+artifacts/performance/
+artifacts/visual/
+artifacts/runtime/
+artifacts/screenshots/
+artifacts/owner-mode-debug/
+
+# Temporary files
+artifacts/**/*.tmp
+artifacts/**/*.log
+
+# Generated media (large)
+artifacts/**/*.png
+artifacts/**/*.mp4
+artifacts/**/*.jsonl
+
+# Keep important artifacts versioned
+!artifacts/README.md
+!artifacts/examples/
+!artifacts/examples/**
+!artifacts/seeds/
+!artifacts/seeds/**
