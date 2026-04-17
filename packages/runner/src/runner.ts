@@ -73,7 +73,7 @@ export class DagRunner {
       logger: this.logger,
       providerOrder: options.providerOrder ?? ["openai", "anthropic", "gemini", "openrouter"],
       providerRegistry: options.providerRegistry ?? createDefaultProviderRegistry(),
-      promptBuilder: options.promptBuilder ?? new PromptBuilderService(),
+      promptBuilder: options.promptBuilder ?? new PromptBuilderService({ requireRegistryPrompt: true }),
       ...(options.rateLimiter ? { rateLimiter: options.rateLimiter } : {}),
       ...(options.telemetry ? { telemetry: options.telemetry } : {}),
       ...(options.handlers ? { handlers: options.handlers } : {})

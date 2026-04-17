@@ -2,7 +2,9 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import type { AgentConfig } from "@cp/domain";
 import { agentConfigSchema } from "@cp/domain";
+import { AgentRuntimeSchedulerUnavailableError } from "@cp/agents";
 import type { AgentCreateInput, AgentRuntimeInvocationOptions } from "@cp/agents";
+import { resolveSkillTenantId } from "@cp/skills";
 import { agentsService, listWorkflowRuntimeDefinitions } from "../services/agents-service.js";
 import {
   dispatchAndAwaitRunnerJob,
@@ -73,6 +75,9 @@ const toOperationOptions = (
   if (data.metadata !== undefined) options.metadata = { ...data.metadata };
   return Object.keys(options).length > 0 ? options : undefined;
 };
+
+const isSchedulerUnavailableMessage = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes("REDIS_URL");
 
 const buildAgentRuntimeContextMetadata = async (input: {
   tenantId: string;
@@ -234,6 +239,12 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
         );
         return { item };
       } catch (error) {
+        if (isSchedulerUnavailableMessage(error)) {
+          return reply.code(503).send({
+            error: "scheduler_unavailable",
+            message: error instanceof Error ? error.message : "Agent runtime scheduler unavailable"
+          });
+        }
         return reply.code(404).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Agent not found"
@@ -250,6 +261,12 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
         await agentsService.deleteAgent(request.params.agentId);
         return { ok: true };
       } catch (error) {
+        if (isSchedulerUnavailableMessage(error)) {
+          return reply.code(503).send({
+            error: "scheduler_unavailable",
+            message: error instanceof Error ? error.message : "Agent runtime scheduler unavailable"
+          });
+        }
         return reply.code(404).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Agent not found"
@@ -408,16 +425,13 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!skill) {
         return reply.code(404).send({ error: "not_found", message: "Skill not found" });
       }
-      const skillTenantId =
-        skill.metadata && typeof skill.metadata["tenantId"] === "string" && skill.metadata["tenantId"].trim().length > 0
-          ? String(skill.metadata["tenantId"]).trim()
-          : undefined;
       const tenantId = request.tenantId ?? "tenant_default";
+      const skillTenantId = resolveSkillTenantId(skill);
       if (skillTenantId && skillTenantId !== tenantId) {
         return reply.code(404).send({ error: "not_found", message: "Skill not found" });
       }
       const actor = request.authPrincipal?.userId ?? "agent_runtime";
-      if (!skillsService.canActorAccessSkill(skill, actor)) {
+      if (!skillsService.canActorAccessSkill(skill, actor, tenantId)) {
         return reply.code(403).send({
           error: "forbidden",
           message: "Skill scope policy denies access for this actor"
@@ -500,7 +514,21 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: "not_found", message: "Agent not found" });
       }
 
-      const item = await agentsService.getRuntimeJob(request.params.jobId);
+      let item: Awaited<ReturnType<typeof agentsService.getRuntimeJob>> | null;
+      try {
+        item = await agentsService.getRuntimeJob(request.params.jobId);
+      } catch (error) {
+        if (error instanceof AgentRuntimeSchedulerUnavailableError) {
+          return reply.code(503).send({
+            error: "scheduler_unavailable",
+            message: error.message
+          });
+        }
+        return reply.code(500).send({
+          error: "runtime_snapshot_failed",
+          message: error instanceof Error ? error.message : "Unable to load runtime job snapshot"
+        });
+      }
       if (!item) {
         return reply.code(404).send({ item: null });
       }
@@ -521,12 +549,6 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!agent) {
         return reply.code(404).send({ error: "not_found", message: "Agent not found" });
       }
-
-      reply.raw.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive"
-      });
 
       let lastLogCount = 0;
       let stopped = false;
@@ -556,7 +578,27 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
         }
       };
 
-      await flushSnapshot();
+      try {
+        await flushSnapshot();
+      } catch (error) {
+        if (error instanceof AgentRuntimeSchedulerUnavailableError) {
+          return reply.code(503).send({
+            error: "scheduler_unavailable",
+            message: error.message
+          });
+        }
+        return reply.code(500).send({
+          error: "runtime_snapshot_failed",
+          message: error instanceof Error ? error.message : "Unable to stream runtime job logs"
+        });
+      }
+
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive"
+      });
+
       const snapshotMode = request.query.snapshot === "1";
       if (snapshotMode) {
         stopped = true;
@@ -583,8 +625,15 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
             );
             reply.raw.end();
           }
-        } catch {
+        } catch (error) {
           clearInterval(interval);
+          reply.raw.write(
+            `event: error\ndata: ${JSON.stringify({
+              jobId: request.params.jobId,
+              message:
+                error instanceof Error ? error.message : "Unable to stream runtime job logs"
+            })}\n\n`
+          );
           reply.raw.end();
         }
       }, 1000);

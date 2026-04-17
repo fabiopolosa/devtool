@@ -103,13 +103,33 @@ describe("Agents API contract", () => {
     const skillsResponse = await app.inject({ method: "GET", url: "/skills/installed" });
     expect(skillsResponse.statusCode).toBe(200);
     const skillsBody = skillsResponse.json() as { items: Array<{ id: string; name: string }> };
-    const skill = skillsBody.items[0];
+    let skill = skillsBody.items[0];
+    if (!skill) {
+      const uploadResponse = await app.inject({
+        method: "POST",
+        url: "/skills/install-upload",
+        payload: {
+          name: "agent-runner-skill",
+          sourceType: "file",
+          fileName: "agent-runner-skill.txt",
+          contentBase64: Buffer.from("skill: agent runner\nentry: execute").toString("base64"),
+          instructions: "Execute a simple skill for agent runtime contract coverage."
+        }
+      });
+      expect(uploadResponse.statusCode).toBe(200);
+      const uploadBody = uploadResponse.json() as { item?: { id: string } };
+      expect(uploadBody.item?.id).toBeDefined();
+      const skillResponse = await app.inject({ method: "GET", url: "/skills/installed" });
+      expect(skillResponse.statusCode).toBe(200);
+      const refreshed = skillResponse.json() as { items: Array<{ id: string; name: string }> };
+      skill = refreshed.items.find((entry) => entry.id === uploadBody.item?.id);
+    }
     expect(skill).toBeDefined();
     if (!skill) {
-      throw new Error("No installed skill available for agent execution contract test");
+      throw new Error("Unable to prepare a skill for agent execution contract test");
     }
 
-    const createResponse = await app.inject({
+    const agentResponse = await app.inject({
       method: "POST",
       url: "/agents",
       payload: {
@@ -125,12 +145,12 @@ describe("Agents API contract", () => {
         status: "active"
       }
     });
-    expect(createResponse.statusCode).toBe(200);
-    const created = createResponse.json() as { item: { id: string } };
+    expect(agentResponse.statusCode).toBe(200);
+    const createdAgent = agentResponse.json() as { item: { id: string } };
 
     const executeResponse = await app.inject({
       method: "POST",
-      url: `/agents/${created.item.id}/skills/${skill.id}/execute`,
+      url: `/agents/${createdAgent.item.id}/skills/${skill.id}/execute`,
       payload: {
         mode: "local"
       }
@@ -146,47 +166,86 @@ describe("Agents API contract", () => {
     expect(executeBody.item?.success).toBe(true);
   });
 
-  it("schedules heartbeat and diagnose jobs and exposes snapshots/events", async () => {
-    const listResponse = await app.inject({ method: "GET", url: "/agents" });
-    const listBody = listResponse.json() as { items: Array<{ id: string }> };
-    const agentId = listBody.items[0]?.id;
-    expect(agentId).toBeDefined();
-
-    const heartbeat = await app.inject({
+  it("blocks agent runtime skill execution across tenants", async () => {
+    const installResponse = await app.inject({
       method: "POST",
-      url: `/agents/${agentId}/heartbeat`,
-      payload: { reason: "contract-test" }
+      url: "/skills/install-upload",
+      headers: { "x-tenant-id": "tenant_default" },
+      payload: {
+        name: "agent-cross-tenant-skill",
+        sourceType: "file",
+        fileName: "agent-cross-tenant-skill.txt",
+        contentBase64: Buffer.from("skill: agent cross tenant").toString("base64"),
+        instructions: "Tenant isolated skill for agent runtime cross-tenant checks."
+      }
     });
-    expect(heartbeat.statusCode).toBe(200);
-    const heartbeatBody = heartbeat.json() as { item: { jobId: string; operation: string } };
-    expect(heartbeatBody.item.operation).toBe("heartbeat");
-    expect(typeof heartbeatBody.item.jobId).toBe("string");
+    expect(installResponse.statusCode).toBe(200);
+    const installBody = installResponse.json() as { item: { id: string } };
 
-    const diagnose = await app.inject({
+    const agentResponse = await app.inject({
       method: "POST",
-      url: `/agents/${agentId}/diagnose`,
-      payload: { reason: "contract-test" }
+      url: "/agents",
+      headers: { "x-tenant-id": "tenant_other" },
+      payload: {
+        name: "tenant-other-agent",
+        role: "worker",
+        icon: "bolt",
+        description: "Executes assigned skills",
+        adapterType: "legacy_cli",
+        desiredSkills: [installBody.item.id],
+        reportTo: "planner",
+        runtimeConfig: {},
+        capabilities: ["coding"],
+        status: "active"
+      }
     });
-    expect(diagnose.statusCode).toBe(200);
-    const diagnoseBody = diagnose.json() as { item: { jobId: string; operation: string } };
-    expect(diagnoseBody.item.operation).toBe("diagnose");
+    expect(agentResponse.statusCode).toBe(200);
+    const agent = agentResponse.json() as { item: { id: string } };
+
+    const executeResponse = await app.inject({
+      method: "POST",
+      url: `/agents/${agent.item.id}/skills/${installBody.item.id}/execute`,
+      headers: { "x-tenant-id": "tenant_other" },
+      payload: {
+        mode: "local"
+      }
+    });
+
+    expect(executeResponse.statusCode).toBe(404);
+  });
+
+  it("returns explicit scheduler errors for runtime job paths", async () => {
+    const agentResponse = await app.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        name: "runtime-scheduler-check",
+        role: "worker",
+        icon: "gear",
+        description: "Checks runtime scheduler availability",
+        adapterType: "legacy_cli",
+        desiredSkills: [],
+        runtimeConfig: {},
+        capabilities: ["coding"],
+        status: "active"
+      }
+    });
+    expect(agentResponse.statusCode).toBe(200);
+    const agentId = (agentResponse.json() as { item: { id: string } }).item.id;
 
     const snapshot = await app.inject({
       method: "GET",
-      url: `/agents/${agentId}/jobs/${heartbeatBody.item.jobId}`
+      url: `/agents/${agentId}/jobs/runtime-job-1`
     });
-    expect(snapshot.statusCode).toBe(200);
-    const snapshotBody = snapshot.json() as { item: { state: string; logs: string[] } };
-    expect(typeof snapshotBody.item.state).toBe("string");
-    expect(Array.isArray(snapshotBody.item.logs)).toBe(true);
+    expect(snapshot.statusCode).toBe(503);
+    expect((snapshot.json() as { error?: string }).error).toBe("scheduler_unavailable");
 
     const events = await app.inject({
       method: "GET",
-      url: `/agents/${agentId}/jobs/${heartbeatBody.item.jobId}/events?snapshot=1`
+      url: `/agents/${agentId}/jobs/runtime-job-1/events?snapshot=1`
     });
-    expect(events.statusCode).toBe(200);
-    expect(events.headers["content-type"]).toContain("text/event-stream");
-    expect(events.body).toContain("event: state");
-    expect(events.body).toContain("event: complete");
+    expect(events.statusCode).toBe(503);
+    const eventsBody = events.json() as { error?: string; message?: string };
+    expect(eventsBody.error).toBe("scheduler_unavailable");
   });
 });

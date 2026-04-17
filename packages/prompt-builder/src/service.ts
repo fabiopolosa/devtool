@@ -1,7 +1,3 @@
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { BrainstormPlanPayload, Subprompt } from "@cp/domain";
 
 export interface BuildPromptInput {
@@ -28,52 +24,27 @@ export interface PromptBuilderServiceOptions {
   ) => Promise<string | undefined> | string | undefined;
 }
 
-const defaultRoleFallbackInstructions =
-  "Follow project constraints strictly, keep output compact, and produce inspectable structured artifacts.";
-
-const resolveDefaultRolesDir = (): string => {
-  const fallback = path.resolve(process.cwd(), "configs/prompts/roles");
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    fallback,
-    path.resolve(process.cwd(), "../../configs/prompts/roles"),
-    path.resolve(moduleDir, "../../../configs/prompts/roles"),
-    path.resolve(moduleDir, "../../../../configs/prompts/roles")
-  ];
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-
-  return fallback;
-};
-
 const stringifyContext = (value: unknown): string => JSON.stringify(value, null, 2);
 
-const roleCandidates = (role: string): string[] => {
-  const trimmed = role.trim().toLowerCase();
-  if (!trimmed) return [];
+const formatRegistryContext = (context: BuildPromptInput["registryContext"] | undefined): string => {
+  if (!context) return "registry_context=unknown";
   return [
-    `${trimmed}.md`,
-    `${trimmed}.prompt.md`,
-    `${trimmed.replace(/_/g, "-")}.md`,
-    `${trimmed.replace(/_/g, "-")}.prompt.md`
-  ];
+    `tenant=${context.tenantId ?? "unknown"}`,
+    `project=${context.projectId ?? "global"}`,
+    `type=${context.type ?? "unknown"}`,
+    `target=${context.target ?? "unknown"}`
+  ].join(" ");
 };
 
 export class PromptBuilderService {
-  private readonly rolesDir: string;
-  private readonly roleFallbackInstructions: string;
-  private readonly disableRoleFileFallback: boolean;
   private readonly requireRegistryPrompt: boolean;
   private readonly resolveRoleInstructions?: PromptBuilderServiceOptions["resolveRoleInstructions"];
-  private readonly fallbackWarnings = new Set<string>();
 
   constructor(options: PromptBuilderServiceOptions = {}) {
-    this.rolesDir = options.rolesDir ?? resolveDefaultRolesDir();
-    this.roleFallbackInstructions = options.roleFallbackInstructions ?? defaultRoleFallbackInstructions;
-    this.disableRoleFileFallback = options.disableRoleFileFallback ?? false;
-    this.requireRegistryPrompt = options.requireRegistryPrompt ?? false;
+    void options.rolesDir;
+    void options.roleFallbackInstructions;
+    void options.disableRoleFileFallback;
+    this.requireRegistryPrompt = options.requireRegistryPrompt ?? true;
     this.resolveRoleInstructions = options.resolveRoleInstructions;
   }
 
@@ -134,42 +105,18 @@ export class PromptBuilderService {
       if (typeof resolved === "string" && resolved.trim().length > 0) {
         return resolved.trim();
       }
-      if (this.requireRegistryPrompt) {
-        throw new Error(`Prompt registry entry not found for role "${role}"`);
-      }
-      this.warnRegistryFallback(role, context, "active registry prompt not found");
-    } else if (this.requireRegistryPrompt) {
-      throw new Error(`Prompt registry resolver is required for role "${role}"`);
+      throw new Error(
+        `Prompt registry entry not found for role "${role}" (${formatRegistryContext(context)})`
+      );
     }
 
-    if (this.disableRoleFileFallback) {
-      this.warnRegistryFallback(role, context, "role file fallback disabled; using default fallback instructions");
-      return this.roleFallbackInstructions;
+    if (this.requireRegistryPrompt) {
+      throw new Error(
+        `Prompt registry resolver is required for role "${role}" (${formatRegistryContext(context)})`
+      );
     }
 
-    for (const candidate of roleCandidates(role)) {
-      const fullPath = path.resolve(this.rolesDir, candidate);
-      if (!existsSync(fullPath)) continue;
-      const content = (await readFile(fullPath, "utf8")).trim();
-      if (content.length > 0) {
-        this.warnRegistryFallback(role, context, `using role file fallback: ${candidate}`);
-        return content;
-      }
-    }
-    this.warnRegistryFallback(role, context, "using default fallback instructions");
-    return this.roleFallbackInstructions;
-  }
-
-  private warnRegistryFallback(
-    role: string,
-    context: BuildPromptInput["registryContext"] | undefined,
-    reason: string
-  ): void {
-    if (!this.resolveRoleInstructions) return;
-    const fingerprint = `${context?.tenantId ?? "tenant_default"}:${context?.projectId ?? "global"}:${role}:${reason}`;
-    if (this.fallbackWarnings.has(fingerprint)) return;
-    this.fallbackWarnings.add(fingerprint);
-    console.warn(`[prompt-builder] Registry fallback for role="${role}": ${reason}`);
+    throw new Error(`Prompt registry resolver is required for role "${role}"`);
   }
 }
 

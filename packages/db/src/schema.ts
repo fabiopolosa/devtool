@@ -838,6 +838,7 @@ export const skills = pgTable(
     installed: boolean("installed").notNull(),
     categories: jsonb("categories").$type<string[]>().notNull(),
     instructions: text("instructions").notNull(),
+    tenantId: text("tenant_id").notNull(),
     scope: text("scope").notNull(),
     sourceType: text("source_type").notNull(),
     sourceRef: text("source_ref"),
@@ -856,9 +857,10 @@ export const skills = pgTable(
   (table) => [
     index("idx_skills_name").on(table.name),
     index("idx_skills_installed").on(table.installed),
+    index("idx_skills_tenant").on(table.tenantId),
     index("idx_skills_scope").on(table.scope),
     index("idx_skills_validation_status").on(table.validationStatus),
-    uniqueIndex("ux_skills_repository_name").on(table.repositoryUrl, table.name)
+    uniqueIndex("ux_skills_tenant_repository_name").on(table.tenantId, table.repositoryUrl, table.name)
   ]
 );
 

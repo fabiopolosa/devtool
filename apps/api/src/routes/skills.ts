@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import type { Skill } from "@cp/domain";
+import { resolveSkillScope, resolveSkillTenantId } from "@cp/skills";
 import {
   dispatchAndAwaitRunnerJob,
   getRunnerJobOutput
@@ -57,33 +58,27 @@ const toExecutionMode = (value: unknown): ExecutionMode | undefined => {
   return undefined;
 };
 
-const resolveSkillScope = (skill: Skill): "system" | "tenant" | "user" => {
-  if (skill.scope === "system" || skill.scope === "tenant" || skill.scope === "user") {
-    return skill.scope;
-  }
-  const taggedScope = skill.categories.find((category) => category.startsWith("scope:"));
-  if (taggedScope === "scope:system") return "system";
-  if (taggedScope === "scope:user") return "user";
-  if (taggedScope === "scope:tenant") return "tenant";
-  if (skill.createdBy === "system" || skill.createdBy === "skills_service") return "system";
-  if (skill.createdBy.startsWith("user:")) return "user";
-  return "tenant";
-};
-
 const resolveActor = (userId: string | undefined): string => userId ?? "skills_service";
 const resolveTenant = (tenantId: string | undefined): string => tenantId ?? "tenant_default";
 const resolveRequestTenantId = (request: FastifyRequest): string =>
   resolveTenant(request.tenantId ?? resolveTenantHeader(request));
 
-const getSkillTenantId = (skill: Skill): string | undefined =>
-  skill.metadata && typeof skill.metadata["tenantId"] === "string" && skill.metadata["tenantId"].trim().length > 0
-    ? String(skill.metadata["tenantId"]).trim()
-    : undefined;
-
 const isSkillVisibleForTenant = (skill: Skill, tenantId: string): boolean => {
-  const skillTenantId = getSkillTenantId(skill);
-  if (!skillTenantId) return true;
+  const skillTenantId = resolveSkillTenantId(skill);
+  if (!skillTenantId) return false;
   return skillTenantId === tenantId;
+};
+
+const matchesSkillQuery = (skill: Skill, query: string): boolean => {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return (
+    skill.name.toLowerCase().includes(normalized) ||
+    skill.description.toLowerCase().includes(normalized) ||
+    skill.repositoryUrl.toLowerCase().includes(normalized) ||
+    skill.instructions.toLowerCase().includes(normalized) ||
+    skill.categories.some((category) => category.toLowerCase().includes(normalized))
+  );
 };
 
 const toAsyncRouteStatus = (status: string): "pending" | "running" | "waiting_user" | "done" | "error" =>
@@ -136,7 +131,7 @@ const loadAuthorizedSkill = async (
     });
     return null;
   }
-  if (!skillsService.canActorAccessSkill(skill, actor)) {
+  if (!skillsService.canActorAccessSkill(skill, actor, tenantId)) {
     forbidSkillAccess(reply);
     return null;
   }
@@ -189,17 +184,14 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       const includeDisabled = request.query.includeDisabled === "1" || request.query.includeDisabled === "true";
       const actor = resolveActor(request.authPrincipal?.userId);
       const tenantId = resolveRequestTenantId(request);
-      const items = query
-        ? await skillsService.searchSkills(query)
-        : includeDisabled
-          ? await skillsService.listAll()
-          : await skillsService.listInstalled();
+      const items = includeDisabled ? await skillsService.listAll() : await skillsService.listInstalled();
       const scoped =
         scope && (scope === "system" || scope === "tenant" || scope === "user")
           ? items.filter((item) => resolveSkillScope(item) === scope)
           : items;
-      const visible = scoped.filter(
-        (item) => isSkillVisibleForTenant(item, tenantId) && skillsService.canActorAccessSkill(item, actor)
+      const queried = query ? scoped.filter((item) => matchesSkillQuery(item, query)) : scoped;
+      const visible = queried.filter(
+        (item) => isSkillVisibleForTenant(item, tenantId) && skillsService.canActorAccessSkill(item, actor, tenantId)
       );
       return {
         items: includeDisabled ? visible : visible.filter((item) => item.installed)
@@ -232,6 +224,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       const result = await skillsService.installSkill({
         name: body.name,
         repositoryUrl: body.repositoryUrl,
+        tenantId: resolveRequestTenantId(request),
         categories,
         scope,
         ...(body.version ? { version: body.version } : {}),
@@ -284,6 +277,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       const result = await skillsService.installSkill({
         name,
         repositoryUrl,
+        tenantId: resolveRequestTenantId(request),
         sourceType,
         sourceRef: fileName,
         sourcePayloadBase64: contentBase64,
@@ -558,7 +552,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         if (!skill) return;
         const job = await dispatchAndAwaitRunnerJob(
           {
-            tenantId: request.tenantId ?? "tenant_default",
+            tenantId: resolveRequestTenantId(request),
             type: "system",
             title: `Skill execute ${skill.id}`,
             createdBy: actor,
@@ -566,7 +560,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
               internalAction: "skill.execute",
               skillId: skill.id,
               actor,
-              tenantId: request.tenantId ?? "tenant_default",
+              tenantId: resolveRequestTenantId(request),
               ...(typeof body.input?.projectId === "string" ? { projectId: body.input.projectId } : {}),
               ...(asString(body.command) ? { command: asString(body.command) } : {}),
               ...(asStringArray(body.args).length > 0 ? { args: asStringArray(body.args) } : {}),

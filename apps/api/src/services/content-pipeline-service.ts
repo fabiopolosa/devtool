@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   ChatReasoningProvider,
   ImageGenerationProvider,
+  PromptRegistryEntry,
   ProviderName
 } from "@cp/domain";
 import { createDefaultProviderRegistry } from "@cp/providers";
@@ -17,6 +18,20 @@ const defaultReasoningProviderOrder: ProviderName[] = ["openai", "anthropic", "g
 const defaultImageProviderOrder: ProviderName[] = ["openai", "openrouter", "kie_ai", "gemini"];
 
 const nowIso = (): string => new Date().toISOString();
+
+interface PromptMetadata {
+  source: "registry";
+  scope: PromptRegistryEntry["scope"];
+  type: PromptRegistryEntry["type"];
+  target: string;
+  version: string;
+  promptId: string;
+}
+
+interface ResolvedPrompt {
+  prompt: string;
+  metadata: PromptMetadata;
+}
 
 const asString = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
@@ -136,6 +151,27 @@ const aggregateUsage = (usages: ProviderStepUsage[]): RunnerUsageSummary => {
         ...(usage.warnings?.length ? { warnings: usage.warnings } : {})
       }))
     }
+  };
+};
+
+const formatPromptHeader = (metadata: PromptMetadata): string =>
+  [
+    `PROMPT METADATA: source=${metadata.source} scope=${metadata.scope} version=${metadata.version} type=${metadata.type} target=${metadata.target} promptId=${metadata.promptId}`,
+    ""
+  ].join("\n");
+
+const buildPromptWithMetadata = (entry: PromptRegistryEntry): ResolvedPrompt => {
+  const metadata: PromptMetadata = {
+    source: "registry",
+    scope: entry.scope,
+    type: entry.type,
+    target: entry.target,
+    version: entry.version,
+    promptId: entry.id
+  };
+  return {
+    metadata,
+    prompt: [formatPromptHeader(metadata), entry.content.trim()].join("\n")
   };
 };
 
@@ -414,35 +450,26 @@ const toGeneratedImageAsset = (
   };
 };
 
-const resolvePromptWithFallback = async (input: {
+export const resolveStrictPrompt = async (input: {
   tenantId: string;
   projectId?: string;
-  preferredTargets: string[];
-  fallbackRoleTargets: string[];
-}): Promise<string> => {
-  for (const target of input.preferredTargets) {
-    const promptEntry = await promptRegistryService.resolveActivePrompt({
-      tenantId: input.tenantId,
-      ...(input.projectId ? { projectId: input.projectId } : {}),
-      type: "workflow",
-      target
-    });
-    if (promptEntry?.content.trim()) return promptEntry.content.trim();
+  type: PromptRegistryEntry["type"];
+  target: string;
+}): Promise<ResolvedPrompt> => {
+  const promptEntry = await promptRegistryService.resolveActivePrompt({
+    tenantId: input.tenantId,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    type: input.type,
+    target: input.target
+  });
+
+  if (!promptEntry?.content.trim()) {
+    throw new Error(
+      `Missing active prompt registry entry for ${input.type}/${input.target} (tenant=${input.tenantId}${input.projectId ? `, project=${input.projectId}` : ""})`
+    );
   }
 
-  for (const roleTarget of input.fallbackRoleTargets) {
-    const promptEntry = await promptRegistryService.resolveActivePrompt({
-      tenantId: input.tenantId,
-      ...(input.projectId ? { projectId: input.projectId } : {}),
-      type: "role",
-      target: roleTarget
-    });
-    if (promptEntry?.content.trim()) return promptEntry.content.trim();
-  }
-
-  throw new Error(
-    `Missing active prompt registry entry for targets [${[...input.preferredTargets, ...input.fallbackRoleTargets].join(", ")}]`
-  );
+  return buildPromptWithMetadata(promptEntry);
 };
 
 const slug = (value: string): string =>
@@ -501,6 +528,7 @@ export interface ResearchPipelineOutput {
   plannedQueries: string[];
   planningRationale: string;
   retrievalSummary: string;
+  promptMetadata: PromptMetadata;
   sources: ResearchPipelineSource[];
   scoredEvidence: ResearchPipelineEvidence[];
   summaries: string[];
@@ -517,6 +545,7 @@ export interface ContentPipelineOutput {
   tone: string;
   targetLengthWords: number;
   research: ResearchPipelineOutput;
+  promptMetadata: PromptMetadata;
   outline: ContentOutlineSection[];
   sections: ContentSectionDraft[];
   draft: string;
@@ -543,6 +572,7 @@ export interface VisualPipelineOutput {
   concept: string;
   style: string;
   rationale: string;
+  promptMetadata: PromptMetadata;
   scenes: VisualSceneOutput[];
   usage: RunnerUsageSummary;
   warnings: string[];
@@ -1004,11 +1034,11 @@ export interface RunResearchPipelineInput {
 export const runResearchPipeline = async (
   input: RunResearchPipelineInput
 ): Promise<ResearchPipelineOutput> => {
-  const systemPrompt = await resolvePromptWithFallback({
+  const resolvedPrompt = await resolveStrictPrompt({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    preferredTargets: ["research_pipeline", "autoresearch"],
-    fallbackRoleTargets: ["gemini_researcher", "planner"]
+    type: "workflow",
+    target: "research_pipeline"
   });
 
   const [planning, contextDigest] = await Promise.all([
@@ -1016,7 +1046,7 @@ export const runResearchPipeline = async (
       tenantId: input.tenantId,
       ...(input.projectId ? { projectId: input.projectId } : {}),
       query: input.query,
-      systemPrompt
+      systemPrompt: resolvedPrompt.prompt
     }),
     collectContextDigest({
       tenantId: input.tenantId,
@@ -1035,7 +1065,7 @@ export const runResearchPipeline = async (
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     query: input.query,
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     sources: gathered
   });
 
@@ -1043,7 +1073,7 @@ export const runResearchPipeline = async (
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     query: input.query,
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     sources: validation.sources.filter((source) => source.validationStatus !== "rejected")
   });
 
@@ -1051,7 +1081,7 @@ export const runResearchPipeline = async (
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     query: input.query,
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     contextDigest,
     scoredEvidence: scoring.scoredEvidence
   });
@@ -1070,6 +1100,7 @@ export const runResearchPipeline = async (
     plannedQueries: sourceQuerySet,
     planningRationale: planning.rationale,
     retrievalSummary,
+    promptMetadata: resolvedPrompt.metadata,
     sources: validation.sources,
     scoredEvidence: scoring.scoredEvidence,
     summaries: synthesis.summaries,
@@ -1457,17 +1488,17 @@ export const runContentPipeline = async (
     ...(input.projectId ? { projectId: input.projectId } : {}),
     query: input.researchQuery?.trim() || input.topic
   });
-  const systemPrompt = await resolvePromptWithFallback({
+  const resolvedPrompt = await resolveStrictPrompt({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    preferredTargets: ["content_pipeline", "longform_content_pipeline"],
-    fallbackRoleTargets: ["planner", "gemini_researcher"]
+    type: "workflow",
+    target: "content_pipeline"
   });
 
   const outline = await generateOutline({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     topic: input.topic,
     objective,
     audience,
@@ -1479,7 +1510,7 @@ export const runContentPipeline = async (
   const breakdown = await generateSectionBreakdown({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     topic: input.topic,
     outline: outline.outline,
     research
@@ -1487,7 +1518,7 @@ export const runContentPipeline = async (
   const drafting = await draftSections({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     topic: input.topic,
     objective,
     audience,
@@ -1499,7 +1530,7 @@ export const runContentPipeline = async (
   const refinement = await refineDraft({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     topic: input.topic,
     tone,
     audience,
@@ -1539,6 +1570,7 @@ export const runContentPipeline = async (
     tone,
     targetLengthWords,
     research,
+    promptMetadata: resolvedPrompt.metadata,
     outline: outline.outline,
     sections: drafting.sections,
     draft: drafting.draft,
@@ -1784,16 +1816,16 @@ export const runVisualPipeline = async (
   input: RunVisualPipelineInput
 ): Promise<VisualPipelineOutput> => {
   const style = input.style?.trim() || "cinematic documentary";
-  const systemPrompt = await resolvePromptWithFallback({
+  const resolvedPrompt = await resolveStrictPrompt({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    preferredTargets: ["multimodal_pipeline", "visual_pipeline"],
-    fallbackRoleTargets: ["image_designer", "planner"]
+    type: "workflow",
+    target: "multimodal_pipeline"
   });
   const planning = await planScenes({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     concept: input.concept,
     style,
     contentSummary: input.contentSummary
@@ -1801,14 +1833,14 @@ export const runVisualPipeline = async (
   const shots = await defineShots({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     concept: input.concept,
     scenes: planning.scenes
   });
   const prompts = await generateScenePrompts({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt,
+    systemPrompt: resolvedPrompt.prompt,
     concept: input.concept,
     style,
     scenes: planning.scenes,
@@ -1838,6 +1870,7 @@ export const runVisualPipeline = async (
     concept: input.concept,
     style,
     rationale: planning.rationale,
+    promptMetadata: resolvedPrompt.metadata,
     scenes,
     usage: aggregateUsage([planning.usage, shots.usage, prompts.usage]),
     warnings: [...planning.warnings, ...shots.warnings, ...prompts.warnings]

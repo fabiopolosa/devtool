@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { AutoResearchExperiment, AutoResearchRun, ChatReasoningProvider, ProviderName } from "@cp/domain";
+import type {
+  AutoResearchExperiment,
+  AutoResearchRun,
+  ChatReasoningProvider,
+  ProviderName,
+  PromptRegistryEntry
+} from "@cp/domain";
 import { createDefaultProviderRegistry } from "@cp/providers";
 import { apiStore } from "./api-store.js";
 import { buildCompactKnowledgeContext } from "./knowledge-service.js";
@@ -11,6 +17,20 @@ import {
 
 const nowIso = (): string => new Date().toISOString();
 const scoreEpsilon = 1e-9;
+
+interface PromptMetadata {
+  source: "registry";
+  scope: PromptRegistryEntry["scope"];
+  type: PromptRegistryEntry["type"];
+  target: string;
+  version: string;
+  promptId: string;
+}
+
+interface ResolvedPrompt {
+  prompt: string;
+  metadata: PromptMetadata;
+}
 
 interface MetricDefinition {
   name: string;
@@ -67,6 +87,7 @@ export interface VariantResearchReport {
   query: string;
   plannedQueries: string[];
   planningRationale: string;
+  promptMetadata: PromptMetadata;
   sources: ResearchSource[];
   scoredEvidence: ScoredEvidence[];
   summary: string;
@@ -292,6 +313,27 @@ const aggregateUsage = (usages: ProviderStepUsage[]): RunnerUsageSummary => {
   };
 };
 
+const formatPromptHeader = (metadata: PromptMetadata): string =>
+  [
+    `PROMPT METADATA: source=${metadata.source} scope=${metadata.scope} version=${metadata.version} type=${metadata.type} target=${metadata.target} promptId=${metadata.promptId}`,
+    ""
+  ].join("\n");
+
+const buildPromptWithMetadata = (entry: PromptRegistryEntry): ResolvedPrompt => {
+  const metadata: PromptMetadata = {
+    source: "registry",
+    scope: entry.scope,
+    type: entry.type,
+    target: entry.target,
+    version: entry.version,
+    promptId: entry.id
+  };
+  return {
+    metadata,
+    prompt: [formatPromptHeader(metadata), entry.content.trim()].join("\n")
+  };
+};
+
 const runProviderStep = async (input: {
   systemPrompt: string;
   prompt: string;
@@ -352,29 +394,21 @@ const runProviderStep = async (input: {
   );
 };
 
-const resolveAutoResearchPrompt = async (tenantId: string, projectId?: string): Promise<string> => {
+export const resolveAutoResearchPrompt = async (tenantId: string, projectId?: string): Promise<ResolvedPrompt> => {
   const workflowPrompt = await promptRegistryService.resolveActivePrompt({
     tenantId,
     ...(projectId ? { projectId } : {}),
     type: "workflow",
     target: "autoresearch"
   });
-  if (workflowPrompt?.content.trim()) {
-    return workflowPrompt.content.trim();
+
+  if (!workflowPrompt?.content.trim()) {
+    throw new Error(
+      `Missing active prompt registry entry for workflow/autoresearch (tenant=${tenantId}${projectId ? `, project=${projectId}` : ""})`
+    );
   }
 
-  const rolePrompt = await promptRegistryService.resolveActivePrompt({
-    tenantId,
-    ...(projectId ? { projectId } : {}),
-    type: "role",
-    target: "planner"
-  });
-
-  if (!rolePrompt?.content.trim()) {
-    throw new Error("Missing active prompt registry entry for AutoResearch (workflow/autoresearch or role/planner)");
-  }
-
-  return rolePrompt.content.trim();
+  return buildPromptWithMetadata(workflowPrompt);
 };
 
 const planQueries = async (input: {
@@ -608,7 +642,7 @@ const runResearchPipeline = async (input: {
   projectId?: string;
   variantId: string;
   baseQuery: string;
-  systemPrompt: string;
+  prompt: ResolvedPrompt;
 }): Promise<VariantResearchReport> => {
   const startedAt = Date.now();
   const usages: ProviderStepUsage[] = [];
@@ -616,7 +650,7 @@ const runResearchPipeline = async (input: {
   const planning = await planQueries({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt: input.systemPrompt,
+    systemPrompt: input.prompt.prompt,
     baseQuery: input.baseQuery,
     variantId: input.variantId
   });
@@ -631,7 +665,7 @@ const runResearchPipeline = async (input: {
   const scoring = await scoreEvidence({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt: input.systemPrompt,
+    systemPrompt: input.prompt.prompt,
     query: input.baseQuery,
     variantId: input.variantId,
     sources
@@ -643,7 +677,7 @@ const runResearchPipeline = async (input: {
   const synthesis = await synthesizeReport({
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
-    systemPrompt: input.systemPrompt,
+    systemPrompt: input.prompt.prompt,
     query: input.baseQuery,
     variantId: input.variantId,
     scoredEvidence: scoring.scored
@@ -655,6 +689,7 @@ const runResearchPipeline = async (input: {
     query: input.baseQuery,
     plannedQueries: planning.queries,
     planningRationale: planning.rationale,
+    promptMetadata: input.prompt.metadata,
     sources,
     scoredEvidence: scoring.scored,
     summary: synthesis.summary,
@@ -736,6 +771,7 @@ export interface AutoResearchExecutionResult {
   rollbackSuggested: boolean;
   rollbackReason?: string;
   contextMatchCount: number;
+  promptMetadata?: PromptMetadata;
   reports: VariantResearchReport[];
   usage: RunnerUsageSummary;
 }
@@ -753,7 +789,7 @@ export const runAutoResearchExperiment = async (
 
   const baseQuery =
     input.query?.trim() || `${experiment.targetType} ${experiment.baselineVersionRef}`.trim();
-  const systemPrompt = await resolveAutoResearchPrompt(input.tenantId, experiment.projectId);
+  const resolvedPrompt = await resolveAutoResearchPrompt(input.tenantId, experiment.projectId);
 
   const metricSet = normalizeMetricSet(experiment.metricSet);
   const createdAt = nowIso();
@@ -767,7 +803,7 @@ export const runAutoResearchExperiment = async (
         ...(experiment.projectId ? { projectId: experiment.projectId } : {}),
         variantId,
         baseQuery: `${baseQuery} (variant: ${variantId})`,
-        systemPrompt
+        prompt: resolvedPrompt
       });
       reports.push(report);
 
@@ -817,6 +853,7 @@ export const runAutoResearchExperiment = async (
         confidence: 0,
         rationale: "Provider execution failed for this variant.",
         elapsedMs: 1,
+        promptMetadata: resolvedPrompt.metadata,
         usage: {
           provider: "openai",
           model: "unavailable",
@@ -852,6 +889,7 @@ export const runAutoResearchExperiment = async (
     rollbackSuggested: rollback.shouldRollback,
     ...(rollback.reason ? { rollbackReason: rollback.reason } : {}),
     contextMatchCount,
+    promptMetadata: resolvedPrompt.metadata,
     reports,
     usage
   };

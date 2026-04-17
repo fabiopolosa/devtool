@@ -49,6 +49,7 @@ describe("Skills API contract", () => {
   });
 
   const headers = { "x-tenant-id": "tenant_default" };
+  const otherTenantHeaders = { "x-tenant-id": "tenant_other" };
 
   it("lists marketplace catalog via /skills/catalog", async () => {
     const response = await app.inject({
@@ -277,5 +278,45 @@ describe("Skills API contract", () => {
     expect(crossTenantList.statusCode).toBe(200);
     const crossTenantBody = crossTenantList.json() as { items: Array<{ id: string }> };
     expect(crossTenantBody.items.some((item) => item.id === installBody.item.id)).toBe(false);
+  });
+
+  it("keeps installed skill search tenant-scoped", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/skills/installed?includeDisabled=1&query=release-notes",
+      headers: otherTenantHeaders
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { items: Array<{ id: string; name: string }> };
+    expect(body.items.some((item) => item.name === "release-notes")).toBe(false);
+  });
+
+  it("blocks cross-tenant skill execution", async () => {
+    const install = await app.inject({
+      method: "POST",
+      url: "/skills/install-upload",
+      headers,
+      payload: {
+        name: "tenant-execution-guard",
+        sourceType: "file",
+        fileName: "tenant-execution-guard.skill.md",
+        contentBase64: Buffer.from("skill: execution guard").toString("base64"),
+        instructions: "Tenant isolated skill for execution path checks."
+      }
+    });
+    expect(install.statusCode).toBe(200);
+    const installBody = install.json() as { item: { id: string } };
+
+    const execute = await app.inject({
+      method: "POST",
+      url: `/skills/${installBody.item.id}/execute`,
+      headers: otherTenantHeaders,
+      payload: {
+        mode: "local"
+      }
+    });
+
+    expect(execute.statusCode).toBe(404);
   });
 });

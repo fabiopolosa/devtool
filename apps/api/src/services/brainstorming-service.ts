@@ -79,6 +79,20 @@ const resolveDefaultPromptRolesDir = (): string => {
 
 const promptRolesDir = process.env.PROMPT_ROLES_DIR?.trim() || resolveDefaultPromptRolesDir();
 
+export const formatPromptRegistryInstructions = (entry: {
+  id: string;
+  type: string;
+  scope: string;
+  target: string;
+  version: string;
+  content: string;
+}): string =>
+  [
+    `PROMPT METADATA: source=registry scope=${entry.scope} version=${entry.version} type=${entry.type} target=${entry.target} promptId=${entry.id}`,
+    "",
+    entry.content.trim()
+  ].join("\n");
+
 const brainstormingService = new BrainstormingService({
   subpromptCatalog: {
     list: (filters) => listSubprompts(filters),
@@ -94,7 +108,12 @@ const brainstormingService = new BrainstormingService({
       ...(context?.type ? { type: context.type } : { type: "role" }),
       ...(context?.target ? { target: context.target } : { target: role })
     });
-    return activeEntry?.content;
+    if (!activeEntry?.content.trim()) {
+      throw new Error(
+        `Missing active prompt registry entry for ${context?.type ?? "role"}/${context?.target ?? role} (tenant=${context?.tenantId ?? "tenant_default"}${context?.projectId ? `, project=${context.projectId}` : ""})`
+      );
+    }
+    return formatPromptRegistryInstructions(activeEntry);
   }
 });
 

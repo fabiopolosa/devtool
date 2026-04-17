@@ -464,4 +464,38 @@ describe("DagRunner", () => {
     expect(telemetry.usageEvents).toHaveLength(1);
     expect(telemetry.usageEvents[0]?.provider).toBe("openai");
   });
+
+  it("fails generation jobs without a registry-backed prompt", async () => {
+    const store = new InMemoryStore();
+    const queue = new ImmediateQueue();
+    const job = makeJob({
+      id: "gen_missing_prompt",
+      type: "generation",
+      ready: true,
+      status: "idle",
+      maxRetries: 0,
+      payload: {
+        role: "planner"
+      }
+    });
+    store.seed(job);
+
+    const runner = new DagRunner({
+      tenantId: "tenant_a",
+      store,
+      queue,
+      maxConcurrent: 1,
+      pollIntervalMs: 10_000,
+      autoPolling: false
+    });
+
+    await runner.start();
+    await runner.runOnce();
+    await runner.stop();
+
+    const updated = await store.getJob("gen_missing_prompt", "tenant_a");
+    const lastError = (updated?.payload as { lastError?: { message?: string } } | undefined)?.lastError;
+    expect(updated?.status).toBe("error");
+    expect(lastError?.message).toContain("Prompt registry resolver is required for role");
+  });
 });

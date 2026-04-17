@@ -88,6 +88,7 @@ export interface SkillValidationResult {
 
 export interface SkillExecutionInput {
   skillId: string;
+  tenantId?: string;
   actor?: string;
   command?: string;
   args?: string[];
@@ -119,6 +120,7 @@ export interface SkillExecutor {
 export interface InstallSkillInput {
   name: string;
   repositoryUrl: string;
+  tenantId?: string;
   description?: string;
   version?: string;
   categories?: string[];
@@ -502,9 +504,8 @@ export class SkillsService {
 
   async searchSkills(query: string): Promise<Skill[]> {
     const normalizedQuery = query.trim().toLowerCase();
-    const cached = [...this.cache.values()].flat();
     const persisted = await this.options.store.listSkills();
-    const allSkills = uniqueSkills([...persisted, ...cached]);
+    const allSkills = uniqueSkills(persisted);
 
     if (!normalizedQuery) {
       return allSkills;
@@ -529,6 +530,13 @@ export class SkillsService {
     const existing = await this.options.store.findSkillByNameAndRepository(input.name, input.repositoryUrl);
     const nowIso = this.now().toISOString();
     const actor = input.actor?.trim() || "skills_service";
+    const tenantId = normalizeTenantId(input.tenantId) ?? normalizeTenantId(input.metadata?.tenantId);
+    const existingTenantId = existing ? resolveSkillTenantId(existing) : undefined;
+    if (tenantId && existingTenantId && existingTenantId !== tenantId) {
+      throw new Error(
+        `Skill '${input.name}' already exists in tenant '${existingTenantId}' and cannot be reused in tenant '${tenantId}'`
+      );
+    }
     const scope = input.scope ?? existing?.scope ?? "tenant";
     const sourceType = input.sourceType ?? inferSourceType(input.repositoryUrl);
     const sourceRef = input.sourceRef ?? existing?.sourceRef ?? input.repositoryUrl;
@@ -550,7 +558,7 @@ export class SkillsService {
             categories: input.categories ?? existing?.categories ?? []
           });
 
-    const base: Skill = existing ?? {
+    const base = (existing ?? {
       id: this.idGenerator(),
       name: input.name,
       description: input.description ?? "Installed skill",
@@ -576,7 +584,8 @@ export class SkillsService {
       currentVersion: version,
       versionHistory: [],
       metadata: {}
-    };
+    }) as Skill & { tenantId?: string };
+    const baseTenantId = existingTenantId ?? tenantId;
 
     let error: string | undefined;
     let installed = existing?.installed ?? false;
@@ -609,6 +618,7 @@ export class SkillsService {
     const metadata = {
       ...(base.metadata ?? {}),
       ...(input.metadata ?? {}),
+      ...(tenantId ? { tenantId } : existingTenantId ? { tenantId: existingTenantId } : {}),
       sourceType,
       scope,
       ...(input.sourcePayloadBase64
@@ -618,8 +628,9 @@ export class SkillsService {
         : {})
     };
 
-    const next: Skill = {
+    const next = {
       ...base,
+      ...(baseTenantId ? { tenantId: baseTenantId } : {}),
       name: input.name,
       repositoryUrl: input.repositoryUrl,
       description: input.description ?? base.description,
@@ -642,7 +653,7 @@ export class SkillsService {
       currentVersion: version,
       versionHistory,
       metadata
-    };
+    } as Skill & { tenantId?: string };
 
     const saved = await this.options.store.saveSkill(next);
     return {
@@ -840,12 +851,12 @@ export class SkillsService {
     });
   }
 
-  canActorAccessSkill(skill: Skill, actor: string): boolean {
-    return canActorAccessSkillScope(skill, actor);
+  canActorAccessSkill(skill: Skill, actor: string, tenantId?: string): boolean {
+    return canActorAccessSkillScope(skill, actor, tenantId);
   }
 
-  assertActorCanAccessSkill(skill: Skill, actor: string): void {
-    if (this.canActorAccessSkill(skill, actor)) return;
+  assertActorCanAccessSkill(skill: Skill, actor: string, tenantId?: string): void {
+    if (this.canActorAccessSkill(skill, actor, tenantId)) return;
     throw new Error(
       `Actor '${actor}' cannot access ${resolveSkillScope(skill)} scoped skill '${skill.name}'.`
     );
@@ -857,7 +868,7 @@ export class SkillsService {
       throw new Error(`Skill not found: ${input.skillId}`);
     }
     const actor = input.actor?.trim() || "skills_service";
-    this.assertActorCanAccessSkill(skill, actor);
+    this.assertActorCanAccessSkill(skill, actor, input.tenantId);
 
     if (!skill.installed) {
       throw new Error(`Skill '${skill.name}' is not installed`);
@@ -887,6 +898,7 @@ export class SkillsService {
     const nowIso = this.now().toISOString();
     const metadata = {
       ...(skill.metadata ?? {}),
+      ...(resolveSkillTenantId(skill) ? { tenantId: resolveSkillTenantId(skill) } : {}),
       lastExecution: {
         at: nowIso,
         actor,
@@ -1003,9 +1015,27 @@ export const resolveSkillScope = (skill: Skill): SkillScope => {
   return "tenant";
 };
 
+export const resolveSkillTenantId = (skill: Skill): string | undefined => {
+  const typedSkill = skill as Skill & { tenantId?: unknown };
+  const directTenantId = normalizeTenantId(typedSkill.tenantId);
+  if (directTenantId) return directTenantId;
+
+  const metadataTenantId = typedSkill.metadata && typeof typedSkill.metadata === "object"
+    ? normalizeTenantId((typedSkill.metadata as Record<string, unknown>).tenantId)
+    : undefined;
+  return metadataTenantId;
+};
+
 const normalizeActorIdentity = (value: string): string => value.trim().replace(/^user:/, "");
 
-const canActorAccessSkillScope = (skill: Skill, actor: string): boolean => {
+const canActorAccessSkillScope = (skill: Skill, actor: string, tenantId?: string): boolean => {
+  const skillTenantId = resolveSkillTenantId(skill);
+  if (tenantId) {
+    if (!skillTenantId || skillTenantId !== tenantId) {
+      return false;
+    }
+  }
+
   const scope = resolveSkillScope(skill);
   if (scope === "system" || scope === "tenant") {
     return true;
@@ -1017,6 +1047,9 @@ const canActorAccessSkillScope = (skill: Skill, actor: string): boolean => {
   }
   return actorIdentity === createdByIdentity;
 };
+
+const normalizeTenantId = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 
 const defaultSandboxProfile = (scope: SkillScope): SkillSandboxProfile => {
   if (scope === "system") {

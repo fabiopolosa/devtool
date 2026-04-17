@@ -148,6 +148,7 @@ const tableMap: Record<TableName, AnyPgTable> = {
 const tenantAwareTables = new Set<TableName>([
   "provider_configs",
   "workspaces",
+  "skills",
   "projects",
   "repositories",
   "project_repository_links",

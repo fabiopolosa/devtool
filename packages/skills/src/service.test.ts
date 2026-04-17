@@ -393,6 +393,34 @@ describe("@cp/skills SkillsService", () => {
     ).rejects.toThrow("cannot access user scoped skill");
   });
 
+  it("blocks execution when the tenant does not match the stored skill tenant", async () => {
+    const store = new InMemorySkillStore();
+    const service = new SkillsService({
+      store,
+      installer: new StubInstaller(false),
+      idGenerator: () => "skill_tenant_isolation"
+    });
+
+    const installed = await service.installSkill({
+      name: "tenant-isolated-skill",
+      repositoryUrl: "upload://file/tenant-isolated-skill.skill.md",
+      sourceType: "file",
+      sourcePayloadBase64: Buffer.from("skill: tenant isolation").toString("base64"),
+      instructions: "Tenant isolated skill for execution policy validation.",
+      tenantId: "tenant_default"
+    });
+
+    expect((installed.item as Skill & { tenantId?: string }).tenantId).toBe("tenant_default");
+
+    await expect(
+      service.executeSkill({
+        skillId: installed.item.id,
+        actor: "tester",
+        tenantId: "tenant_other"
+      })
+    ).rejects.toThrow("cannot access");
+  });
+
   it("blocks network-target arguments when sandbox network is disabled", async () => {
     const store = new InMemorySkillStore();
     const service = new SkillsService({
