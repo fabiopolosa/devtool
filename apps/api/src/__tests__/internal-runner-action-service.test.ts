@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   },
   workspaces: {
     applyWorkspaceRuntimeAction: vi.fn(),
+    ensureWorkspaceActionReadiness: vi.fn(),
     toWorkspaceRuntimeAction: vi.fn(),
     updateWorkspace: vi.fn()
   }
@@ -100,6 +101,7 @@ vi.mock("../services/skills-service.js", () => ({
 
 vi.mock("../services/workspaces-service.js", () => ({
   applyWorkspaceRuntimeAction: mocks.workspaces.applyWorkspaceRuntimeAction,
+  ensureWorkspaceActionReadiness: mocks.workspaces.ensureWorkspaceActionReadiness,
   toWorkspaceRuntimeAction: mocks.workspaces.toWorkspaceRuntimeAction,
   updateWorkspace: mocks.workspaces.updateWorkspace
 }));
@@ -109,6 +111,11 @@ const { executeInternalRunnerAction } = await import("../services/internal-runne
 describe("internal runner action service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.workspaces.ensureWorkspaceActionReadiness.mockResolvedValue({
+      id: "workspace_001",
+      tenantId: "tenant_default"
+    });
+    mocks.workspaces.toWorkspaceRuntimeAction.mockReturnValue("deploy");
   });
 
   it("propagates skill audit persistence failures", async () => {
@@ -137,5 +144,35 @@ describe("internal runner action service", () => {
 
     expect(mocks.skills.executeSkill).toHaveBeenCalledOnce();
     expect(mocks.audit.record).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects invalid workspace deploy pipelines instead of falling back to content", async () => {
+    await expect(
+      executeInternalRunnerAction({
+        action: "workspace.deploy",
+        payload: {
+          tenantId: "tenant_default",
+          workspaceId: "workspace_001",
+          projectId: "project_001",
+          metadata: {
+            deploy: {
+              pipeline: "bogus"
+            }
+          }
+        }
+      })
+    ).rejects.toThrow("Unsupported workspace.deploy pipeline: bogus");
+
+    expect(mocks.content.runContentPipeline).not.toHaveBeenCalled();
+    expect(mocks.content.runResearchPipeline).not.toHaveBeenCalled();
+    expect(mocks.content.runVisualPipeline).not.toHaveBeenCalled();
+    expect(mocks.content.runMultimodalPipeline).not.toHaveBeenCalled();
+    expect(mocks.workspaces.updateWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant_default",
+        workspaceId: "workspace_001",
+        runtimeStatus: "error"
+      })
+    );
   });
 });

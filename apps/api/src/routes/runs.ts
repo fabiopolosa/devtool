@@ -1,19 +1,33 @@
 import type { FastifyPluginAsync } from "fastify";
 import { apiStore } from "../services/api-store.js";
 import { runEventService } from "../services/run-event-service.js";
+import { requireAuthenticatedTenantPermission } from "../tenant/rbac.js";
 
 export const runsRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.get<{ Querystring: { taskId?: string } }>("/runs", { schema: { tags: ["runs"], summary: "List task runs" } }, async (request) => ({ items: await apiStore.listRuns(request.query.taskId) }));
+  fastify.get<{ Querystring: { taskId?: string } }>(
+    "/runs",
+    { schema: { tags: ["runs"], summary: "List task runs" } },
+    async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
+      return { items: await apiStore.listRuns(request.query.taskId) };
+    }
+  );
 
-  fastify.get<{ Params: { runId: string } }>("/runs/:runId", { schema: { tags: ["runs"], summary: "Get run" } }, async (request, reply) => {
-    const item = await apiStore.getRun(request.params.runId);
-    if (!item) return reply.code(404).send({ item: null });
-    return { item };
-  });
+  fastify.get<{ Params: { runId: string } }>(
+    "/runs/:runId",
+    { schema: { tags: ["runs"], summary: "Get run" } },
+    async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
+      const item = await apiStore.getRun(request.params.runId);
+      if (!item) return reply.code(404).send({ item: null });
+      return { item };
+    }
+  );
 
   fastify.get<{ Params: { runId: string } }>("/runs/:runId/events", {
     schema: { tags: ["runs"], summary: "Stream run events" }
   }, async (request, reply) => {
+    if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
     const runId = request.params.runId;
     const events = await runEventService.list(runId);
 

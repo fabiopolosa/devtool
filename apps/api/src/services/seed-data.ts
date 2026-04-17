@@ -424,6 +424,26 @@ const providerDiscoveryLog: ProviderDiscoveryLog = {
   updatedBy: "system"
 };
 
+const createPromptRegistryEntry = (input: {
+  id: string;
+  type: string;
+  target: string;
+  content: string;
+  version?: string;
+}): PromptRegistryEntry => ({
+  id: input.id,
+  type: input.type,
+  scope: "system",
+  target: input.target,
+  version: input.version ?? "v1",
+  content: input.content,
+  status: "active",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+});
+
 const codexBuilderPrompt: PromptRegistryEntry = {
   id: "prompt_role_codex_builder_v1",
   type: "role",
@@ -528,6 +548,115 @@ const multimodalPipelinePrompt: PromptRegistryEntry = {
   updatedAt: now,
   updatedBy: "system"
 };
+
+const autoresearchWorkflowPrompt = createPromptRegistryEntry({
+  id: "prompt_workflow_autoresearch_v1",
+  type: "workflow",
+  target: "autoresearch",
+  content:
+    "Run controlled experiment research loops: plan precise queries, score evidence, synthesize concise findings, and keep outputs comparable across variants."
+});
+
+const workflowStepPrompts: PromptRegistryEntry[] = [
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_research_query_planning_v1",
+    type: "workflow_step",
+    target: "research_query_planning",
+    content:
+      "Plan concrete research queries for the supplied topic. Return strict JSON object: {\"queries\": string[], \"rationale\": string}. Rules: return 2 to 4 queries, keep them evidence-backed and implementation-oriented, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_research_source_validation_v1",
+    type: "workflow_step",
+    target: "research_source_validation",
+    content:
+      "Validate source quality and direct relevance for the supplied research query. Return strict JSON object: {\"sources\": [{\"sourceId\": string, \"status\": \"validated\"|\"partial\"|\"rejected\", \"confidence\": number, \"rationale\": string}]}. Rules: confidence must be in [0,1], include every sourceId exactly once, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_research_source_scoring_v1",
+    type: "workflow_step",
+    target: "research_source_scoring",
+    content:
+      "Score evidence strength for the supplied research query. Return strict JSON object: {\"evidence\": [{\"sourceId\": string, \"relevance\": number, \"confidence\": number, \"rationale\": string}]}. Rules: relevance and confidence must be in [0,1], include every sourceId exactly once, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_research_synthesis_v1",
+    type: "workflow_step",
+    target: "research_synthesis",
+    content:
+      "Synthesize concise research findings from the supplied evidence. Return strict JSON object: {\"summary\": string, \"confidence\": number, \"rationale\": string, \"summaries\": string[]}. Rules: confidence must be in [0,1], summaries should be short bullet-like lines, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_content_outline_generation_v1",
+    type: "workflow_step",
+    target: "content_outline_generation",
+    content:
+      "Generate a long-form article outline from the supplied topic, objective, audience, tone, and evidence context. Return strict JSON object: {\"outline\": [{\"id\": string, \"title\": string, \"goal\": string}], \"rationale\": string}. Rules: return 4 to 8 sections, ids must be lowercase snake_case, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_content_section_breakdown_v1",
+    type: "workflow_step",
+    target: "content_section_breakdown",
+    content:
+      "Break each supplied outline section into actionable writing points. Return strict JSON object: {\"sections\": [{\"id\": string, \"title\": string, \"objective\": string, \"keyPoints\": string[]}]}. Rules: include every section id once, keep keyPoints length between 2 and 5, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_content_drafting_v1",
+    type: "workflow_step",
+    target: "content_drafting",
+    content:
+      "Draft section-level content from the approved breakdown and supporting evidence. Return strict JSON object: {\"sections\": [{\"id\": string, \"draft\": string}], \"draft\": string}. Rules: produce substantial prose for each section, keep the full draft cohesive, and do not use markdown fences."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_content_refinement_v1",
+    type: "workflow_step",
+    target: "content_refinement",
+    content:
+      "Refine the supplied draft for clarity, flow, and consistency. Return strict JSON object: {\"refinedDraft\": string, \"summary\": string, \"editorialNotes\": string[]}. Rules: keep factual claims aligned with the supplied draft, editorialNotes should mention key improvements, and do not use markdown fences."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_visual_scene_planning_v1",
+    type: "workflow_step",
+    target: "visual_scene_planning",
+    content:
+      "Plan visual scenes for multimodal storytelling. Return strict JSON object: {\"scenes\": [{\"id\": string, \"title\": string, \"subject\": string, \"mood\": string}], \"rationale\": string}. Rules: return 3 to 6 scenes, scene ids should be snake_case, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_visual_shot_definition_v1",
+    type: "workflow_step",
+    target: "visual_shot_definition",
+    content:
+      "Define camera language for the supplied scenes. Return strict JSON object: {\"shots\": [{\"sceneId\": string, \"camera\": string, \"framing\": string, \"movement\": string, \"durationSec\": number}]}. Rules: include every sceneId once, keep durationSec between 3 and 12, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_visual_prompt_generation_v1",
+    type: "workflow_step",
+    target: "visual_prompt_generation",
+    content:
+      "Generate production-ready visual prompts for each supplied scene. Return strict JSON object: {\"prompts\": [{\"sceneId\": string, \"prompt\": string}]}. Rules: include every sceneId once, each prompt should include camera and mood details, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_autoresearch_query_planning_v1",
+    type: "workflow_step",
+    target: "autoresearch_query_planning",
+    content:
+      "Plan research queries for the supplied experiment variant. Return strict JSON object: {\"queries\": string[], \"rationale\": string}. Rules: return 1 to 3 queries, keep them specific and evidence-oriented, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_autoresearch_source_scoring_v1",
+    type: "workflow_step",
+    target: "autoresearch_source_scoring",
+    content:
+      "Score evidence relevance for the supplied research query and experiment variant. Return strict JSON object: {\"evidence\": [{\"sourceId\": string, \"relevance\": number, \"confidence\": number, \"rationale\": string}]}. Rules: relevance and confidence must be in [0,1], include every sourceId exactly once, and do not use markdown."
+  }),
+  createPromptRegistryEntry({
+    id: "prompt_workflow_step_autoresearch_synthesis_v1",
+    type: "workflow_step",
+    target: "autoresearch_synthesis",
+    content:
+      "Synthesize a concise research result from the supplied scored evidence. Return strict JSON object: {\"summary\": string, \"confidence\": number, \"rationale\": string}. Rules: confidence must be in [0,1], the summary should mention the strongest evidence theme, and do not use markdown."
+  })
+];
 
 const stackSubprompt: Subprompt = {
   id: "subprompt_stack_postgres_prisma",
@@ -1337,9 +1466,11 @@ export const seedData: ApiSeedData = {
     plannerPrompt,
     claudeDebuggerPrompt,
     geminiResearcherPrompt,
+    autoresearchWorkflowPrompt,
     researchPipelinePrompt,
     contentPipelinePrompt,
-    multimodalPipelinePrompt
+    multimodalPipelinePrompt,
+    ...workflowStepPrompts
   ],
   experiments: [experiment],
   experimentRuns: [experimentRun],

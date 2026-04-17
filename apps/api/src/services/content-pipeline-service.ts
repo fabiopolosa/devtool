@@ -241,17 +241,11 @@ const runReasoningStep = async (input: {
       capabilityClass: "chat_reasoning"
     });
   } catch (error) {
-    const warning = `Provider resolution failed for step "${input.step}": ${error instanceof Error ? error.message : String(error)}`;
-    warnings.push(warning);
-    return {
-      outputText: input.fallbackOutput,
-      usage: toFallbackUsage({
-        step: input.step,
-        warnings,
-        ...(input.requestedProvider ? { provider: input.requestedProvider } : {})
-      }),
-      warnings
-    };
+    throw new Error(
+      `Unable to resolve live chat_reasoning provider for step "${input.step}": ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
   }
 
   const providerChain = uniqueProviders([
@@ -308,15 +302,9 @@ const runReasoningStep = async (input: {
   warnings.push(
     `No live chat_reasoning provider succeeded for "${input.step}". ${failures.join(" | ")}`
   );
-  return {
-    outputText: input.fallbackOutput,
-    usage: toFallbackUsage({
-      step: input.step,
-      warnings,
-      ...(selection?.provider ? { provider: selection.provider } : {})
-    }),
-    warnings
-  };
+  throw new Error(
+    `No live chat_reasoning provider succeeded for "${input.step}". ${failures.join(" | ")}`
+  );
 };
 
 interface ImageGenerationResult {
@@ -358,8 +346,10 @@ const runImageGenerationStep = async (input: {
       capabilityClass: "chat_reasoning"
     });
   } catch (error) {
-    warnings.push(
-      `Image provider resolution fallback engaged: ${error instanceof Error ? error.message : String(error)}`
+    throw new Error(
+      `Unable to resolve live image_generation provider for scene "${input.sceneId}": ${
+        error instanceof Error ? error.message : String(error)
+      }`
     );
   }
 
@@ -415,16 +405,7 @@ const runImageGenerationStep = async (input: {
     }
   }
 
-  warnings.push(`No live image_generation provider succeeded. ${failures.join(" | ")}`);
-  return {
-    images: [],
-    usage: toFallbackUsage({
-      step: "asset_image_generation",
-      warnings,
-      ...(selection?.provider ? { provider: selection.provider } : {})
-    }),
-    warnings
-  };
+  throw new Error(`No live image_generation provider succeeded. ${failures.join(" | ")}`);
 };
 
 const toGeneratedImageAsset = (
@@ -470,6 +451,21 @@ export const resolveStrictPrompt = async (input: {
   }
 
   return buildPromptWithMetadata(promptEntry);
+};
+
+const buildWorkflowStepPrompt = async (input: {
+  tenantId: string;
+  projectId?: string;
+  target: string;
+  payload: unknown;
+}): Promise<string> => {
+  const stepPrompt = await resolveStrictPrompt({
+    tenantId: input.tenantId,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    type: "workflow_step",
+    target: input.target
+  });
+  return [stepPrompt.prompt, JSON.stringify(input.payload, null, 2)].join("\n\n");
 };
 
 const slug = (value: string): string =>
@@ -650,15 +646,14 @@ const planQueries = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Plan concrete research queries for this topic.",
-      `Topic: ${input.query}`,
-      "Return strict JSON object: {\"queries\": string[], \"rationale\": string}.",
-      "Rules:",
-      "- 2 to 4 queries",
-      "- focus on evidence-backed implementation guidance",
-      "- no markdown"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "research_query_planning",
+      payload: {
+        topic: input.query
+      }
+    }),
     maxTokens: 900,
     temperature: 0.1,
     fallbackOutput: fallback
@@ -764,19 +759,21 @@ const validateSources = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Validate source quality and direct relevance for the research query.",
-      `Query: ${input.query}`,
-      "Sources:",
-      ...input.sources.map((source, index) =>
-        `${index + 1}. id=${source.id} title=${source.title} path=${source.path} baseScore=${source.baseScore} excerpt=${sanitizeLine(source.excerpt, 220)}`
-      ),
-      "Return strict JSON object: {\"sources\": [{\"sourceId\": string, \"status\": \"validated\"|\"partial\"|\"rejected\", \"confidence\": number, \"rationale\": string}]}",
-      "Rules:",
-      "- confidence in [0,1]",
-      "- include every sourceId exactly once",
-      "- no markdown"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "research_source_validation",
+      payload: {
+        query: input.query,
+        sources: input.sources.map((source) => ({
+          sourceId: source.id,
+          title: source.title,
+          path: source.path,
+          baseScore: source.baseScore,
+          excerpt: sanitizeLine(source.excerpt, 220)
+        }))
+      }
+    }),
     maxTokens: 1400,
     temperature: 0.1,
     fallbackOutput: JSON.stringify(heuristicPayload)
@@ -867,19 +864,21 @@ const scoreEvidence = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Score evidence strength for the research query.",
-      `Query: ${input.query}`,
-      "Validated sources:",
-      ...input.sources.map((source, index) =>
-        `${index + 1}. id=${source.id} status=${source.validationStatus} confidence=${source.validationConfidence} baseScore=${source.baseScore} excerpt=${sanitizeLine(source.excerpt, 220)}`
-      ),
-      "Return strict JSON object: {\"evidence\": [{\"sourceId\": string, \"relevance\": number, \"confidence\": number, \"rationale\": string}]}",
-      "Rules:",
-      "- relevance and confidence in [0,1]",
-      "- include every sourceId exactly once",
-      "- no markdown"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "research_source_scoring",
+      payload: {
+        query: input.query,
+        validatedSources: input.sources.map((source) => ({
+          sourceId: source.id,
+          validationStatus: source.validationStatus,
+          validationConfidence: source.validationConfidence,
+          baseScore: source.baseScore,
+          excerpt: sanitizeLine(source.excerpt, 220)
+        }))
+      }
+    }),
     maxTokens: 1500,
     temperature: 0.12,
     fallbackOutput: JSON.stringify(fallback)
@@ -972,21 +971,26 @@ const synthesizeResearch = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Synthesize research findings into concise output.",
-      `Query: ${input.query}`,
-      ...(input.contextDigest ? [`Project context notes: ${sanitizeLine(input.contextDigest, 500)}`] : []),
-      "Evidence:",
-      ...input.scoredEvidence.slice(0, 12).map(
-        (item, index) =>
-          `${index + 1}. sourceId=${item.sourceId} score=${item.score} relevance=${item.relevance} confidence=${item.confidence} rationale=${sanitizeLine(item.rationale, 200)}`
-      ),
-      "Return strict JSON object: {\"summary\": string, \"confidence\": number, \"rationale\": string, \"summaries\": string[]}",
-      "Rules:",
-      "- confidence in [0,1]",
-      "- summaries should be short bullet-like lines",
-      "- no markdown"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "research_synthesis",
+      payload: {
+        query: input.query,
+        ...(input.contextDigest
+          ? {
+              projectContextNotes: sanitizeLine(input.contextDigest, 500)
+            }
+          : {}),
+        evidence: input.scoredEvidence.slice(0, 12).map((item) => ({
+          sourceId: item.sourceId,
+          score: item.score,
+          relevance: item.relevance,
+          confidence: item.confidence,
+          rationale: sanitizeLine(item.rationale, 200)
+        }))
+      }
+    }),
     maxTokens: 1600,
     temperature: 0.14,
     fallbackOutput: JSON.stringify(fallback)
@@ -1145,21 +1149,20 @@ const generateOutline = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Generate a long-form article outline.",
-      `Topic: ${input.topic}`,
-      `Objective: ${input.objective}`,
-      `Audience: ${input.audience}`,
-      `Tone: ${input.tone}`,
-      `Target words: ${input.targetLengthWords}`,
-      `Research summary: ${input.research.summaries.slice(0, 4).join(" | ") || input.research.rationale}`,
-      `Context notes: ${input.contextDigest}`,
-      "Return strict JSON object: {\"outline\": [{\"id\": string, \"title\": string, \"goal\": string}], \"rationale\": string}",
-      "Rules:",
-      "- 4 to 8 sections",
-      "- ids must be lowercase snake_case",
-      "- no markdown"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "content_outline_generation",
+      payload: {
+        topic: input.topic,
+        objective: input.objective,
+        audience: input.audience,
+        tone: input.tone,
+        targetLengthWords: input.targetLengthWords,
+        researchSummary: input.research.summaries.slice(0, 4).join(" | ") || input.research.rationale,
+        contextNotes: input.contextDigest
+      }
+    }),
     maxTokens: 1300,
     temperature: 0.18,
     fallbackOutput: fallback
@@ -1215,22 +1218,25 @@ const generateSectionBreakdown = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Break down each outline section into actionable writing points.",
-      `Topic: ${input.topic}`,
-      "Outline:",
-      ...input.outline.map((section) => `${section.id}: ${section.title} — ${section.goal}`),
-      "Top evidence:",
-      ...input.research.scoredEvidence.slice(0, 8).map(
-        (item, index) =>
-          `${index + 1}. ${item.title} (${item.path}) score=${item.score} rationale=${sanitizeLine(item.rationale, 160)}`
-      ),
-      "Return strict JSON object: {\"sections\": [{\"id\": string, \"title\": string, \"objective\": string, \"keyPoints\": string[]}]}",
-      "Rules:",
-      "- include every section id once",
-      "- keyPoints length 2 to 5",
-      "- no markdown"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "content_section_breakdown",
+      payload: {
+        topic: input.topic,
+        outline: input.outline.map((section) => ({
+          id: section.id,
+          title: section.title,
+          goal: section.goal
+        })),
+        topEvidence: input.research.scoredEvidence.slice(0, 8).map((item) => ({
+          title: item.title,
+          path: item.path,
+          score: item.score,
+          rationale: sanitizeLine(item.rationale, 160)
+        }))
+      }
+    }),
     maxTokens: 1500,
     temperature: 0.16,
     fallbackOutput: JSON.stringify(fallback)
@@ -1330,28 +1336,29 @@ const draftSections = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Draft section-level content from the approved breakdown.",
-      `Topic: ${input.topic}`,
-      `Objective: ${input.objective}`,
-      `Audience: ${input.audience}`,
-      `Tone: ${input.tone}`,
-      `Target words: ${input.targetLengthWords}`,
-      "Sections:",
-      ...input.sections.map(
-        (section) =>
-          `${section.id}: ${section.title} | objective=${section.objective} | keyPoints=${section.keyPoints.join("; ")}`
-      ),
-      "Key evidence:",
-      ...input.research.scoredEvidence.slice(0, 8).map(
-        (item, index) => `${index + 1}. ${item.title} (${item.path}) — ${sanitizeLine(item.rationale, 160)}`
-      ),
-      "Return strict JSON object: {\"sections\": [{\"id\": string, \"draft\": string}], \"draft\": string}",
-      "Rules:",
-      "- produce substantial prose for each section",
-      "- keep draft cohesive",
-      "- no markdown fences"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "content_drafting",
+      payload: {
+        topic: input.topic,
+        objective: input.objective,
+        audience: input.audience,
+        tone: input.tone,
+        targetLengthWords: input.targetLengthWords,
+        sections: input.sections.map((section) => ({
+          id: section.id,
+          title: section.title,
+          objective: section.objective,
+          keyPoints: section.keyPoints
+        })),
+        keyEvidence: input.research.scoredEvidence.slice(0, 8).map((item) => ({
+          title: item.title,
+          path: item.path,
+          rationale: sanitizeLine(item.rationale, 160)
+        }))
+      }
+    }),
     maxTokens: 2600,
     temperature: 0.2,
     fallbackOutput: fallback
@@ -1416,19 +1423,17 @@ const refineDraft = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Refine this long-form draft for clarity, flow, and consistency.",
-      `Topic: ${input.topic}`,
-      `Audience: ${input.audience}`,
-      `Tone: ${input.tone}`,
-      "Draft:",
-      input.draft.slice(0, 10_000),
-      "Return strict JSON object: {\"refinedDraft\": string, \"summary\": string, \"editorialNotes\": string[]}",
-      "Rules:",
-      "- keep factual claims aligned with provided draft",
-      "- editorialNotes should mention key improvements",
-      "- no markdown fences"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "content_refinement",
+      payload: {
+        topic: input.topic,
+        audience: input.audience,
+        tone: input.tone,
+        draft: input.draft.slice(0, 10_000)
+      }
+    }),
     maxTokens: 2800,
     temperature: 0.12,
     fallbackOutput: fallback
@@ -1616,17 +1621,16 @@ const planScenes = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Plan visual scenes for multimodal storytelling.",
-      `Concept: ${input.concept}`,
-      `Style: ${input.style}`,
-      `Content summary: ${sanitizeLine(input.contentSummary, 500)}`,
-      "Return strict JSON object: {\"scenes\": [{\"id\": string, \"title\": string, \"subject\": string, \"mood\": string}], \"rationale\": string}",
-      "Rules:",
-      "- 3 to 6 scenes",
-      "- scene ids should be snake_case",
-      "- no markdown"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "visual_scene_planning",
+      payload: {
+        concept: input.concept,
+        style: input.style,
+        contentSummary: sanitizeLine(input.contentSummary, 500)
+      }
+    }),
     maxTokens: 1300,
     temperature: 0.2,
     fallbackOutput: fallback
@@ -1682,17 +1686,20 @@ const defineShots = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Define camera language for planned scenes.",
-      `Concept: ${input.concept}`,
-      "Scenes:",
-      ...input.scenes.map((scene) => `${scene.id}: ${scene.title} | subject=${scene.subject} | mood=${scene.mood}`),
-      "Return strict JSON object: {\"shots\": [{\"sceneId\": string, \"camera\": string, \"framing\": string, \"movement\": string, \"durationSec\": number}]}",
-      "Rules:",
-      "- include every sceneId once",
-      "- durationSec between 3 and 12",
-      "- no markdown"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "visual_shot_definition",
+      payload: {
+        concept: input.concept,
+        scenes: input.scenes.map((scene) => ({
+          sceneId: scene.id,
+          title: scene.title,
+          subject: scene.subject,
+          mood: scene.mood
+        }))
+      }
+    }),
     maxTokens: 1200,
     temperature: 0.18,
     fallbackOutput: JSON.stringify(fallback)
@@ -1760,21 +1767,27 @@ const generateScenePrompts = async (input: {
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {}),
     systemPrompt: input.systemPrompt,
-    prompt: [
-      "Generate production-ready visual prompts for each scene.",
-      `Concept: ${input.concept}`,
-      `Style: ${input.style}`,
-      "Scene and shot definitions:",
-      ...input.scenes.map((scene) => {
-        const shot = input.shots.find((item) => item.sceneId === scene.id);
-        return `${scene.id}: title=${scene.title} subject=${scene.subject} mood=${scene.mood} camera=${shot?.camera ?? "35mm"} framing=${shot?.framing ?? "medium"} movement=${shot?.movement ?? "static"}`;
-      }),
-      "Return strict JSON object: {\"prompts\": [{\"sceneId\": string, \"prompt\": string}]}",
-      "Rules:",
-      "- include every sceneId once",
-      "- prompt should include camera and mood details",
-      "- no markdown"
-    ].join("\n"),
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "visual_prompt_generation",
+      payload: {
+        concept: input.concept,
+        style: input.style,
+        scenes: input.scenes.map((scene) => {
+          const shot = input.shots.find((item) => item.sceneId === scene.id);
+          return {
+            sceneId: scene.id,
+            title: scene.title,
+            subject: scene.subject,
+            mood: scene.mood,
+            camera: shot?.camera ?? "35mm",
+            framing: shot?.framing ?? "medium",
+            movement: shot?.movement ?? "static"
+          };
+        })
+      }
+    }),
     maxTokens: 1500,
     temperature: 0.2,
     fallbackOutput: JSON.stringify(fallback)

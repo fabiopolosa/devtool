@@ -106,11 +106,19 @@ const recordSkillAudit = async (input: Parameters<typeof auditLogService.record>
 type WorkspaceDeployPipeline = "research" | "content" | "visual" | "multimodal";
 
 const toWorkspaceDeployPipeline = (value: unknown): WorkspaceDeployPipeline => {
+  if (value === undefined || value === null) {
+    return "content";
+  }
   const normalized = asString(value)?.toLowerCase();
-  if (normalized === "research" || normalized === "visual" || normalized === "multimodal") {
+  if (
+    normalized === "research" ||
+    normalized === "content" ||
+    normalized === "visual" ||
+    normalized === "multimodal"
+  ) {
     return normalized;
   }
-  return "content";
+  throw new Error(`Unsupported workspace.deploy pipeline: ${String(value)}`);
 };
 
 const summarizeWorkspaceDeployResult = (
@@ -473,7 +481,6 @@ export const executeInternalRunnerAction = async (
     if (runtimeAction === "deploy") {
       if (!projectId) throw missingPayloadError("projectId");
       const deployConfig = asRecord(metadata?.deploy) ?? metadata ?? {};
-      const pipeline = toWorkspaceDeployPipeline(deployConfig.pipeline);
       const executedAt = new Date().toISOString();
       const deployQuery = asString(deployConfig.query) ?? `Deployment strategy for ${projectId}`;
       const deployConcept = asString(deployConfig.concept) ?? `Deployment visual for ${projectId}`;
@@ -493,6 +500,7 @@ export const executeInternalRunnerAction = async (
         typeof deployConfig.generateImages === "boolean" ? deployConfig.generateImages : undefined;
 
       try {
+        const pipeline = toWorkspaceDeployPipeline(deployConfig.pipeline);
         const pipelineResult =
           pipeline === "research"
             ? await runResearchPipeline({

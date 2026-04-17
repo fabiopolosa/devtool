@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetNormalizedModelDiscoveryCache } from "@cp/providers";
 
@@ -24,6 +24,27 @@ vi.mock("../services/api-store.js", () => ({
 }));
 
 describe("models route contract", () => {
+  const registerAuthenticatedViewer = (app: FastifyInstance): void => {
+    app.addHook("onRequest", async (request) => {
+      request.authPrincipal = {
+        userId: "viewer_001",
+        email: "viewer@control-plane.local",
+        displayName: "Viewer",
+        authBypass: false,
+        roleNames: ["viewer"],
+        permissions: ["canView"]
+      };
+      request.tenantId = "tenant_default";
+      request.tenantPermissions = {
+        canView: true,
+        canEdit: false,
+        canRunAgent: false,
+        canManageUsers: false,
+        canApprove: false
+      };
+    });
+  };
+
   beforeEach(() => {
     resetNormalizedModelDiscoveryCache();
     registryDiscoverModels.mockReset();
@@ -68,6 +89,7 @@ describe("models route contract", () => {
   it("returns normalized models and respects refresh bypass", async () => {
     const { modelsRoutes } = await import("../routes/models.js");
     const app = Fastify();
+    registerAuthenticatedViewer(app);
     await app.register(modelsRoutes);
 
     const first = await app.inject({ method: "GET", url: "/models" });
@@ -120,6 +142,7 @@ describe("models route contract", () => {
 
     const { modelsRoutes } = await import("../routes/models.js");
     const app = Fastify();
+    registerAuthenticatedViewer(app);
     await app.register(modelsRoutes);
 
     const response = await app.inject({ method: "GET", url: "/models?refresh=1" });

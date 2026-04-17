@@ -34,9 +34,8 @@ describe("Security RBAC hardening", () => {
     return (response.json() as { item: { token: string } }).item.token;
   };
 
-  it("fails closed for auth-disabled runtime in production", async () => {
+  it("fails closed for auth-disabled runtime regardless of NODE_ENV", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
 
     try {
       const runtime = {
@@ -54,11 +53,14 @@ describe("Security RBAC hardening", () => {
         apiKeys: []
       } satisfies ApiAuthRuntime;
 
-      const principal = await resolveRequestPrincipal(
-        { headers: {} } as unknown as FastifyRequest,
-        runtime
-      );
-      expect(principal).toBeUndefined();
+      for (const nodeEnv of ["production", "development"] as const) {
+        process.env.NODE_ENV = nodeEnv;
+        const principal = await resolveRequestPrincipal(
+          { headers: {} } as unknown as FastifyRequest,
+          runtime
+        );
+        expect(principal).toBeUndefined();
+      }
     } finally {
       if (previousNodeEnv === undefined) {
         delete process.env.NODE_ENV;
@@ -84,6 +86,16 @@ describe("Security RBAC hardening", () => {
       ["GET", "/tasks/task_001"],
       ["GET", "/approvals"],
       ["GET", "/local-repos"],
+      ["GET", "/roadmap"],
+      ["GET", "/runs"],
+      ["GET", "/runs/run_001"],
+      ["GET", "/runs/run_001/events"],
+      ["GET", "/memory/entries"],
+      ["GET", "/memory/chunks"],
+      ["GET", "/artifacts"],
+      ["GET", "/verification/results"],
+      ["GET", "/verification/steps"],
+      ["GET", "/models"],
       ["GET", "/mcp/status"],
       ["GET", "/subprompts"],
       ["GET", "/usage"],

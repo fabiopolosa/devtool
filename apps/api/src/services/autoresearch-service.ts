@@ -334,6 +334,43 @@ const buildPromptWithMetadata = (entry: PromptRegistryEntry): ResolvedPrompt => 
   };
 };
 
+const resolveStrictPrompt = async (input: {
+  tenantId: string;
+  projectId?: string;
+  type: PromptRegistryEntry["type"];
+  target: string;
+}): Promise<ResolvedPrompt> => {
+  const promptEntry = await promptRegistryService.resolveActivePrompt({
+    tenantId: input.tenantId,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    type: input.type,
+    target: input.target
+  });
+
+  if (!promptEntry?.content.trim()) {
+    throw new Error(
+      `Missing active prompt registry entry for ${input.type}/${input.target} (tenant=${input.tenantId}${input.projectId ? `, project=${input.projectId}` : ""})`
+    );
+  }
+
+  return buildPromptWithMetadata(promptEntry);
+};
+
+const buildWorkflowStepPrompt = async (input: {
+  tenantId: string;
+  projectId?: string;
+  target: string;
+  payload: unknown;
+}): Promise<string> => {
+  const stepPrompt = await resolveStrictPrompt({
+    tenantId: input.tenantId,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    type: "workflow_step",
+    target: input.target
+  });
+  return [stepPrompt.prompt, JSON.stringify(input.payload, null, 2)].join("\n\n");
+};
+
 const runProviderStep = async (input: {
   systemPrompt: string;
   prompt: string;
@@ -395,20 +432,12 @@ const runProviderStep = async (input: {
 };
 
 export const resolveAutoResearchPrompt = async (tenantId: string, projectId?: string): Promise<ResolvedPrompt> => {
-  const workflowPrompt = await promptRegistryService.resolveActivePrompt({
+  return resolveStrictPrompt({
     tenantId,
     ...(projectId ? { projectId } : {}),
     type: "workflow",
     target: "autoresearch"
   });
-
-  if (!workflowPrompt?.content.trim()) {
-    throw new Error(
-      `Missing active prompt registry entry for workflow/autoresearch (tenant=${tenantId}${projectId ? `, project=${projectId}` : ""})`
-    );
-  }
-
-  return buildPromptWithMetadata(workflowPrompt);
 };
 
 const planQueries = async (input: {
@@ -418,20 +447,17 @@ const planQueries = async (input: {
   baseQuery: string;
   variantId: string;
 }): Promise<{ queries: string[]; rationale: string; usage: ProviderStepUsage }> => {
-  const stepInputText = [
-    "Plan research queries for this experiment variant.",
-    `Variant: ${input.variantId}`,
-    `Base query: ${input.baseQuery}`,
-    "Return strict JSON object: {\"queries\": string[], \"rationale\": string }",
-    "Rules:",
-    "- queries length: 1 to 3",
-    "- queries must be specific and evidence-oriented",
-    "- no markdown"
-  ].join("\n");
-
   const response = await runProviderStep({
     systemPrompt: input.systemPrompt,
-    prompt: stepInputText,
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "autoresearch_query_planning",
+      payload: {
+        variantId: input.variantId,
+        baseQuery: input.baseQuery
+      }
+    }),
     step: "query_planning",
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {})
@@ -511,25 +537,24 @@ const scoreEvidence = async (input: {
     return { scored: [], usage: null };
   }
 
-  const stepInputText = [
-    "Score evidence relevance for the research query.",
-    `Variant: ${input.variantId}`,
-    `Query: ${input.query}`,
-    "Sources:",
-    ...input.sources.map(
-      (source, index) =>
-        `${index + 1}. id=${source.id} | title=${source.title} | path=${source.path} | baseScore=${source.baseScore} | excerpt=${sanitizeLines(source.excerpt, 260)}`
-    ),
-    "Return strict JSON object: {\"evidence\": [{\"sourceId\": string, \"relevance\": number, \"confidence\": number, \"rationale\": string}]}.",
-    "Rules:",
-    "- relevance and confidence are in [0,1]",
-    "- include every sourceId exactly once",
-    "- no markdown"
-  ].join("\n");
-
   const response = await runProviderStep({
     systemPrompt: input.systemPrompt,
-    prompt: stepInputText,
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "autoresearch_source_scoring",
+      payload: {
+        variantId: input.variantId,
+        query: input.query,
+        sources: input.sources.map((source) => ({
+          sourceId: source.id,
+          title: source.title,
+          path: source.path,
+          baseScore: source.baseScore,
+          excerpt: sanitizeLines(source.excerpt, 260)
+        }))
+      }
+    }),
     step: "source_scoring",
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {})
@@ -585,25 +610,24 @@ const synthesizeReport = async (input: {
   variantId: string;
   scoredEvidence: ScoredEvidence[];
 }): Promise<{ summary: string; confidence: number; rationale: string; usage: ProviderStepUsage }> => {
-  const stepInputText = [
-    "Synthesize a concise research result from scored evidence.",
-    `Variant: ${input.variantId}`,
-    `Query: ${input.query}`,
-    "Evidence:",
-    ...input.scoredEvidence.slice(0, 10).map(
-      (item, index) =>
-        `${index + 1}. sourceId=${item.sourceId} score=${item.score} relevance=${item.relevance} confidence=${item.confidence} rationale=${sanitizeLines(item.rationale, 200)}`
-    ),
-    "Return strict JSON object: {\"summary\": string, \"confidence\": number, \"rationale\": string}",
-    "Rules:",
-    "- confidence in [0,1]",
-    "- summary must mention strongest evidence theme",
-    "- no markdown"
-  ].join("\n");
-
   const response = await runProviderStep({
     systemPrompt: input.systemPrompt,
-    prompt: stepInputText,
+    prompt: await buildWorkflowStepPrompt({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      target: "autoresearch_synthesis",
+      payload: {
+        variantId: input.variantId,
+        query: input.query,
+        evidence: input.scoredEvidence.slice(0, 10).map((item) => ({
+          sourceId: item.sourceId,
+          score: item.score,
+          relevance: item.relevance,
+          confidence: item.confidence,
+          rationale: sanitizeLines(item.rationale, 200)
+        }))
+      }
+    }),
     step: "synthesis",
     tenantId: input.tenantId,
     ...(input.projectId ? { projectId: input.projectId } : {})

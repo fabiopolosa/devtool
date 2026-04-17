@@ -7,6 +7,7 @@ import {
 } from "@cp/providers";
 import { apiStore } from "../services/api-store.js";
 import { resolveProviderApiKeyFromAuthRef } from "../services/provider-config-service.js";
+import { requireAuthenticatedTenantPermission } from "../tenant/rbac.js";
 
 const parseTruthy = (value: string | undefined): boolean => {
   if (!value) return false;
@@ -120,7 +121,8 @@ export const modelsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Querystring: { refresh?: string } }>(
     "/models",
     { schema: { tags: ["providers"], summary: "List normalized provider models" } },
-    async (request) => {
+    async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
       const strictMode = parseTruthy(process.env.MODELS_STRICT);
       const [providerConfigs, providerModels] = await Promise.all([
         apiStore.listProviderConfigs(),

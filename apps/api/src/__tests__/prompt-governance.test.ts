@@ -76,4 +76,18 @@ describe("prompt governance", () => {
       "Missing active prompt registry entry for workflow/autoresearch"
     );
   });
+
+  it("fails closed when a workflow step prompt is missing", async () => {
+    mockedResolveActivePrompt.mockResolvedValueOnce(null);
+
+    const { resolveStrictPrompt } = await import("../services/content-pipeline-service.js");
+
+    await expect(
+      resolveStrictPrompt({
+        tenantId: "tenant_default",
+        type: "workflow_step",
+        target: "research_query_planning"
+      })
+    ).rejects.toThrow("Missing active prompt registry entry for workflow_step/research_query_planning");
+  });
 });

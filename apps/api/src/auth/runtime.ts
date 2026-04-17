@@ -288,7 +288,7 @@ export const resolveRequestPrincipal = async (
   runtime: ApiAuthRuntime
 ): Promise<SessionPrincipal | undefined> => {
   if (!runtime.enabled) {
-    return process.env.NODE_ENV === "production" ? undefined : runtime.bypassPrincipal;
+    return undefined;
   }
 
   const token = parseBearer(request.headers.authorization);
