@@ -1,20 +1,61 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import {
   startTestExecutionWorkerHarness,
   type TestExecutionWorkerHarness
 } from "./helpers/execution-worker-harness.js";
 
 describe("Agents API contract", () => {
+  type InjectRequestOptions = InjectOptions;
+  type InjectResponse = LightMyRequestResponse;
+
   let app: FastifyInstance;
   let workerHarness: TestExecutionWorkerHarness;
+  let adminHeaders: Record<string, string>;
+  let otherTenantHeaders: Record<string, string>;
 
   beforeAll(async () => {
     process.env.API_STORE_MODE = "in_memory";
     process.env.REDIS_URL = "";
+    process.env.AUTH_ENABLED = "1";
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
     workerHarness = await startTestExecutionWorkerHarness();
+
+    const { apiStore } = await import("../services/api-store.js");
+    const now = new Date().toISOString();
+    if (!await apiStore.getTenant("tenant_other")) {
+      await apiStore.createTenant({
+        id: "tenant_other",
+        name: "Tenant Other",
+        createdAt: now
+      });
+    }
+    if ((await apiStore.listUserTenants({ userId: "user_admin_001", tenantId: "tenant_other" })).length === 0) {
+      await apiStore.createUserTenant({
+        id: "user_tenant_admin_other",
+        userId: "user_admin_001",
+        tenantId: "tenant_other",
+        role: "owner",
+        createdAt: now
+      });
+    }
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "admin@control-plane.local", password: "admin123!" }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = (login.json() as { item: { token: string } }).item.token;
+    adminHeaders = {
+      authorization: `Bearer ${token}`,
+      "x-tenant-id": "tenant_default"
+    };
+    otherTenantHeaders = {
+      authorization: `Bearer ${token}`,
+      "x-tenant-id": "tenant_other"
+    };
   });
 
   afterAll(async () => {
@@ -24,10 +65,20 @@ describe("Agents API contract", () => {
     if (app) {
       await app.close();
     }
+    delete process.env.AUTH_ENABLED;
   });
 
+  const inject = (options: InjectRequestOptions): Promise<InjectResponse> =>
+    app.inject({
+      ...options,
+      headers: {
+        ...adminHeaders,
+        ...(options.headers ?? {})
+      }
+    });
+
   it("lists workflow runtime definitions", async () => {
-    const response = await app.inject({ method: "GET", url: "/agents/runtime/workflows" });
+    const response = await inject({ method: "GET", url: "/agents/runtime/workflows" });
 
     expect(response.statusCode).toBe(200);
     const body = response.json() as { items: Array<{ id: string; maxRetries: number }> };
@@ -38,12 +89,12 @@ describe("Agents API contract", () => {
   });
 
   it("supports agents CRUD", async () => {
-    const listBefore = await app.inject({ method: "GET", url: "/agents" });
+    const listBefore = await inject({ method: "GET", url: "/agents" });
     expect(listBefore.statusCode).toBe(200);
     const listBeforeBody = listBefore.json() as { items: Array<{ id: string }> };
     const baselineCount = listBeforeBody.items.length;
 
-    const createResponse = await app.inject({
+    const createResponse = await inject({
       method: "POST",
       url: "/agents",
       payload: {
@@ -67,7 +118,7 @@ describe("Agents API contract", () => {
     expect(created.item.name).toBe("runtime-debugger");
     expect(created.item.status).toBe("active");
 
-    const getResponse = await app.inject({
+    const getResponse = await inject({
       method: "GET",
       url: `/agents/${created.item.id}`
     });
@@ -75,7 +126,7 @@ describe("Agents API contract", () => {
     const getBody = getResponse.json() as { item: { id: string; name: string } };
     expect(getBody.item.id).toBe(created.item.id);
 
-    const updateResponse = await app.inject({
+    const updateResponse = await inject({
       method: "PUT",
       url: `/agents/${created.item.id}`,
       payload: {
@@ -88,11 +139,11 @@ describe("Agents API contract", () => {
     expect(updated.item.description).toContain("Updated");
     expect(updated.item.status).toBe("degraded");
 
-    const listAfter = await app.inject({ method: "GET", url: "/agents" });
+    const listAfter = await inject({ method: "GET", url: "/agents" });
     const listAfterBody = listAfter.json() as { items: Array<{ id: string }> };
     expect(listAfterBody.items.length).toBe(baselineCount + 1);
 
-    const deleteResponse = await app.inject({
+    const deleteResponse = await inject({
       method: "DELETE",
       url: `/agents/${created.item.id}`
     });
@@ -100,12 +151,12 @@ describe("Agents API contract", () => {
   });
 
   it("executes assigned skill via agent runtime", async () => {
-    const skillsResponse = await app.inject({ method: "GET", url: "/skills/installed" });
+    const skillsResponse = await inject({ method: "GET", url: "/skills/installed" });
     expect(skillsResponse.statusCode).toBe(200);
     const skillsBody = skillsResponse.json() as { items: Array<{ id: string; name: string }> };
     let skill = skillsBody.items[0];
     if (!skill) {
-      const uploadResponse = await app.inject({
+      const uploadResponse = await inject({
         method: "POST",
         url: "/skills/install-upload",
         payload: {
@@ -119,7 +170,7 @@ describe("Agents API contract", () => {
       expect(uploadResponse.statusCode).toBe(200);
       const uploadBody = uploadResponse.json() as { item?: { id: string } };
       expect(uploadBody.item?.id).toBeDefined();
-      const skillResponse = await app.inject({ method: "GET", url: "/skills/installed" });
+      const skillResponse = await inject({ method: "GET", url: "/skills/installed" });
       expect(skillResponse.statusCode).toBe(200);
       const refreshed = skillResponse.json() as { items: Array<{ id: string; name: string }> };
       skill = refreshed.items.find((entry) => entry.id === uploadBody.item?.id);
@@ -129,7 +180,7 @@ describe("Agents API contract", () => {
       throw new Error("Unable to prepare a skill for agent execution contract test");
     }
 
-    const agentResponse = await app.inject({
+    const agentResponse = await inject({
       method: "POST",
       url: "/agents",
       payload: {
@@ -148,7 +199,7 @@ describe("Agents API contract", () => {
     expect(agentResponse.statusCode).toBe(200);
     const createdAgent = agentResponse.json() as { item: { id: string } };
 
-    const executeResponse = await app.inject({
+    const executeResponse = await inject({
       method: "POST",
       url: `/agents/${createdAgent.item.id}/skills/${skill.id}/execute`,
       payload: {
@@ -167,10 +218,9 @@ describe("Agents API contract", () => {
   });
 
   it("blocks agent runtime skill execution across tenants", async () => {
-    const installResponse = await app.inject({
+    const installResponse = await inject({
       method: "POST",
       url: "/skills/install-upload",
-      headers: { "x-tenant-id": "tenant_default" },
       payload: {
         name: "agent-cross-tenant-skill",
         sourceType: "file",
@@ -182,10 +232,10 @@ describe("Agents API contract", () => {
     expect(installResponse.statusCode).toBe(200);
     const installBody = installResponse.json() as { item: { id: string } };
 
-    const agentResponse = await app.inject({
+    const agentResponse = await inject({
       method: "POST",
       url: "/agents",
-      headers: { "x-tenant-id": "tenant_other" },
+      headers: otherTenantHeaders,
       payload: {
         name: "tenant-other-agent",
         role: "worker",
@@ -202,10 +252,10 @@ describe("Agents API contract", () => {
     expect(agentResponse.statusCode).toBe(200);
     const agent = agentResponse.json() as { item: { id: string } };
 
-    const executeResponse = await app.inject({
+    const executeResponse = await inject({
       method: "POST",
       url: `/agents/${agent.item.id}/skills/${installBody.item.id}/execute`,
-      headers: { "x-tenant-id": "tenant_other" },
+      headers: otherTenantHeaders,
       payload: {
         mode: "local"
       }
@@ -215,7 +265,7 @@ describe("Agents API contract", () => {
   });
 
   it("returns explicit scheduler errors for runtime job paths", async () => {
-    const agentResponse = await app.inject({
+    const agentResponse = await inject({
       method: "POST",
       url: "/agents",
       payload: {
@@ -233,14 +283,14 @@ describe("Agents API contract", () => {
     expect(agentResponse.statusCode).toBe(200);
     const agentId = (agentResponse.json() as { item: { id: string } }).item.id;
 
-    const snapshot = await app.inject({
+    const snapshot = await inject({
       method: "GET",
       url: `/agents/${agentId}/jobs/runtime-job-1`
     });
     expect(snapshot.statusCode).toBe(503);
     expect((snapshot.json() as { error?: string }).error).toBe("scheduler_unavailable");
 
-    const events = await app.inject({
+    const events = await inject({
       method: "GET",
       url: `/agents/${agentId}/jobs/runtime-job-1/events?snapshot=1`
     });

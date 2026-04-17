@@ -9,14 +9,39 @@ import {
 describe("Tenant isolation + RBAC + jobs", () => {
   describe("tenant isolation using x-tenant-id", () => {
     let app: FastifyInstance;
+    let adminToken: string;
 
     beforeAll(async () => {
       process.env.API_STORE_MODE = "in_memory";
-      process.env.AUTH_ENABLED = "0";
+      process.env.AUTH_ENABLED = "1";
       const { buildApp } = await import("../app.js");
       app = await buildApp();
 
       const now = new Date().toISOString();
+      await apiStore.createTenant({
+        id: "tenant_a",
+        name: "Tenant A",
+        createdAt: now
+      });
+      await apiStore.createTenant({
+        id: "tenant_b",
+        name: "Tenant B",
+        createdAt: now
+      });
+      await apiStore.createUserTenant({
+        id: "user_tenant_admin_a",
+        userId: "user_admin_001",
+        tenantId: "tenant_a",
+        role: "owner",
+        createdAt: now
+      });
+      await apiStore.createUserTenant({
+        id: "user_tenant_admin_b",
+        userId: "user_admin_001",
+        tenantId: "tenant_b",
+        role: "owner",
+        createdAt: now
+      });
       await apiStore.createProject({
         id: "proj_tenant_a",
         tenantId: "tenant_a",
@@ -39,17 +64,32 @@ describe("Tenant isolation + RBAC + jobs", () => {
         updatedAt: now,
         updatedBy: "test"
       });
+
+      const login = await app.inject({
+        method: "POST",
+        url: "/auth/login",
+        payload: {
+          email: "admin@control-plane.local",
+          password: "admin123!"
+        }
+      });
+      expect(login.statusCode).toBe(200);
+      adminToken = (login.json() as { item: { token: string } }).item.token;
     });
 
     afterAll(async () => {
       if (app) await app.close();
+      delete process.env.AUTH_ENABLED;
     });
 
     it("does not leak projects across tenants", async () => {
       const a = await app.inject({
         method: "GET",
         url: "/projects",
-        headers: { "x-tenant-id": "tenant_a" }
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": "tenant_a"
+        }
       });
       expect(a.statusCode).toBe(200);
       const aItems = (a.json() as { items: Array<{ id: string; tenantId: string }> }).items;
@@ -58,7 +98,10 @@ describe("Tenant isolation + RBAC + jobs", () => {
       const b = await app.inject({
         method: "GET",
         url: "/projects",
-        headers: { "x-tenant-id": "tenant_b" }
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "x-tenant-id": "tenant_b"
+        }
       });
       expect(b.statusCode).toBe(200);
       const bItems = (b.json() as { items: Array<{ id: string; tenantId: string }> }).items;

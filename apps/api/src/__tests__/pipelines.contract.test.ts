@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Job } from "@cp/domain";
 import { getRunnerJobOutput } from "../services/job-dispatch-service.js";
 import {
@@ -7,19 +7,33 @@ import {
 } from "./helpers/execution-worker-harness.js";
 
 describe("Pipelines API contract", () => {
+  type InjectRequestOptions = InjectOptions;
+  type InjectResponse = LightMyRequestResponse;
+
   let app: FastifyInstance;
   let projectId: string;
   let workerHarness: TestExecutionWorkerHarness;
+  let adminHeaders: Record<string, string>;
 
   beforeAll(async () => {
     process.env.API_STORE_MODE = "in_memory";
     process.env.REDIS_URL = "";
+    process.env.AUTH_ENABLED = "1";
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
     workerHarness = await startTestExecutionWorkerHarness();
 
-    const projects = await app.inject({ method: "GET", url: "/projects" });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "admin@control-plane.local", password: "admin123!" }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = (login.json() as { item: { token: string } }).item.token;
+    adminHeaders = { authorization: `Bearer ${token}` };
+
+    const projects = await app.inject({ method: "GET", url: "/projects", headers: adminHeaders });
     const projectsBody = projects.json() as { items?: Array<{ id: string }> };
     projectId = projectsBody.items?.[0]?.id ?? "proj_001";
   });
@@ -31,12 +45,22 @@ describe("Pipelines API contract", () => {
     if (app) {
       await app.close();
     }
+    delete process.env.AUTH_ENABLED;
   });
+
+  const inject = (options: InjectRequestOptions): Promise<InjectResponse> =>
+    app.inject({
+      ...options,
+      headers: {
+        ...adminHeaders,
+        ...(options.headers ?? {})
+      }
+    });
 
   const waitForJob = async (jobId: string): Promise<Job> => {
     const startedAt = Date.now();
     while (Date.now() - startedAt < 20_000) {
-      const response = await app.inject({
+      const response = await inject({
         method: "GET",
         url: `/jobs/${jobId}`
       });
@@ -67,7 +91,7 @@ describe("Pipelines API contract", () => {
   };
 
   it("runs research pipeline with structured output", async () => {
-    const response = await app.inject({
+    const response = await inject({
       method: "POST",
       url: `/projects/${projectId}/pipelines/research`,
       payload: {
@@ -100,7 +124,7 @@ describe("Pipelines API contract", () => {
   });
 
   it("runs content pipeline with multi-step artifacts", async () => {
-    const response = await app.inject({
+    const response = await inject({
       method: "POST",
       url: `/projects/${projectId}/pipelines/content`,
       payload: {
@@ -135,7 +159,7 @@ describe("Pipelines API contract", () => {
   });
 
   it("runs visual and multimodal pipelines", async () => {
-    const visualResponse = await app.inject({
+    const visualResponse = await inject({
       method: "POST",
       url: `/projects/${projectId}/pipelines/visual`,
       payload: {
@@ -159,7 +183,7 @@ describe("Pipelines API contract", () => {
     expect(Array.isArray(visualResult?.scenes)).toBe(true);
     expect(typeof visualResult?.scenes?.[0]?.prompt).toBe("string");
 
-    const multimodalResponse = await app.inject({
+    const multimodalResponse = await inject({
       method: "POST",
       url: `/projects/${projectId}/pipelines/multimodal`,
       payload: {

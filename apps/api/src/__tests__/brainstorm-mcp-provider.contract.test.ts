@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   startTestExecutionWorkerHarness,
@@ -6,13 +6,17 @@ import {
 } from "./helpers/execution-worker-harness.js";
 
 describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", () => {
+  type InjectRequestOptions = InjectOptions;
+  type InjectResponse = LightMyRequestResponse;
+
   let app: FastifyInstance;
   let workerHarness: TestExecutionWorkerHarness;
+  let adminHeaders: Record<string, string>;
 
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
     process.env.API_STORE_MODE = "in_memory";
-    process.env.AUTH_ENABLED = "0";
+    process.env.AUTH_ENABLED = "1";
     process.env.PROVIDER_AUTO_DISCOVERY_ENABLED = "0";
     process.env.MCP_ENABLED = "0";
     process.env.SECRETS_MASTER_KEY = "brainstorm-contract-master-key";
@@ -20,6 +24,15 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     const { buildApp } = await import("../app.js");
     app = await buildApp();
     workerHarness = await startTestExecutionWorkerHarness();
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "admin@control-plane.local", password: "admin123!" }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = (login.json() as { item: { token: string } }).item.token;
+    adminHeaders = { authorization: `Bearer ${token}` };
   });
 
   afterAll(async () => {
@@ -30,17 +43,27 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     if (app) {
       await app.close();
     }
+    delete process.env.AUTH_ENABLED;
   });
 
+  const inject = (options: InjectRequestOptions): Promise<InjectResponse> =>
+    app.inject({
+      ...options,
+      headers: {
+        ...adminHeaders,
+        ...(options.headers ?? {})
+      }
+    });
+
   it("lists and composes subprompts", async () => {
-    const list = await app.inject({ method: "GET", url: "/subprompts?refresh=1&enabled=true" });
+    const list = await inject({ method: "GET", url: "/subprompts?refresh=1&enabled=true" });
     expect(list.statusCode).toBe(200);
     const listBody = list.json() as { items: Array<{ id: string; prompt?: string }> };
     expect(Array.isArray(listBody.items)).toBe(true);
     expect(listBody.items.length).toBeGreaterThan(0);
     expect(listBody.items[0]).not.toHaveProperty("prompt");
 
-    const fullList = await app.inject({
+    const fullList = await inject({
       method: "GET",
       url: "/subprompts?enabled=true&includeContent=1"
     });
@@ -49,7 +72,7 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     expect(typeof fullBody.items[0]?.prompt).toBe("string");
 
     const selectedIds = listBody.items.slice(0, 2).map((item) => item.id);
-    const composed = await app.inject({
+    const composed = await inject({
       method: "POST",
       url: "/subprompts/compose",
       payload: {
@@ -63,7 +86,7 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
   });
 
   it("starts brainstorming and retrieves plan in plan.* format", async () => {
-    const start = await app.inject({
+    const start = await inject({
       method: "POST",
       url: "/brainstorm",
       payload: {
@@ -85,13 +108,13 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     expect(planId).toBeTruthy();
     if (!planId) return;
 
-    const planResponse = await app.inject({ method: "GET", url: `/brainstorm/plan/${planId}` });
+    const planResponse = await inject({ method: "GET", url: `/brainstorm/plan/${planId}` });
     expect(planResponse.statusCode).toBe(200);
     const planBody = planResponse.json() as { item: { plan: { roadmap: unknown[]; selectedSubprompts: unknown[] } } };
     expect(Array.isArray(planBody.item.plan.roadmap)).toBe(true);
     expect(Array.isArray(planBody.item.plan.selectedSubprompts)).toBe(true);
 
-    const applyWithoutApproval = await app.inject({
+    const applyWithoutApproval = await inject({
       method: "POST",
       url: `/brainstorm/plan/${planId}/create-project`,
       payload: {
@@ -100,14 +123,14 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     });
     expect(applyWithoutApproval.statusCode).toBe(409);
 
-    const approve = await app.inject({
+    const approve = await inject({
       method: "POST",
       url: `/brainstorm/plan/${planId}/approve`,
       payload: {}
     });
     expect(approve.statusCode).toBe(200);
 
-    const apply = await app.inject({
+    const apply = await inject({
       method: "POST",
       url: `/brainstorm/plan/${planId}/create-project`,
       payload: {
@@ -203,7 +226,7 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
       updatedBy: "test"
     });
 
-    const response = await app.inject({
+    const response = await inject({
       method: "GET",
       url: "/brainstorm/plan/invalid_nested_plan_payload"
     });
@@ -215,12 +238,12 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
   });
 
   it("exposes MCP routes in optional/disabled mode without blocking", async () => {
-    const status = await app.inject({ method: "GET", url: "/mcp/status" });
+    const status = await inject({ method: "GET", url: "/mcp/status" });
     expect(status.statusCode).toBe(200);
     const statusBody = status.json() as { enabled: boolean; message: string };
     expect(statusBody.enabled).toBe(false);
 
-    const createdConnection = await app.inject({
+    const createdConnection = await inject({
       method: "POST",
       url: "/mcp/connections",
       payload: {
@@ -233,7 +256,7 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     expect(createdConnection.statusCode).toBe(200);
     const connectionId = (createdConnection.json() as { item: { id: string } }).item.id;
 
-    const delegated = await app.inject({
+    const delegated = await inject({
       method: "POST",
       url: "/mcp/delegate",
       payload: {
@@ -265,7 +288,7 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
       )
     );
 
-    const trigger = await app.inject({
+    const trigger = await inject({
       method: "POST",
       url: "/providers/discovery/update",
       payload: {}
@@ -279,7 +302,7 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
     // Discovery is now scoped to enabled provider configurations when present.
     expect(triggerBody.item.log.discoveredProviders).not.toContain("mistral");
 
-    const logs = await app.inject({ method: "GET", url: "/providers/discovery/logs" });
+    const logs = await inject({ method: "GET", url: "/providers/discovery/logs" });
     expect(logs.statusCode).toBe(200);
     const logsBody = logs.json() as { items: Array<{ id: string }> };
     expect(logsBody.items.some((item) => item.id === triggerBody.item.log.id)).toBe(true);

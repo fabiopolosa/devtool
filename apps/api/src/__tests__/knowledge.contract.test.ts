@@ -1,25 +1,48 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 describe("Knowledge API contract", () => {
+  type InjectRequestOptions = InjectOptions;
+  type InjectResponse = LightMyRequestResponse;
+
   let app: FastifyInstance;
+  let adminHeaders: Record<string, string>;
 
   beforeAll(async () => {
     process.env.API_STORE_MODE = "in_memory";
-    process.env.AUTH_ENABLED = "0";
+    process.env.AUTH_ENABLED = "1";
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "admin@control-plane.local", password: "admin123!" }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = (login.json() as { item: { token: string } }).item.token;
+    adminHeaders = { authorization: `Bearer ${token}` };
   });
 
   afterAll(async () => {
     if (app) {
       await app.close();
     }
+    delete process.env.AUTH_ENABLED;
   });
 
+  const inject = (options: InjectRequestOptions): Promise<InjectResponse> =>
+    app.inject({
+      ...options,
+      headers: {
+        ...adminHeaders,
+        ...(options.headers ?? {})
+      }
+    });
+
   it("lists seeded system/tenant/project knowledge nodes", async () => {
-    const response = await app.inject({
+    const response = await inject({
       method: "GET",
       url: "/knowledge?projectId=proj_001"
     });
@@ -33,7 +56,7 @@ describe("Knowledge API contract", () => {
   });
 
   it("supports create/update/delete lifecycle", async () => {
-    const created = await app.inject({
+    const created = await inject({
       method: "POST",
       url: "/knowledge",
       payload: {
@@ -48,13 +71,13 @@ describe("Knowledge API contract", () => {
     expect(createdBody.item.path).toBe("/projects/proj_001/notes/runtime-insight.md");
 
     const knowledgeNodeId = createdBody.item.id;
-    const detail = await app.inject({
+    const detail = await inject({
       method: "GET",
       url: `/knowledge/${knowledgeNodeId}?projectId=proj_001`
     });
     expect(detail.statusCode).toBe(200);
 
-    const updated = await app.inject({
+    const updated = await inject({
       method: "PATCH",
       url: `/knowledge/${knowledgeNodeId}?projectId=proj_001`,
       payload: {
@@ -64,7 +87,7 @@ describe("Knowledge API contract", () => {
     expect(updated.statusCode).toBe(200);
     expect((updated.json() as { item: { content: string } }).item.content).toContain("Retry budget");
 
-    const removed = await app.inject({
+    const removed = await inject({
       method: "DELETE",
       url: `/knowledge/${knowledgeNodeId}?projectId=proj_001`
     });
@@ -72,7 +95,7 @@ describe("Knowledge API contract", () => {
   });
 
   it("supports semantic/lexical search and context endpoint", async () => {
-    const search = await app.inject({
+    const search = await inject({
       method: "GET",
       url: "/knowledge?projectId=proj_001&query=dag%20execution"
     });
@@ -84,7 +107,7 @@ describe("Knowledge API contract", () => {
     expect(searchBody.items.length).toBeGreaterThan(0);
     expect(Array.isArray(searchBody.hits)).toBe(true);
 
-    const context = await app.inject({
+    const context = await inject({
       method: "GET",
       url: "/knowledge/context/search?projectId=proj_001&query=retry%20semantics&limit=3"
     });
@@ -96,7 +119,7 @@ describe("Knowledge API contract", () => {
   });
 
   it("merges project context notes into compact knowledge context", async () => {
-    const createdNote = await app.inject({
+    const createdNote = await inject({
       method: "POST",
       url: "/context",
       payload: {
@@ -111,7 +134,7 @@ describe("Knowledge API contract", () => {
     });
     expect(createdNote.statusCode).toBe(200);
 
-    const context = await app.inject({
+    const context = await inject({
       method: "GET",
       url: "/knowledge/context/search?projectId=proj_001&query=compact%20knowledge%20injection&limit=5"
     });

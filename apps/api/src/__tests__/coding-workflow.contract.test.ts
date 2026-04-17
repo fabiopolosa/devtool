@@ -9,14 +9,27 @@ import {
 describe("Coding workflow API contract", () => {
   let app: FastifyInstance;
   let workerHarness: TestExecutionWorkerHarness;
+  let headers: Record<string, string>;
 
   beforeAll(async () => {
     process.env.API_STORE_MODE = "in_memory";
-    process.env.AUTH_ENABLED = "0";
+    process.env.AUTH_ENABLED = "1";
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
     workerHarness = await startTestExecutionWorkerHarness();
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "admin@control-plane.local", password: "admin123!" }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = (login.json() as { item: { token: string } }).item.token;
+    headers = {
+      authorization: `Bearer ${token}`,
+      "x-tenant-id": "tenant_default"
+    };
   });
 
   afterAll(async () => {
@@ -28,8 +41,6 @@ describe("Coding workflow API contract", () => {
     }
     delete process.env.AUTH_ENABLED;
   });
-
-  const headers = { "x-tenant-id": "tenant_default" };
 
   const waitForJob = async (jobId: string): Promise<void> => {
     const startedAt = Date.now();

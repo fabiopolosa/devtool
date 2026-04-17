@@ -1,7 +1,7 @@
 import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Job } from "@cp/domain";
 import {
   startTestExecutionWorkerHarness,
@@ -9,16 +9,20 @@ import {
 } from "./helpers/execution-worker-harness.js";
 
 describe("Workspaces API contract", () => {
+  type InjectRequestOptions = InjectOptions;
+  type InjectResponse = LightMyRequestResponse;
+
   let app: FastifyInstance;
   let projectId: string;
   let workspaceId: string;
   let workerHarness: TestExecutionWorkerHarness;
+  let adminHeaders: Record<string, string>;
   const temporaryPaths: string[] = [];
 
   const waitForJob = async (jobId: string): Promise<Job> => {
     const startedAt = Date.now();
     while (Date.now() - startedAt < 20_000) {
-      const response = await app.inject({
+      const response = await inject({
         method: "GET",
         url: `/jobs/${jobId}`
       });
@@ -47,12 +51,22 @@ describe("Workspaces API contract", () => {
   beforeAll(async () => {
     process.env.API_STORE_MODE = "in_memory";
     process.env.REDIS_URL = "";
+    process.env.AUTH_ENABLED = "1";
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
     workerHarness = await startTestExecutionWorkerHarness();
 
-    const projects = await app.inject({ method: "GET", url: "/projects" });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "admin@control-plane.local", password: "admin123!" }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = (login.json() as { item: { token: string } }).item.token;
+    adminHeaders = { authorization: `Bearer ${token}` };
+
+    const projects = await app.inject({ method: "GET", url: "/projects", headers: adminHeaders });
     const projectsBody = projects.json() as { items?: Array<{ id: string }> };
     projectId = projectsBody.items?.[0]?.id ?? "proj_001";
   });
@@ -76,10 +90,20 @@ describe("Workspaces API contract", () => {
     if (app) {
       await app.close();
     }
+    delete process.env.AUTH_ENABLED;
   });
 
+  const inject = (options: InjectRequestOptions): Promise<InjectResponse> =>
+    app.inject({
+      ...options,
+      headers: {
+        ...adminHeaders,
+        ...(options.headers ?? {})
+      }
+    });
+
   const createProject = async (name: string): Promise<string> => {
-    const response = await app.inject({
+    const response = await inject({
       method: "POST",
       url: "/projects",
       payload: {
@@ -94,7 +118,7 @@ describe("Workspaces API contract", () => {
   };
 
   it("creates and updates a workspace runtime entity", async () => {
-    const created = await app.inject({
+    const created = await inject({
       method: "POST",
       url: "/workspaces",
       payload: {
@@ -121,7 +145,7 @@ describe("Workspaces API contract", () => {
     workspaceId = createdBody.item?.id ?? "";
     expect(workspaceId).not.toHaveLength(0);
 
-    const listed = await app.inject({
+    const listed = await inject({
       method: "GET",
       url: `/workspaces?projectId=${projectId}`
     });
@@ -130,7 +154,7 @@ describe("Workspaces API contract", () => {
     expect(Array.isArray(listedBody.items)).toBe(true);
     expect(listedBody.items?.[0]?.id).toBe(workspaceId);
 
-    const patched = await app.inject({
+    const patched = await inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}`,
       payload: {
@@ -146,7 +170,7 @@ describe("Workspaces API contract", () => {
   });
 
   it("dispatches workspace runtime actions through runner jobs", async () => {
-    await app.inject({
+    await inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}`,
       payload: {
@@ -154,7 +178,7 @@ describe("Workspaces API contract", () => {
         localPath: process.cwd()
       }
     });
-    const startResponse = await app.inject({
+    const startResponse = await inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}`,
       payload: {
@@ -168,7 +192,7 @@ describe("Workspaces API contract", () => {
     expect(startBody.status).toBe("pending");
     await waitForJob(startBody.jobId!);
 
-    const afterStart = await app.inject({
+    const afterStart = await inject({
       method: "GET",
       url: `/workspaces?projectId=${projectId}`
     });
@@ -176,7 +200,7 @@ describe("Workspaces API contract", () => {
     expect(started?.runtimeStatus).toBe("running");
     expect(typeof started?.lastStartedAt).toBe("string");
 
-    const deployResponse = await app.inject({
+    const deployResponse = await inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}`,
       payload: {
@@ -188,7 +212,7 @@ describe("Workspaces API contract", () => {
     const deployBody = deployResponse.json() as { jobId?: string };
     await waitForJob(deployBody.jobId!);
 
-    const afterDeploy = await app.inject({
+    const afterDeploy = await inject({
       method: "GET",
       url: `/workspaces?projectId=${projectId}`
     });
@@ -199,7 +223,7 @@ describe("Workspaces API contract", () => {
       {}) as Record<string, unknown>;
     expect(typeof deployMetadata.deployExecution).toBe("object");
 
-    const stopResponse = await app.inject({
+    const stopResponse = await inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}`,
       payload: {
@@ -211,7 +235,7 @@ describe("Workspaces API contract", () => {
     const stopBody = stopResponse.json() as { jobId?: string };
     await waitForJob(stopBody.jobId!);
 
-    const afterStop = await app.inject({
+    const afterStop = await inject({
       method: "GET",
       url: `/workspaces?projectId=${projectId}`
     });
@@ -222,7 +246,7 @@ describe("Workspaces API contract", () => {
     expect(typeof stopped?.lastStoppedAt).toBe("string");
     expect(typeof stopped?.lastDeployedAt).toBe("string");
 
-    const restartResponse = await app.inject({
+    const restartResponse = await inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}`,
       payload: {
@@ -234,7 +258,7 @@ describe("Workspaces API contract", () => {
     const restartBody = restartResponse.json() as { jobId?: string };
     await waitForJob(restartBody.jobId!);
 
-    const afterRestart = await app.inject({
+    const afterRestart = await inject({
       method: "GET",
       url: `/workspaces?projectId=${projectId}`
     });
@@ -248,7 +272,7 @@ describe("Workspaces API contract", () => {
 
   it("stores missing local path validation and blocks local start", async () => {
     const localProjectId = await createProject(`workspace-missing-path-${Date.now()}`);
-    const createResponse = await app.inject({
+    const createResponse = await inject({
       method: "POST",
       url: "/workspaces",
       payload: {
@@ -268,7 +292,7 @@ describe("Workspaces API contract", () => {
     const pathValidation = (created.item?.runtimeDetails?.pathValidation ?? {}) as Record<string, unknown>;
     expect(pathValidation.reason).toBe("missing_path");
 
-    const startResponse = await app.inject({
+    const startResponse = await inject({
       method: "PATCH",
       url: `/workspaces/${created.item?.id}`,
       payload: {
@@ -279,7 +303,7 @@ describe("Workspaces API contract", () => {
     expect(startResponse.statusCode).toBe(400);
     expect((startResponse.json() as { error?: string }).error).toBe("workspace_path_invalid");
 
-    const internalActionResponse = await app.inject({
+    const internalActionResponse = await inject({
       method: "POST",
       url: "/execution/internal-action",
       payload: {
@@ -300,7 +324,7 @@ describe("Workspaces API contract", () => {
   it("stores invalid local path validation for non-existing paths", async () => {
     const localProjectId = await createProject(`workspace-invalid-path-${Date.now()}`);
     const invalidPath = path.join(tmpdir(), `devtool-workspace-missing-${Date.now()}`);
-    const createResponse = await app.inject({
+    const createResponse = await inject({
       method: "POST",
       url: "/workspaces",
       payload: {
@@ -327,7 +351,7 @@ describe("Workspaces API contract", () => {
     temporaryPaths.push(restrictedDir);
     await chmod(restrictedDir, 0o500);
 
-    const createResponse = await app.inject({
+    const createResponse = await inject({
       method: "POST",
       url: "/workspaces",
       payload: {
@@ -348,7 +372,7 @@ describe("Workspaces API contract", () => {
     const pathValidation = (created.item?.runtimeDetails?.pathValidation ?? {}) as Record<string, unknown>;
     expect(pathValidation.reason).toBe("permission_denied");
 
-    const startResponse = await app.inject({
+    const startResponse = await inject({
       method: "PATCH",
       url: `/workspaces/${created.item?.id}`,
       payload: {
@@ -370,7 +394,7 @@ describe("Workspaces API contract", () => {
     await symlink(targetDir, symlinkPath, "dir");
     temporaryPaths.push(symlinkPath, targetDir);
 
-    const createResponse = await app.inject({
+    const createResponse = await inject({
       method: "POST",
       url: "/workspaces",
       payload: {
@@ -394,7 +418,7 @@ describe("Workspaces API contract", () => {
   it("rejects path traversal attempts before workspace creation", async () => {
     const localProjectId = await createProject(`workspace-path-escape-${Date.now()}`);
 
-    const createResponse = await app.inject({
+    const createResponse = await inject({
       method: "POST",
       url: "/workspaces",
       payload: {

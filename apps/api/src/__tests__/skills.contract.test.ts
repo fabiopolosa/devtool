@@ -8,10 +8,12 @@ import {
 describe("Skills API contract", () => {
   let app: FastifyInstance;
   let workerHarness: TestExecutionWorkerHarness;
+  let headers: Record<string, string>;
+  let otherTenantHeaders: Record<string, string>;
 
   beforeAll(async () => {
     process.env.API_STORE_MODE = "in_memory";
-    process.env.AUTH_ENABLED = "0";
+    process.env.AUTH_ENABLED = "1";
 
     global.fetch = (async () =>
       new Response(
@@ -36,6 +38,41 @@ describe("Skills API contract", () => {
     const { buildApp } = await import("../app.js");
     app = await buildApp();
     workerHarness = await startTestExecutionWorkerHarness();
+
+    const { apiStore } = await import("../services/api-store.js");
+    const now = new Date().toISOString();
+    if (!await apiStore.getTenant("tenant_other")) {
+      await apiStore.createTenant({
+        id: "tenant_other",
+        name: "Tenant Other",
+        createdAt: now
+      });
+    }
+    if ((await apiStore.listUserTenants({ userId: "user_admin_001", tenantId: "tenant_other" })).length === 0) {
+      await apiStore.createUserTenant({
+        id: "user_tenant_admin_other_skills",
+        userId: "user_admin_001",
+        tenantId: "tenant_other",
+        role: "owner",
+        createdAt: now
+      });
+    }
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "admin@control-plane.local", password: "admin123!" }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = (login.json() as { item: { token: string } }).item.token;
+    headers = {
+      authorization: `Bearer ${token}`,
+      "x-tenant-id": "tenant_default"
+    };
+    otherTenantHeaders = {
+      authorization: `Bearer ${token}`,
+      "x-tenant-id": "tenant_other"
+    };
   });
 
   afterAll(async () => {
@@ -47,9 +84,6 @@ describe("Skills API contract", () => {
     }
     delete process.env.AUTH_ENABLED;
   });
-
-  const headers = { "x-tenant-id": "tenant_default" };
-  const otherTenantHeaders = { "x-tenant-id": "tenant_other" };
 
   it("lists marketplace catalog via /skills/catalog", async () => {
     const response = await app.inject({
@@ -258,7 +292,7 @@ describe("Skills API contract", () => {
     const install = await app.inject({
       method: "POST",
       url: "/skills/install-upload",
-      headers: { "x-tenant-id": "tenant_default" },
+      headers,
       payload: {
         name: "tenant-default-only",
         sourceType: "file",
@@ -273,7 +307,7 @@ describe("Skills API contract", () => {
     const crossTenantList = await app.inject({
       method: "GET",
       url: "/skills/installed?includeDisabled=1",
-      headers: { "x-tenant-id": "tenant_other" }
+      headers: otherTenantHeaders
     });
     expect(crossTenantList.statusCode).toBe(200);
     const crossTenantBody = crossTenantList.json() as { items: Array<{ id: string }> };
