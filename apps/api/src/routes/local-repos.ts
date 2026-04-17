@@ -24,7 +24,9 @@ export const localRepositoriesRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: { tags: ["local-repos"], summary: "List local repositories" }
     },
-    async () => {
+    async (request, reply) => {
+      const principal = requireRole(request, reply, "admin");
+      if (!principal) return;
       const items = await localRepositoriesService.listLocalRepositories();
       return { items };
     }
@@ -36,6 +38,8 @@ export const localRepositoriesRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["local-repos"], summary: "Get local repository detail" }
     },
     async (request, reply) => {
+      const principal = requireRole(request, reply, "admin");
+      if (!principal) return;
       const item = await localRepositoriesService.getLocalRepository(request.params.localRepositoryId);
       if (!item) {
         return reply.code(404).send({ error: "not_found", message: "Local repository not found" });
@@ -125,6 +129,8 @@ export const localRepositoriesRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["local-repos"], summary: "List files/folders for file manager" }
     },
     async (request, reply) => {
+      const principal = requireRole(request, reply, "admin");
+      if (!principal) return;
       try {
         const items = await localRepositoriesService.listFiles(
           request.params.localRepositoryId,
@@ -144,6 +150,8 @@ export const localRepositoriesRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["local-repos"], summary: "Read repository file content (read-only)" }
     },
     async (request, reply) => {
+      const principal = requireRole(request, reply, "admin");
+      if (!principal) return;
       if (!request.query.path || request.query.path.trim().length === 0) {
         return reply.code(400).send({ error: "invalid_request", message: "path query parameter is required" });
       }
@@ -166,6 +174,8 @@ export const localRepositoriesRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["local-repos"], summary: "Get git commit history for repository" }
     },
     async (request, reply) => {
+      const principal = requireRole(request, reply, "admin");
+      if (!principal) return;
       const limit = request.query.limit ? Number.parseInt(request.query.limit, 10) : 30;
       try {
         const items = await localRepositoriesService.getGitHistory(request.params.localRepositoryId, limit);
@@ -231,6 +241,8 @@ export const localRepositoriesRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["local-repos"], summary: "Get scheduled local-repo job snapshot" }
     },
     async (request, reply) => {
+      const principal = requireRole(request, reply, "admin");
+      if (!principal) return;
       let item: Awaited<ReturnType<typeof localRepositoriesService.getJob>> | null;
       try {
         item = await localRepositoriesService.getJob(request.params.jobId);

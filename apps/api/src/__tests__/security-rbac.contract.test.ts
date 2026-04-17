@@ -83,6 +83,7 @@ describe("Security RBAC hardening", () => {
       ["GET", "/tasks"],
       ["GET", "/tasks/task_001"],
       ["GET", "/approvals"],
+      ["GET", "/local-repos"],
       ["GET", "/mcp/status"],
       ["GET", "/subprompts"],
       ["GET", "/usage"],
