@@ -6,6 +6,7 @@ import {
   listSubprompts,
   syncSubpromptsCatalog
 } from "../services/subprompts-service.js";
+import { requireAuthenticatedTenantPermission } from "../tenant/rbac.js";
 
 const parseBoolean = (value: string | undefined): boolean | undefined => {
   if (value === undefined) return undefined;
@@ -29,7 +30,8 @@ export const subpromptsRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: { tags: ["subprompts"], summary: "List subprompt templates with optional refresh" }
     },
-    async (request) => {
+    async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
       const enabled = parseBoolean(request.query.enabled);
       const refresh = parseBoolean(request.query.refresh) ?? false;
       const includeContent = parseBoolean(request.query.includeContent) ?? false;
@@ -53,7 +55,8 @@ export const subpromptsRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: { tags: ["subprompts"], summary: "Sync subprompt files from configs/subprompts into DB" }
     },
-    async () => {
+    async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canEdit")) return;
       const items = await syncSubpromptsCatalog();
       return { items, count: items.length };
     }
@@ -65,6 +68,7 @@ export const subpromptsRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["subprompts"], summary: "Get one subprompt template" }
     },
     async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
       const item = await getSubprompt(request.params.subpromptId);
       if (!item) {
         return reply.code(404).send({ item: null });
@@ -79,6 +83,7 @@ export const subpromptsRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["subprompts"], summary: "Compose selected subprompts into a single prompt string" }
     },
     async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
       const selectedIds = request.body?.selectedIds ?? [];
       if (!Array.isArray(selectedIds)) {
         return reply.code(400).send({

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import type { McpConnection } from "@cp/domain";
 import { mcpService } from "../services/mcp-service.js";
+import { requireAuthenticatedTenantPermission } from "../tenant/rbac.js";
 
 interface UpsertMcpConnectionBody {
   id?: string;
@@ -26,10 +27,13 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: { tags: ["mcp"], summary: "Get MCP integration status" }
     },
-    async () => ({
-      enabled: mcpService.isEnabled(),
-      message: mcpService.isEnabled() ? "MCP configured" : "MCP non configurato"
-    })
+    async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
+      return {
+        enabled: mcpService.isEnabled(),
+        message: mcpService.isEnabled() ? "MCP configured" : "MCP non configurato"
+      };
+    }
   );
 
   fastify.get(
@@ -37,10 +41,13 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: { tags: ["mcp"], summary: "List MCP connections" }
     },
-    async () => ({
-      items: await mcpService.listConnections(),
-      enabled: mcpService.isEnabled()
-    })
+    async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
+      return {
+        items: await mcpService.listConnections(),
+        enabled: mcpService.isEnabled()
+      };
+    }
   );
 
   fastify.post<{ Body: UpsertMcpConnectionBody }>(
@@ -49,6 +56,7 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["mcp"], summary: "Create or update MCP connection" }
     },
     async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canEdit")) return;
       const body = request.body;
       if (!body?.name?.trim() || !body?.baseUrl?.trim()) {
         return reply.code(400).send({
@@ -83,6 +91,7 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["mcp"], summary: "Run MCP connection healthcheck" }
     },
     async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canEdit")) return;
       try {
         const item = await mcpService.runHealthcheck(request.params.connectionId, "mcp_api");
         return { item };
@@ -100,11 +109,14 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
     {
       schema: { tags: ["mcp"], summary: "List MCP delegation runs" }
     },
-    async (request) => ({
-      items: await mcpService.listDelegationRuns(
-        request.query.connectionId ? { connectionId: request.query.connectionId } : undefined
-      )
-    })
+    async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
+      return {
+        items: await mcpService.listDelegationRuns(
+          request.query.connectionId ? { connectionId: request.query.connectionId } : undefined
+        )
+      };
+    }
   );
 
   fastify.post<{ Body: DelegateBody }>(
@@ -113,6 +125,7 @@ export const mcpRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { tags: ["mcp"], summary: "Delegate operation to MCP connection" }
     },
     async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canRunAgent")) return;
       const body = request.body;
       if (!body?.connectionId || !body?.operation) {
         return reply.code(400).send({

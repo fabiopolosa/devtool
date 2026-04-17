@@ -1,6 +1,10 @@
 import type { FastifyPluginAsync } from "fastify";
 import { apiStore } from "../services/api-store.js";
+import { requireAuthenticatedTenantPermission } from "../tenant/rbac.js";
 
 export const approvalsRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.get("/approvals", { schema: { tags: ["approvals"], summary: "List approvals" } }, async () => ({ items: await apiStore.listApprovals() }));
+  fastify.get("/approvals", { schema: { tags: ["approvals"], summary: "List approvals" } }, async (request, reply) => {
+    if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
+    return { items: await apiStore.listApprovals() };
+  });
 };

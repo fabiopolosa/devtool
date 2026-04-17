@@ -1,28 +1,51 @@
-import Fastify from "fastify";
+import type { FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
-import { InMemoryDatabase, runWithTenantContext } from "@cp/db";
-import { AuditLogService } from "../services/audit-log-service.js";
-import { UsageService } from "../services/usage-service.js";
-import { createAuditRoutes } from "../routes/audit.js";
-import { createUsageRoutes } from "../routes/usage.js";
+import { runWithTenantContext } from "@cp/db";
+import { auditLogService } from "../services/audit-log-service.js";
+import { usageService } from "../services/usage-service.js";
 
-const buildApp = async () => {
-  const db = new InMemoryDatabase();
-  const auditService = new AuditLogService(db.repository("audit_events"));
-  const usageService = new UsageService(db.repository("usage_events"));
-  const app = Fastify({ logger: false });
-  await app.register(createAuditRoutes(auditService));
-  await app.register(createUsageRoutes(usageService));
-  return { app, auditService, usageService };
+const buildTestApp = async () => {
+  const { buildApp: createApp } = await import("../app.js");
+  const app = await createApp();
+  return { app };
 };
 
 describe("audit and usage routes", () => {
-  it("returns audit events with filters and summary", async () => {
-    const { app, auditService } = await buildApp();
+  let app: FastifyInstance | undefined;
 
-    await runWithTenantContext({ tenantId: "tenant_routes" }, async () => {
-      await auditService.record({
-        tenantId: "tenant_routes",
+  beforeEach(() => {
+    process.env.API_STORE_MODE = "in_memory";
+    process.env.AUTH_ENABLED = "1";
+    process.env.DEVTOOLS_API_KEY = "audit-contract-api-key";
+  });
+
+  afterEach(async () => {
+    if (app) {
+      await app.close();
+      app = undefined;
+    }
+    delete process.env.AUTH_ENABLED;
+    delete process.env.DEVTOOLS_API_KEY;
+  });
+
+  it("returns audit events with filters and summary", async () => {
+    const built = await buildTestApp();
+    app = built.app;
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: {
+        email: "viewer@control-plane.local",
+        password: "viewer123!"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = login.json().item.token as string;
+
+    await runWithTenantContext({ tenantId: "tenant_default" }, async () => {
+      await auditLogService.record({
+        tenantId: "tenant_default",
         projectId: "project_routes",
         jobId: "job_routes",
         action: "job.start",
@@ -31,8 +54,8 @@ describe("audit and usage routes", () => {
         status: "success",
         actor: "runner"
       });
-      await auditService.record({
-        tenantId: "tenant_routes",
+      await auditLogService.record({
+        tenantId: "tenant_default",
         projectId: "project_routes",
         jobId: "job_routes",
         action: "job.end",
@@ -43,10 +66,14 @@ describe("audit and usage routes", () => {
       });
     });
 
+    const authHeaders = {
+      authorization: `Bearer ${token}`,
+      "x-tenant-id": "tenant_default"
+    };
     const response = await app.inject({
       method: "GET",
       url: "/audit?projectId=project_routes&jobId=job_routes",
-      headers: { "x-tenant-id": "tenant_routes" }
+      headers: authHeaders
     });
 
     expect(response.statusCode).toBe(200);
@@ -55,19 +82,30 @@ describe("audit and usage routes", () => {
       summary: { total: number; byAction: Array<{ action: string }> };
     };
     expect(body.items).toHaveLength(2);
-    expect(body.items.every((item) => item.tenantId === "tenant_routes")).toBe(true);
+    expect(body.items.every((item) => item.tenantId === "tenant_default")).toBe(true);
     expect(body.summary.total).toBe(2);
     expect(body.summary.byAction.map((item) => item.action)).toEqual(["job.end", "job.start"]);
 
-    await app.close();
   });
 
   it("returns usage events with aggregated summary", async () => {
-    const { app, usageService } = await buildApp();
+    const built = await buildTestApp();
+    app = built.app;
 
-    await runWithTenantContext({ tenantId: "tenant_usage_routes" }, async () => {
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: {
+        email: "viewer@control-plane.local",
+        password: "viewer123!"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = login.json().item.token as string;
+
+    await runWithTenantContext({ tenantId: "tenant_default" }, async () => {
       await usageService.record({
-        tenantId: "tenant_usage_routes",
+        tenantId: "tenant_default",
         projectId: "project_usage_routes",
         jobId: "job_usage_routes",
         provider: "openai",
@@ -80,10 +118,14 @@ describe("audit and usage routes", () => {
       });
     });
 
+    const authHeaders = {
+      authorization: `Bearer ${token}`,
+      "x-tenant-id": "tenant_default"
+    };
     const response = await app.inject({
       method: "GET",
       url: "/usage?projectId=project_usage_routes",
-      headers: { "x-tenant-id": "tenant_usage_routes" }
+      headers: authHeaders
     });
 
     expect(response.statusCode).toBe(200);
@@ -97,6 +139,5 @@ describe("audit and usage routes", () => {
     expect(body.summary.totalCost).toBeCloseTo(0.006, 6);
     expect(body.summary.byProvider.map((item) => item.key)).toEqual(["openai"]);
 
-    await app.close();
   });
 });

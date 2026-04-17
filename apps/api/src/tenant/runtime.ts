@@ -24,7 +24,8 @@ const resolveTenantByMembership = async (userId?: string): Promise<string | unde
 
 export const resolveRequestTenant = async (request: FastifyRequest): Promise<string> => {
   const fromHeader = resolveTenantHeader(request);
-  if (fromHeader) return fromHeader;
+  const principal = request.authPrincipal;
+  if (fromHeader && (principal?.authBypass || principal?.userId)) return fromHeader;
   const fromMembership = await resolveTenantByMembership(request.authPrincipal?.userId);
   if (fromMembership) return fromMembership;
   return DEFAULT_TENANT_ID;

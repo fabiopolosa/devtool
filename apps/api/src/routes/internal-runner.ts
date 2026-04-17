@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import type { Job } from "@cp/domain";
 import { runWithTenantContext } from "@cp/db";
+import { apiKeyEquals, parseSingleHeader } from "../auth/runtime.js";
 import { apiStore } from "../services/api-store.js";
 import { auditLogService } from "../services/audit-log-service.js";
 import { executeInternalRunnerAction } from "../services/internal-runner-action-service.js";
@@ -40,10 +41,23 @@ const isRemoteDispatchTarget = (target: "remote_worker" | "local_worker" | "hybr
 
 const allowRunnerExecution = (request: FastifyRequest, reply: FastifyReply): boolean => {
   const expected = process.env.RUNNER_INTERNAL_TOKEN?.trim();
-  if (!expected) return true;
+  if (!expected) {
+    reply.code(500).send({
+      error: "runner_token_not_configured",
+      message: "RUNNER_INTERNAL_TOKEN must be configured"
+    });
+    return false;
+  }
   const providedHeader = request.headers["x-runner-token"];
-  const provided = Array.isArray(providedHeader) ? providedHeader[0] : providedHeader;
-  if (provided === expected) return true;
+  const provided = parseSingleHeader(providedHeader);
+  if (!provided) {
+    reply.code(403).send({
+      error: "forbidden",
+      message: "Runner token is required"
+    });
+    return false;
+  }
+  if (apiKeyEquals(expected, provided)) return true;
   reply.code(403).send({
     error: "forbidden",
     message: "Invalid runner token"

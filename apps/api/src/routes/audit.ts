@@ -1,15 +1,9 @@
-import type { FastifyPluginAsync, FastifyRequest } from "fastify";
+import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { auditLogService } from "../services/audit-log-service.js";
+import { requireAuthenticatedTenantPermission } from "../tenant/rbac.js";
 
 const statusSchema = z.enum(["success", "failure"]);
-
-const resolveTenantId = (request: FastifyRequest): string | undefined => {
-  const requestTenant = (request as FastifyRequest & { tenantId?: string }).tenantId;
-  if (requestTenant) return requestTenant;
-  const header = request.headers["x-tenant-id"];
-  return typeof header === "string" && header.trim().length > 0 ? header.trim() : undefined;
-};
 
 const querySchema = z.object({
   tenantId: z.string().min(1).optional(),
@@ -32,6 +26,7 @@ export const createAuditRoutes = (service = auditLogService): FastifyPluginAsync
       }
     },
     async (request, reply) => {
+      if (!requireAuthenticatedTenantPermission(request, reply, "canView")) return;
       const parse = querySchema.safeParse(request.query);
       if (!parse.success) {
         return reply.code(400).send({
@@ -40,7 +35,14 @@ export const createAuditRoutes = (service = auditLogService): FastifyPluginAsync
         });
       }
 
-      const tenantId = parse.data.tenantId ?? resolveTenantId(request);
+      if (parse.data.tenantId && parse.data.tenantId !== request.tenantId) {
+        return reply.code(403).send({
+          error: "forbidden",
+          message: "Tenant override is not permitted"
+        });
+      }
+
+      const tenantId = request.tenantId;
       const items = await service.list({
         ...(tenantId ? { tenantId } : {}),
         ...(parse.data.projectId ? { projectId: parse.data.projectId } : {}),

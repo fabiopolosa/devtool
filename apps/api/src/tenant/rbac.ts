@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { TenantPermissions, TenantRole } from "@cp/domain";
 import { apiStore } from "../services/api-store.js";
+import { requireAuthenticated } from "../auth/runtime.js";
 
 export const tenantRolePermissions: Record<TenantRole, TenantPermissions> = {
   owner: {
@@ -66,4 +67,15 @@ export const requireTenantPermission = (
     message: `Missing required tenant permission: ${permission}`
   });
   return false;
+};
+
+export const requireAuthenticatedTenantPermission = (
+  request: FastifyRequest,
+  reply: FastifyReply,
+  permission: keyof TenantPermissions
+): boolean => {
+  if (!requireAuthenticated(request, reply)) {
+    return false;
+  }
+  return requireTenantPermission(request, reply, permission);
 };

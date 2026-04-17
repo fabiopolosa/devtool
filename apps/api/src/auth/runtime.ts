@@ -66,7 +66,7 @@ const normalizeApiKeys = (...values: Array<string | undefined>): string[] => {
   return [...new Set(entries)];
 };
 
-const parseSingleHeader = (value: string | string[] | undefined): string | null => {
+export const parseSingleHeader = (value: string | string[] | undefined): string | null => {
   if (typeof value === "string") {
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
@@ -77,7 +77,7 @@ const parseSingleHeader = (value: string | string[] | undefined): string | null 
   return null;
 };
 
-const apiKeyEquals = (left: string, right: string): boolean => {
+export const apiKeyEquals = (left: string, right: string): boolean => {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
   if (a.length !== b.length) return false;
@@ -288,7 +288,7 @@ export const resolveRequestPrincipal = async (
   runtime: ApiAuthRuntime
 ): Promise<SessionPrincipal | undefined> => {
   if (!runtime.enabled) {
-    return runtime.bypassPrincipal;
+    return process.env.NODE_ENV === "production" ? undefined : runtime.bypassPrincipal;
   }
 
   const token = parseBearer(request.headers.authorization);
