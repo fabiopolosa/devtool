@@ -36,6 +36,15 @@ describe("BrainstormingService", () => {
             return true;
           }),
         get: async (id) => subpromptCatalog.find((item) => item.id === id) ?? null
+      },
+      requireRegistryPrompt: true,
+      resolveRoleInstructions: async (role, context) => {
+        if (role !== "planner") return undefined;
+        expect(context).toMatchObject({
+          type: "role",
+          target: "planner"
+        });
+        return "Plan with explicit registry-governed instructions.";
       }
     });
     const all = await service.listSubprompts();
