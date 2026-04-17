@@ -71,6 +71,8 @@ const extractJobErrorMessage = (item: { payload?: Record<string, unknown> } | un
   return typeof lastError?.message === 'string' ? lastError.message : fallback;
 };
 
+const resolveJobWaitDelay = (attempt: number): number => Math.min(500 * 2 ** attempt, 2500);
+
 export function ProjectDetailPage() {
   const { state, dispatch, auth, authActions } = useAppStore();
   const projectId = usePathParam(1);
@@ -169,6 +171,7 @@ export function ProjectDetailPage() {
   const waitForJobCompletion = useCallback(
     async (jobId: string, label: string): Promise<void> => {
       const startedAt = Date.now();
+      let attempt = 0;
       while (Date.now() - startedAt < 45_000) {
         const { response, body } = await authActions.apiFetchJson<{
           item?: {
@@ -187,7 +190,8 @@ export function ProjectDetailPage() {
         if (item.status === 'error') {
           throw new Error(extractJobErrorMessage(item, `${label} failed (${jobId})`));
         }
-        await new Promise((resolve) => setTimeout(resolve, 700));
+        await new Promise((resolve) => setTimeout(resolve, resolveJobWaitDelay(attempt)));
+        attempt += 1;
       }
       throw new Error(`Timed out while waiting for ${label} (${jobId})`);
     },

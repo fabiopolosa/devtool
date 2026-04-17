@@ -76,6 +76,14 @@ const toLauncherCode = (project: Project): string => {
   return (key || name || project.id.slice(0, 2)).toUpperCase();
 };
 
+const resolveProjectJobsPollDelay = (input: {
+  runnerLikelyActive: boolean;
+  consecutiveFailures: number;
+}): number => {
+  const baseDelay = input.runnerLikelyActive ? 1500 : 5000;
+  return Math.min(baseDelay * 2 ** input.consecutiveFailures, 30000);
+};
+
 export function AppShell() {
   const { state, auth, authActions } = useAppStore();
   const matchRoute = useMatchRoute();
@@ -92,6 +100,7 @@ export function AppShell() {
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | undefined>();
   const isMountedRef = useRef(true);
+  const projectJobsPollFailuresRef = useRef(0);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -497,7 +506,9 @@ export function AppShell() {
     if (context.mode !== 'project' || !selectedProject?.id || (auth.enabled && auth.required)) {
       if (isMountedRef.current) {
         setJobs([]);
+        setJobsError(undefined);
       }
+      projectJobsPollFailuresRef.current = 0;
       return;
     }
     if (isMountedRef.current) {
@@ -514,7 +525,9 @@ export function AppShell() {
       if (isMountedRef.current) {
         setJobs(body.items ?? []);
       }
+      projectJobsPollFailuresRef.current = 0;
     } catch (error) {
+      projectJobsPollFailuresRef.current += 1;
       if (isMountedRef.current) {
         setJobsError(error instanceof Error ? error.message : 'Unable to load project jobs');
       }
@@ -542,8 +555,12 @@ export function AppShell() {
       }, delayMs);
     };
     const tick = async (): Promise<void> => {
+      const nextDelay = resolveProjectJobsPollDelay({
+        runnerLikelyActive,
+        consecutiveFailures: projectJobsPollFailuresRef.current
+      });
       if (cancelled || inFlight) {
-        schedule(runnerLikelyActive ? 1500 : 5000);
+        schedule(nextDelay);
         return;
       }
       inFlight = true;
@@ -552,9 +569,19 @@ export function AppShell() {
       } finally {
         inFlight = false;
       }
-      schedule(runnerLikelyActive ? 1500 : 5000);
+      schedule(
+        resolveProjectJobsPollDelay({
+          runnerLikelyActive,
+          consecutiveFailures: projectJobsPollFailuresRef.current
+        })
+      );
     };
-    schedule(runnerLikelyActive ? 1500 : 5000);
+    schedule(
+      resolveProjectJobsPollDelay({
+        runnerLikelyActive,
+        consecutiveFailures: projectJobsPollFailuresRef.current
+      })
+    );
     return () => {
       cancelled = true;
       if (timer !== undefined) {

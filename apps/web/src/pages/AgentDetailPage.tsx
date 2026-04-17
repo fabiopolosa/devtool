@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { capabilityClasses, type AgentConfig, type CapabilityClass, type Skill } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
 import { useAppStore } from "@/store/app-store";
@@ -38,6 +38,22 @@ const resolveSkillScope = (skill: Skill, userId?: string): SkillScope => {
   return "tenant";
 };
 
+const isTerminalRuntimeJobState = (state: string | undefined): boolean =>
+  state === "completed" || state === "failed" || state === "error";
+
+const resolveRuntimeJobPollDelay = (input: {
+  state?: string;
+  consecutiveFailures: number;
+}): number => {
+  if (input.consecutiveFailures > 0) {
+    return Math.min(1000 * 2 ** input.consecutiveFailures, 10000);
+  }
+  if (input.state === "active" || input.state === "running") {
+    return 1000;
+  }
+  return 2000;
+};
+
 export function AgentDetailPage() {
   const navigate = useNavigate();
   const { auth, authActions } = useAppStore();
@@ -60,6 +76,7 @@ export function AgentDetailPage() {
   const [error, setError] = useState<string | undefined>();
   const [jobRef, setJobRef] = useState<AgentRuntimeJobReference | undefined>();
   const [jobSnapshot, setJobSnapshot] = useState<AgentRuntimeJobSnapshot | undefined>();
+  const jobPollFailureCountRef = useRef(0);
 
   const loadAll = useCallback(async () => {
     if (!agentId) return;
@@ -112,24 +129,53 @@ export function AgentDetailPage() {
   useEffect(() => {
     if (!agentId || !jobRef?.jobId) return;
     let stopped = false;
-    const interval = setInterval(async () => {
+    let timer: number | undefined;
+
+    const schedule = (delayMs: number): void => {
+      if (stopped) return;
+      timer = window.setTimeout(() => {
+        void tick();
+      }, delayMs);
+    };
+
+    const tick = async (): Promise<void> => {
       try {
-        const response = await authActions.apiFetch(`/agents/${agentId}/jobs/${jobRef.jobId}`);
-        const body = (await response.json()) as { item?: AgentRuntimeJobSnapshot };
-        if (!response.ok || !body.item) return;
-        if (stopped) return;
-        setJobSnapshot(body.item);
-        if (body.item.state === "completed" || body.item.state === "failed") {
-          clearInterval(interval);
+        const { response, body } = await authActions.apiFetchJson<{ item?: AgentRuntimeJobSnapshot; message?: string }>(
+          `/agents/${agentId}/jobs/${jobRef.jobId}`
+        );
+        if (!response.ok || !body.item) {
+          throw new Error(body.message ?? `Unable to load runtime job (HTTP ${response.status})`);
         }
+        if (stopped) return;
+        jobPollFailureCountRef.current = 0;
+        setJobSnapshot(body.item);
+        if (isTerminalRuntimeJobState(body.item.state)) {
+          return;
+        }
+        schedule(
+          resolveRuntimeJobPollDelay({
+            state: body.item.state,
+            consecutiveFailures: jobPollFailureCountRef.current
+          })
+        );
       } catch {
-        clearInterval(interval);
+        jobPollFailureCountRef.current += 1;
+        if (stopped) return;
+        schedule(
+          resolveRuntimeJobPollDelay({
+            consecutiveFailures: jobPollFailureCountRef.current
+          })
+        );
       }
-    }, 1000);
+    };
+
+    schedule(0);
 
     return () => {
       stopped = true;
-      clearInterval(interval);
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
     };
   }, [agentId, authActions, jobRef?.jobId]);
 

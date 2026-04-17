@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type {
   Approval,
   Artifact,
@@ -108,6 +108,22 @@ const isJsonResponse = (response: Response): boolean =>
   (response.headers.get('content-type') ?? '').toLowerCase().includes('application/json');
 
 const summarizeResponseText = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(0, 240);
+
+type JsonResponseSnapshot<T> = {
+  status: number;
+  statusText: string;
+  headers: Array<[string, string]>;
+  body: T;
+};
+
+const cloneJsonResponseSnapshot = <T,>(snapshot: JsonResponseSnapshot<T>): { response: Response; body: T } => ({
+  response: new Response(JSON.stringify(snapshot.body), {
+    status: snapshot.status,
+    statusText: snapshot.statusText,
+    headers: snapshot.headers
+  }),
+  body: snapshot.body
+});
 
 type Action =
   | { type: 'approveRoadmap'; roadmapItemId: string }
@@ -476,6 +492,7 @@ export function AppStoreProvider({
       error: undefined
     };
   });
+  const inFlightJsonRequestsRef = useRef(new Map<string, Promise<JsonResponseSnapshot<unknown>>>());
 
   const apiBaseUrl = useMemo(() => apiBaseUrlFromEnv(), []);
 
@@ -489,35 +506,26 @@ export function AppStoreProvider({
     [apiBaseUrl]
   );
 
-  const setSessionToken = (token?: string): void => {
+  const writeStoredToken = (storageKey: string, token?: string): void => {
     if (typeof window === 'undefined') return;
     if (!token) {
-      window.localStorage.removeItem(sessionStorageKey);
+      window.localStorage.removeItem(storageKey);
       return;
     }
-    window.localStorage.setItem(sessionStorageKey, token);
+    window.localStorage.setItem(storageKey, token);
   };
 
-  const getSessionToken = (): string | undefined => {
-    if (typeof window === 'undefined') return undefined;
-    const token = window.localStorage.getItem(sessionStorageKey);
-    return token ?? undefined;
+  const setSessionToken = (token?: string): void => {
+    writeStoredToken(sessionStorageKey, token);
   };
+
+  const getSessionToken = (): string | undefined => readStoredToken(sessionStorageKey);
 
   const setRefreshToken = (token?: string): void => {
-    if (typeof window === 'undefined') return;
-    if (!token) {
-      window.localStorage.removeItem(refreshStorageKey);
-      return;
-    }
-    window.localStorage.setItem(refreshStorageKey, token);
+    writeStoredToken(refreshStorageKey, token);
   };
 
-  const getRefreshToken = (): string | undefined => {
-    if (typeof window === 'undefined') return undefined;
-    const token = window.localStorage.getItem(refreshStorageKey);
-    return token ?? undefined;
-  };
+  const getRefreshToken = (): string | undefined => readStoredToken(refreshStorageKey);
 
   const refreshAccessSession = useCallback(async (): Promise<boolean> => {
     if (!auth.enabled) return false;
@@ -653,25 +661,62 @@ export function AppStoreProvider({
 
   const apiFetchJson = useCallback(
     async <T,>(path: string, init: RequestInit = {}): Promise<{ response: Response; body: T }> => {
-      const response = await apiFetch(path, init);
-      if (!isJsonResponse(response)) {
-        const raw = await response.text();
-        const responseUrl = response.url || toUrl(path);
-        const preview = summarizeResponseText(raw);
-        console.error('apiFetchJson expected JSON response', {
-          path,
-          responseUrl,
-          status: response.status,
-          contentType: response.headers.get('content-type'),
-          preview
+      const method = (init.method ?? 'GET').toUpperCase();
+      const dedupeKey = `${method}:${toUrl(path)}`;
+      const dedupeEligible = method === 'GET' && !init.body;
+
+      const fetchAndParse = async (): Promise<JsonResponseSnapshot<T>> => {
+        const response = await apiFetch(path, init);
+        if (!isJsonResponse(response)) {
+          const raw = await response.text();
+          const responseUrl = response.url || toUrl(path);
+          const preview = summarizeResponseText(raw);
+          console.error('apiFetchJson expected JSON response', {
+            path,
+            responseUrl,
+            status: response.status,
+            contentType: response.headers.get('content-type'),
+            preview
+          });
+          throw new Error(
+            `Expected JSON, received HTML/non-JSON response from ${responseUrl} (HTTP ${response.status}).` +
+              ` Preview: ${preview}`
+          );
+        }
+        const body = (await response.json()) as T;
+        const headers: Array<[string, string]> = [];
+        response.headers.forEach((value, key) => {
+          headers.push([key, value]);
         });
-        throw new Error(
-          `Expected JSON, received HTML/non-JSON response from ${responseUrl} (HTTP ${response.status}).` +
-            ` Preview: ${preview}`
-        );
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+          body
+        };
+      };
+
+      if (!dedupeEligible) {
+        return cloneJsonResponseSnapshot(await fetchAndParse());
       }
-      const body = (await response.json()) as T;
-      return { response, body };
+
+      const existingRequest = inFlightJsonRequestsRef.current.get(dedupeKey) as
+        | Promise<JsonResponseSnapshot<T>>
+        | undefined;
+      if (existingRequest) {
+        return cloneJsonResponseSnapshot(await existingRequest);
+      }
+
+      const requestPromise = fetchAndParse();
+      inFlightJsonRequestsRef.current.set(dedupeKey, requestPromise as Promise<JsonResponseSnapshot<unknown>>);
+      try {
+        return cloneJsonResponseSnapshot(await requestPromise);
+      } finally {
+        const currentRequest = inFlightJsonRequestsRef.current.get(dedupeKey);
+        if (currentRequest === requestPromise) {
+          inFlightJsonRequestsRef.current.delete(dedupeKey);
+        }
+      }
     },
     [apiFetch, toUrl]
   );
