@@ -53,6 +53,13 @@ export interface AgentRuntimeScheduler {
   close?(): Promise<void>;
 }
 
+export class AgentRuntimeSchedulerUnavailableError extends Error {
+  constructor(message = "Agent runtime scheduler requires REDIS_URL") {
+    super(message);
+    this.name = "AgentRuntimeSchedulerUnavailableError";
+  }
+}
+
 export interface AgentRuntimeJobData {
   agentId: string;
   operation: "heartbeat" | "diagnose";
@@ -235,6 +242,22 @@ export class InMemoryAgentRuntimeScheduler implements AgentRuntimeScheduler {
       args: data.args,
       createdAt
     };
+  }
+}
+
+export class UnavailableAgentRuntimeScheduler implements AgentRuntimeScheduler {
+  constructor(private readonly message = "Agent runtime scheduler requires REDIS_URL") {}
+
+  async enqueueHeartbeat(): Promise<AgentRuntimeJobReference> {
+    throw new AgentRuntimeSchedulerUnavailableError(this.message);
+  }
+
+  async enqueueDiagnose(): Promise<AgentRuntimeJobReference> {
+    throw new AgentRuntimeSchedulerUnavailableError(this.message);
+  }
+
+  async getJobSnapshot(): Promise<AgentRuntimeJobSnapshot | null> {
+    throw new AgentRuntimeSchedulerUnavailableError(this.message);
   }
 }
 

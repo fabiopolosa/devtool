@@ -364,15 +364,7 @@ const runInternalRunnerAction = async (job: RunnerJob): Promise<JobExecutionResu
   const payload = asRecord(job.payload) ?? {};
   const action = typeof payload.internalAction === "string" ? payload.internalAction.trim() : "";
   if (!action) {
-    return {
-      nextStatus: "done",
-      payloadPatch: {
-        output: {
-          stage: "internal_runner",
-          summary: "No internalAction defined; no-op execution."
-        }
-      }
-    };
+    throw new Error("Missing required payload field: internalAction");
   }
 
   if (action.startsWith("ruflo.")) {
@@ -556,7 +548,16 @@ const runLocalRepoCommand = async (
 const agentRuntimeWorker = new Worker<AgentRuntimeJobData>(
   agentRuntimeQueueName,
   async (job) => {
-    await runAgentRuntimeCommand(job, job.data);
+    try {
+      await runAgentRuntimeCommand(job, job.data);
+    } catch (error) {
+      try {
+        await job.log(`[error] ${error instanceof Error ? error.message : String(error)}`);
+      } catch (logError) {
+        console.error("[worker] failed to log agent runtime job failure", logError);
+      }
+      throw error;
+    }
   },
   { connection }
 );
@@ -564,7 +565,16 @@ const agentRuntimeWorker = new Worker<AgentRuntimeJobData>(
 const localRepoWorker = new Worker<LocalRepoJobData>(
   localRepoQueueName,
   async (job) => {
-    await runLocalRepoCommand(job, job.data);
+    try {
+      await runLocalRepoCommand(job, job.data);
+    } catch (error) {
+      try {
+        await job.log(`[error] ${error instanceof Error ? error.message : String(error)}`);
+      } catch (logError) {
+        console.error("[worker] failed to log local repo job failure", logError);
+      }
+      throw error;
+    }
   },
   { connection }
 );

@@ -1,8 +1,8 @@
 import type { LocalRepository } from "@cp/domain";
 import {
   BullmqLocalRepoJobScheduler,
-  InMemoryLocalRepoJobScheduler,
   LocalRepositoriesService,
+  UnavailableLocalRepoJobScheduler,
   type LocalRepositoryStore
 } from "@cp/local-repos";
 import { apiStore } from "./api-store.js";
@@ -35,7 +35,7 @@ class ApiLocalRepositoryStoreAdapter implements LocalRepositoryStore {
 const createScheduler = () => {
   const redisUrl = process.env.REDIS_URL?.trim();
   if (!redisUrl) {
-    return new InMemoryLocalRepoJobScheduler();
+    return new UnavailableLocalRepoJobScheduler();
   }
   return new BullmqLocalRepoJobScheduler(redisUrl);
 };

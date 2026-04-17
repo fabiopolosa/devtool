@@ -28,6 +28,7 @@ import { auditLogService } from "./audit-log-service.js";
 import { skillsService } from "./skills-service.js";
 import {
   applyWorkspaceRuntimeAction,
+  ensureWorkspaceActionReadiness,
   toWorkspaceRuntimeAction,
   updateWorkspace
 } from "./workspaces-service.js";
@@ -99,11 +100,7 @@ const summarizeSkillInput = (input: Record<string, unknown> | null): Record<stri
 };
 
 const recordSkillAudit = async (input: Parameters<typeof auditLogService.record>[0]): Promise<void> => {
-  try {
-    await auditLogService.record(input);
-  } catch {
-    // Never block job completion on audit persistence errors.
-  }
+  await auditLogService.record(input);
 };
 
 type WorkspaceDeployPipeline = "research" | "content" | "visual" | "multimodal";
@@ -466,6 +463,13 @@ export const executeInternalRunnerAction = async (
       throw new Error(`Unsupported workspace action: ${action}`);
     }
 
+    await ensureWorkspaceActionReadiness({
+      tenantId,
+      workspaceId,
+      actor,
+      action: runtimeAction
+    });
+
     if (runtimeAction === "deploy") {
       if (!projectId) throw missingPayloadError("projectId");
       const deployConfig = asRecord(metadata?.deploy) ?? metadata ?? {};
@@ -623,6 +627,7 @@ export const executeInternalRunnerAction = async (
       const result = await skillsService.executeSkill({
         skillId,
         actor,
+        ...(tenantId ? { tenantId } : {}),
         ...(command ? { command } : {}),
         ...(args.length > 0 ? { args } : {}),
         ...(inputRecord ? { input: inputRecord } : {}),

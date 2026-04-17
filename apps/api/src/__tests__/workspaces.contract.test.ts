@@ -278,6 +278,23 @@ describe("Workspaces API contract", () => {
     });
     expect(startResponse.statusCode).toBe(400);
     expect((startResponse.json() as { error?: string }).error).toBe("workspace_path_invalid");
+
+    const internalActionResponse = await app.inject({
+      method: "POST",
+      url: "/execution/internal-action",
+      payload: {
+        action: "workspace.start",
+        payload: {
+          tenantId: "tenant_default",
+          projectId: localProjectId,
+          workspaceId: created.item?.id,
+          actor: "workspace_runtime"
+        }
+      }
+    });
+    expect(internalActionResponse.statusCode).toBe(500);
+    const internalActionBody = internalActionResponse.json() as { message?: string };
+    expect(internalActionBody.message).toContain("required in local mode");
   });
 
   it("stores invalid local path validation for non-existing paths", async () => {

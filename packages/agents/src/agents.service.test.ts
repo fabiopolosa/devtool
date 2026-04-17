@@ -1,5 +1,10 @@
 import type { AgentConfig } from "@cp/domain";
-import { AgentService, InMemoryAgentRuntimeScheduler, type AgentConfigStore } from "./service.js";
+import {
+  AgentService,
+  InMemoryAgentRuntimeScheduler,
+  UnavailableAgentRuntimeScheduler,
+  type AgentConfigStore
+} from "./service.js";
 
 class InMemoryAgentStore implements AgentConfigStore {
   private readonly rows = new Map<string, AgentConfig>();
@@ -113,5 +118,16 @@ describe("@cp/agents AgentService", () => {
 
     await expect(service.runHeartbeat("missing")).rejects.toThrow("Agent not found");
     await expect(service.diagnoseAgent("missing")).rejects.toThrow("Agent not found");
+  });
+
+  it("fails explicitly when the runtime scheduler is unavailable", async () => {
+    const service = new AgentService({
+      store: new InMemoryAgentStore([baseAgent()]),
+      runtimeScheduler: new UnavailableAgentRuntimeScheduler()
+    });
+
+    await expect(service.runHeartbeat("agent_001")).rejects.toThrow(
+      "Agent runtime scheduler requires REDIS_URL"
+    );
   });
 });

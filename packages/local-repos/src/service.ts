@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { existsSync, type Stats } from "node:fs";
+import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
@@ -9,6 +9,41 @@ import { Redis } from "ioredis";
 import type { LocalRepository } from "@cp/domain";
 
 const execFileAsync = promisify(execFile);
+const nowIso = (): string => new Date().toISOString();
+
+const pathHasTraversalSegments = (value: string): boolean =>
+  value
+    .split(/[\\/]+/)
+    .map((segment) => segment.trim())
+    .some((segment) => segment === "..");
+
+const normalizeForPrefix = (value: string): string => {
+  const resolved = path.resolve(value);
+  return resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
+};
+
+const pathWithinRoot = (candidatePath: string, rootPath: string): boolean => {
+  const normalizedCandidate = normalizeForPrefix(candidatePath);
+  const normalizedRoot = normalizeForPrefix(rootPath);
+  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(normalizedRoot);
+};
+
+const createPathValidationError = (input: {
+  path?: string;
+  resolvedPath?: string;
+  rootPath?: string;
+  reason: LocalRepositoryPathValidationReason;
+  message: string;
+}): LocalRepositoryPathValidationError =>
+  new LocalRepositoryPathValidationError({
+    checkedAt: nowIso(),
+    valid: false,
+    ...(input.path ? { path: input.path } : {}),
+    ...(input.resolvedPath ? { resolvedPath: input.resolvedPath } : {}),
+    ...(input.rootPath ? { rootPath: input.rootPath } : {}),
+    reason: input.reason,
+    message: input.message
+  });
 
 export interface LocalRepositoryStore {
   listLocalRepositories(): Promise<LocalRepository[]>;
@@ -65,10 +100,46 @@ export interface LocalRepoJobSnapshot {
   failedReason?: string;
 }
 
+export type LocalRepositoryPathValidationReason =
+  | "missing_path"
+  | "path_not_found"
+  | "path_not_directory"
+  | "path_not_file"
+  | "path_escape"
+  | "symlink_not_allowed"
+  | "validation_error";
+
+export interface LocalRepositoryPathValidation {
+  checkedAt: string;
+  path?: string;
+  resolvedPath?: string;
+  rootPath?: string;
+  valid: false;
+  reason: LocalRepositoryPathValidationReason;
+  message: string;
+}
+
+export class LocalRepositoryPathValidationError extends Error {
+  readonly validation: LocalRepositoryPathValidation;
+
+  constructor(validation: LocalRepositoryPathValidation) {
+    super(validation.message);
+    this.name = "LocalRepositoryPathValidationError";
+    this.validation = validation;
+  }
+}
+
 export interface LocalRepoJobScheduler {
   schedule(job: LocalRepoJobData): Promise<LocalRepoJobReference>;
   getJob(jobId: string): Promise<LocalRepoJobSnapshot | null>;
   close?(): Promise<void>;
+}
+
+export class LocalRepoJobSchedulerUnavailableError extends Error {
+  constructor(message = "Local repository job scheduler requires REDIS_URL") {
+    super(message);
+    this.name = "LocalRepoJobSchedulerUnavailableError";
+  }
 }
 
 export class BullmqLocalRepoJobScheduler implements LocalRepoJobScheduler {
@@ -143,6 +214,18 @@ export class InMemoryLocalRepoJobScheduler implements LocalRepoJobScheduler {
   }
 }
 
+export class UnavailableLocalRepoJobScheduler implements LocalRepoJobScheduler {
+  constructor(private readonly message = "Local repository job scheduler requires REDIS_URL") {}
+
+  async schedule(): Promise<LocalRepoJobReference> {
+    throw new LocalRepoJobSchedulerUnavailableError(this.message);
+  }
+
+  async getJob(): Promise<LocalRepoJobSnapshot | null> {
+    throw new LocalRepoJobSchedulerUnavailableError(this.message);
+  }
+}
+
 export interface LocalRepositoriesServiceOptions {
   store: LocalRepositoryStore;
   now?: () => Date;
@@ -171,11 +254,7 @@ export class LocalRepositoriesService {
   }
 
   async createLocalRepository(input: LocalRepositoryCreateInput, actor: string): Promise<LocalRepository> {
-    const rootPath = path.resolve(input.rootPath.trim());
-    const stats = await stat(rootPath);
-    if (!stats.isDirectory()) {
-      throw new Error(`Path is not a directory: ${rootPath}`);
-    }
+    const rootPath = await this.resolveRootPath(input.rootPath);
     const nowIso = this.now().toISOString();
     const gitMeta = await this.inspectGit(rootPath);
     const indexedFileCount = await this.countFiles(rootPath, 20_000);
@@ -205,11 +284,7 @@ export class LocalRepositoriesService {
   ): Promise<LocalRepository> {
     let resolvedRootPath: string | undefined;
     if (patch.rootPath) {
-      resolvedRootPath = path.resolve(patch.rootPath.trim());
-      const stats = await stat(resolvedRootPath);
-      if (!stats.isDirectory()) {
-        throw new Error(`Path is not a directory: ${resolvedRootPath}`);
-      }
+      resolvedRootPath = await this.resolveRootPath(patch.rootPath);
     }
     return this.options.store.updateLocalRepository(localRepositoryId, {
       ...(patch.name ? { name: patch.name.trim() } : {}),
@@ -227,18 +302,37 @@ export class LocalRepositoriesService {
 
   async listFiles(localRepositoryId: string, relativePath = "."): Promise<LocalRepoFileEntry[]> {
     const repo = await this.requireRepository(localRepositoryId);
-    const targetPath = this.resolveWithinRoot(repo.rootPath, relativePath);
+    const resolvedRoot = await this.resolveRootPath(repo.rootPath);
+    const targetPath = await this.resolvePathWithinRoot(resolvedRoot, relativePath, {
+      requireDirectory: true
+    });
     const entries = await readdir(targetPath, { withFileTypes: true });
 
     const listed: LocalRepoFileEntry[] = [];
     for (const entry of entries) {
       const fullPath = path.join(targetPath, entry.name);
-      const relPath = path.relative(repo.rootPath, fullPath) || ".";
-      if (entry.isDirectory()) {
+      const entryStats = await lstat(fullPath);
+      if (entryStats.isSymbolicLink()) {
+        throw createPathValidationError({
+          path: fullPath,
+          rootPath: repo.rootPath,
+          reason: "symlink_not_allowed",
+          message: "Symbolic links are not allowed in local repository browsing."
+        });
+      }
+      const relPath = path.relative(resolvedRoot, fullPath) || ".";
+      if (entryStats.isDirectory()) {
         listed.push({ name: entry.name, relativePath: relPath, kind: "directory" });
         continue;
       }
-      const entryStats = await stat(fullPath);
+      if (!entryStats.isFile()) {
+        throw createPathValidationError({
+          path: fullPath,
+          rootPath: resolvedRoot,
+          reason: "validation_error",
+          message: "Unsupported repository entry type."
+        });
+      }
       listed.push({ name: entry.name, relativePath: relPath, kind: "file", sizeBytes: entryStats.size });
     }
 
@@ -252,10 +346,18 @@ export class LocalRepositoriesService {
 
   async readFileContent(localRepositoryId: string, relativePath: string): Promise<{ content: string; truncated: boolean }> {
     const repo = await this.requireRepository(localRepositoryId);
-    const fullPath = this.resolveWithinRoot(repo.rootPath, relativePath);
+    const resolvedRoot = await this.resolveRootPath(repo.rootPath);
+    const fullPath = await this.resolvePathWithinRoot(resolvedRoot, relativePath, {
+      requireFile: true
+    });
     const entryStats = await stat(fullPath);
     if (!entryStats.isFile()) {
-      throw new Error(`Not a file: ${relativePath}`);
+      throw createPathValidationError({
+        path: fullPath,
+        rootPath: resolvedRoot,
+        reason: "path_not_file",
+        message: `Not a file: ${relativePath}`
+      });
     }
     const content = await readFile(fullPath, "utf8");
     if (Buffer.byteLength(content, "utf8") <= this.maxReadBytes) {
@@ -267,13 +369,14 @@ export class LocalRepositoriesService {
 
   async getGitHistory(localRepositoryId: string, limit = 30): Promise<LocalRepoCommitEntry[]> {
     const repo = await this.requireRepository(localRepositoryId);
+    const rootPath = await this.resolveRootPath(repo.rootPath);
     if (!repo.detectedGit) {
       return [];
     }
     try {
       const { stdout } = await execFileAsync("git", [
         "-C",
-        repo.rootPath,
+        rootPath,
         "log",
         `-n`,
         `${Math.max(1, Math.min(limit, 200))}`,
@@ -301,9 +404,10 @@ export class LocalRepositoriesService {
 
   async scanRepository(localRepositoryId: string, actor: string): Promise<LocalRepository> {
     const repo = await this.requireRepository(localRepositoryId);
+    const rootPath = await this.resolveRootPath(repo.rootPath);
     const nowIso = this.now().toISOString();
-    const gitMeta = await this.inspectGit(repo.rootPath);
-    const indexedFileCount = await this.countFiles(repo.rootPath, 50_000);
+    const gitMeta = await this.inspectGit(rootPath);
+    const indexedFileCount = await this.countFiles(rootPath, 50_000);
     return this.options.store.updateLocalRepository(localRepositoryId, {
       detectedGit: gitMeta.detectedGit,
       ...(gitMeta.currentBranch ? { currentBranch: gitMeta.currentBranch } : {}),
@@ -317,22 +421,23 @@ export class LocalRepositoriesService {
 
   async scheduleScan(localRepositoryId: string): Promise<LocalRepoJobReference> {
     const repo = await this.requireRepository(localRepositoryId);
+    const rootPath = await this.resolveRootPath(repo.rootPath);
     if (!this.options.scheduler) {
-      throw new Error("Local repository scheduler is not configured");
+      throw new LocalRepoJobSchedulerUnavailableError();
     }
     return this.options.scheduler.schedule({
       localRepositoryId,
       operation: "scan",
       command: "sh",
       args: ["-lc", "find . -type f | wc -l"],
-      cwd: repo.rootPath,
+      cwd: rootPath,
       requestedAt: this.now().toISOString()
     });
   }
 
   async getJob(jobId: string): Promise<LocalRepoJobSnapshot | null> {
     if (!this.options.scheduler) {
-      return null;
+      throw new LocalRepoJobSchedulerUnavailableError();
     }
     return this.options.scheduler.getJob(jobId);
   }
@@ -345,16 +450,163 @@ export class LocalRepositoriesService {
     return repo;
   }
 
-  private resolveWithinRoot(rootPath: string, relativePath: string): string {
-    const candidate = path.resolve(rootPath, relativePath || ".");
-    if (candidate === rootPath) {
-      return candidate;
+  private async resolveRootPath(rootPath: string): Promise<string> {
+    const normalizedRootPath = rootPath.trim();
+    if (!normalizedRootPath) {
+      throw createPathValidationError({
+        reason: "missing_path",
+        message: "Local repository root path is required."
+      });
     }
-    const normalizedRoot = rootPath.endsWith(path.sep) ? rootPath : `${rootPath}${path.sep}`;
-    if (!candidate.startsWith(normalizedRoot)) {
-      throw new Error("Path escapes repository root");
+    const candidate = path.resolve(normalizedRootPath);
+
+    let stats: Stats;
+    try {
+      stats = await lstat(candidate);
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? String((error as NodeJS.ErrnoException).code ?? "") : "";
+      throw createPathValidationError({
+        path: candidate,
+        reason: code === "ENOENT" ? "path_not_found" : "validation_error",
+        message:
+          code === "ENOENT"
+            ? "Local repository root path does not exist."
+            : "Unable to validate local repository root path."
+      });
     }
-    return candidate;
+
+    if (stats.isSymbolicLink()) {
+      throw createPathValidationError({
+        path: candidate,
+        reason: "symlink_not_allowed",
+        message: "Symbolic links are not allowed for local repository roots."
+      });
+    }
+
+    let resolvedPath: string;
+    try {
+      resolvedPath = await realpath(candidate);
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? String((error as NodeJS.ErrnoException).code ?? "") : "";
+      throw createPathValidationError({
+        path: candidate,
+        reason: code === "ENOENT" ? "path_not_found" : "validation_error",
+        message:
+          code === "ENOENT"
+            ? "Local repository root path does not exist."
+            : "Unable to validate local repository root path."
+      });
+    }
+    const resolvedStats = await stat(resolvedPath);
+    if (!resolvedStats.isDirectory()) {
+      throw createPathValidationError({
+        path: candidate,
+        resolvedPath,
+        reason: "path_not_directory",
+        message: `Path is not a directory: ${resolvedPath}`
+      });
+    }
+
+    return resolvedPath;
+  }
+
+  private async resolvePathWithinRoot(
+    rootPath: string,
+    relativePath: string,
+    options?: { requireDirectory?: boolean; requireFile?: boolean }
+  ): Promise<string> {
+    const resolvedRoot = await this.resolveRootPath(rootPath);
+    const rawRelativePath = relativePath.trim();
+    const safeRelativePath = rawRelativePath.length > 0 ? rawRelativePath : ".";
+    if (path.isAbsolute(safeRelativePath)) {
+      throw createPathValidationError({
+        path: safeRelativePath,
+        rootPath: resolvedRoot,
+        reason: "path_escape",
+        message: "Path escapes repository root."
+      });
+    }
+    if (pathHasTraversalSegments(safeRelativePath)) {
+      throw createPathValidationError({
+        path: safeRelativePath,
+        rootPath: resolvedRoot,
+        reason: "path_escape",
+        message: "Path escapes repository root."
+      });
+    }
+
+    const candidate = path.resolve(resolvedRoot, safeRelativePath);
+    let entryStats: Stats;
+    try {
+      entryStats = await lstat(candidate);
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? String((error as NodeJS.ErrnoException).code ?? "") : "";
+      throw createPathValidationError({
+        path: candidate,
+        rootPath: resolvedRoot,
+        reason: code === "ENOENT" ? "path_not_found" : "validation_error",
+        message:
+          code === "ENOENT"
+            ? "Local repository path does not exist."
+            : "Unable to validate local repository path."
+      });
+    }
+
+    if (entryStats.isSymbolicLink()) {
+      throw createPathValidationError({
+        path: candidate,
+        rootPath: resolvedRoot,
+        reason: "symlink_not_allowed",
+        message: "Symbolic links are not allowed for local repository paths."
+      });
+    }
+
+    let resolvedPath: string;
+    try {
+      resolvedPath = await realpath(candidate);
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? String((error as NodeJS.ErrnoException).code ?? "") : "";
+      throw createPathValidationError({
+        path: candidate,
+        rootPath: resolvedRoot,
+        reason: code === "ENOENT" ? "path_not_found" : "validation_error",
+        message:
+          code === "ENOENT"
+            ? "Local repository path does not exist."
+            : "Unable to validate local repository path."
+      });
+    }
+    if (!pathWithinRoot(resolvedPath, resolvedRoot)) {
+      throw createPathValidationError({
+        path: candidate,
+        resolvedPath,
+        rootPath: resolvedRoot,
+        reason: "path_escape",
+        message: "Path escapes repository root."
+      });
+    }
+
+    if (options?.requireDirectory && !entryStats.isDirectory()) {
+      throw createPathValidationError({
+        path: candidate,
+        resolvedPath,
+        rootPath: resolvedRoot,
+        reason: "path_not_directory",
+        message: `Not a directory: ${safeRelativePath}`
+      });
+    }
+
+    if (options?.requireFile && !entryStats.isFile()) {
+      throw createPathValidationError({
+        path: candidate,
+        resolvedPath,
+        rootPath: resolvedRoot,
+        reason: "path_not_file",
+        message: `Not a file: ${safeRelativePath}`
+      });
+    }
+
+    return resolvedPath;
   }
 
   private async inspectGit(rootPath: string): Promise<{
@@ -365,6 +617,16 @@ export class LocalRepositoriesService {
     const gitDir = path.join(rootPath, ".git");
     if (!existsSync(gitDir)) {
       return { detectedGit: false };
+    }
+
+    const gitStats = await lstat(gitDir);
+    if (gitStats.isSymbolicLink()) {
+      throw createPathValidationError({
+        path: gitDir,
+        rootPath,
+        reason: "symlink_not_allowed",
+        message: "Symbolic links are not allowed for local repository metadata."
+      });
     }
 
     let currentBranch: string | undefined;
@@ -400,18 +662,34 @@ export class LocalRepositoriesService {
       if (!current) continue;
       const entries = await readdir(current, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.name === ".git" || entry.name === "node_modules") continue;
         const fullPath = path.join(current, entry.name);
-        if (entry.isDirectory()) {
+        const entryStats = await lstat(fullPath);
+        if (entryStats.isSymbolicLink()) {
+          throw createPathValidationError({
+            path: fullPath,
+            rootPath,
+            reason: "symlink_not_allowed",
+            message: "Symbolic links are not allowed within local repository content."
+          });
+        }
+        if (entry.name === ".git" || entry.name === "node_modules") continue;
+        if (entryStats.isDirectory()) {
           queue.push(fullPath);
           continue;
         }
-        if (entry.isFile()) {
+        if (entryStats.isFile()) {
           count += 1;
           if (count >= maxFiles) {
             return count;
           }
+          continue;
         }
+        throw createPathValidationError({
+          path: fullPath,
+          rootPath,
+          reason: "validation_error",
+          message: "Unsupported local repository entry type."
+        });
       }
     }
 

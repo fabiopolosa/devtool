@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { LocalRepository } from "@cp/domain";
@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   InMemoryLocalRepoJobScheduler,
   LocalRepositoriesService,
+  UnavailableLocalRepoJobScheduler,
   type LocalRepositoryStore
 } from "./service.js";
 
@@ -75,5 +76,83 @@ describe("LocalRepositoriesService", () => {
     expect(job?.state).toBe("completed");
 
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("fails explicitly when the scan scheduler is unavailable", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cp-local-repo-unavailable-"));
+    await writeFile(path.join(root, "README.md"), "# Demo repo\n");
+
+    const service = new LocalRepositoriesService({
+      store: new InMemoryLocalRepoStore(),
+      now: () => new Date("2026-04-14T00:00:00.000Z"),
+      idGenerator: () => "repo-local-unavailable",
+      scheduler: new UnavailableLocalRepoJobScheduler()
+    });
+
+    const repo = await service.createLocalRepository(
+      {
+        name: "demo",
+        rootPath: root
+      },
+      "tester"
+    );
+
+    await expect(service.scheduleScan(repo.id)).rejects.toThrow(
+      "Local repository job scheduler requires REDIS_URL"
+    );
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("rejects symlink roots and escaped repository paths", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cp-local-repo-root-"));
+    const alias = path.join(tmpdir(), `cp-local-repo-alias-${Date.now()}`);
+    const outside = await mkdtemp(path.join(tmpdir(), "cp-local-repo-outside-"));
+    await writeFile(path.join(outside, "secret.txt"), "shh\n");
+
+    const service = new LocalRepositoriesService({
+      store: new InMemoryLocalRepoStore(),
+      now: () => new Date("2026-04-14T00:00:00.000Z"),
+      idGenerator: () => "repo-local-escape",
+      scheduler: new InMemoryLocalRepoJobScheduler()
+    });
+
+    try {
+      await symlink(root, alias, "dir");
+      await expect(
+        service.createLocalRepository(
+          {
+            name: "demo",
+            rootPath: alias
+          },
+          "tester"
+        )
+      ).rejects.toMatchObject({
+        name: "LocalRepositoryPathValidationError",
+        validation: {
+          reason: "symlink_not_allowed"
+        }
+      });
+
+      const repo = await service.createLocalRepository(
+        {
+          name: "demo",
+          rootPath: root
+        },
+        "tester"
+      );
+      await symlink(outside, path.join(root, "escape"), "dir");
+
+      await expect(service.readFileContent(repo.id, "escape/secret.txt")).rejects.toMatchObject({
+        name: "LocalRepositoryPathValidationError",
+        validation: {
+          reason: "path_escape"
+        }
+      });
+    } finally {
+      await rm(alias, { force: true }).catch(() => undefined);
+      await rm(outside, { recursive: true, force: true }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true }).catch(() => undefined);
+    }
   });
 });

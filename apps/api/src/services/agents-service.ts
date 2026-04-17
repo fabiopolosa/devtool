@@ -3,8 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AgentService,
+  UnavailableAgentRuntimeScheduler,
   BullmqAgentRuntimeScheduler,
-  InMemoryAgentRuntimeScheduler,
   type AgentConfigStore
 } from "@cp/agents";
 import type { AgentConfig } from "@cp/domain";
@@ -35,7 +35,7 @@ class ApiAgentStoreAdapter implements AgentConfigStore {
 const createRuntimeScheduler = () => {
   const redisUrl = process.env.REDIS_URL?.trim();
   if (!redisUrl) {
-    return new InMemoryAgentRuntimeScheduler();
+    return new UnavailableAgentRuntimeScheduler();
   }
   return new BullmqAgentRuntimeScheduler({ redisUrl, queueName: "agent-runtime-jobs" });
 };

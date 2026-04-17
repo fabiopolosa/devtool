@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
@@ -161,14 +161,38 @@ describe("Platform extension API contract", () => {
       method: "POST",
       url: `/local-repos/${localRepositoryId}/scan/schedule`
     });
-    expect(scheduled.statusCode).toBe(200);
-    const jobId = (scheduled.json() as { item: { jobId: string } }).item.jobId;
+    expect(scheduled.statusCode).toBe(503);
+    const scheduledBody = scheduled.json() as { error?: string; message?: string };
+    expect(scheduledBody.error).toBe("scheduler_unavailable");
+  });
 
-    const job = await app.inject({
-      method: "GET",
-      url: `/local-repos/jobs/${jobId}`
+  it("rejects escaped local-repo reads through the API", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cp-local-repo-escape-api-"));
+    const outside = await mkdtemp(path.join(tmpdir(), "cp-local-repo-escape-outside-"));
+    tempDirs.push(root, outside);
+    await writeFile(path.join(outside, "secret.txt"), "hidden\n");
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/local-repos",
+      payload: {
+        name: "escape-repo",
+        rootPath: root
+      }
     });
-    expect(job.statusCode).toBe(200);
+    expect(created.statusCode).toBe(200);
+    const localRepositoryId = (created.json() as { item: { id: string } }).item.id;
+
+    await symlink(outside, path.join(root, "escape"), "dir");
+
+    const file = await app.inject({
+      method: "GET",
+      url: `/local-repos/${localRepositoryId}/file?path=escape/secret.txt`
+    });
+    expect(file.statusCode).toBe(400);
+    const body = file.json() as { error?: string; message?: string };
+    expect(body.error).toBe("invalid_request");
+    expect(body.message).toContain("Path escapes repository root");
   });
 
   it("creates snapshots and computes diffs", async () => {

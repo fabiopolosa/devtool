@@ -235,9 +235,12 @@ class InternalRunnerAdapter implements LocalWorkerAdapter {
     if (!action) {
       throw new Error(`Job ${input.job.id} missing internalAction for internal_runner adapter`);
     }
-    const response = await input.client.post<{ item?: unknown }>("/execution/internal-action", {
+    const response = await input.client.post<{ item?: unknown }>("/internal/runner/execute", {
       action,
-      payload: input.payload
+      payload: {
+        ...input.payload,
+        jobId: input.job.id
+      }
     });
     const patch = extractPatch(input.payload);
     return {
@@ -245,7 +248,7 @@ class InternalRunnerAdapter implements LocalWorkerAdapter {
         success: true,
         stage: "internal_runner",
         adapter: this.id,
-        logs: [`adapter=${this.id}`, `action=${action}`],
+        logs: [`adapter=${this.id}`, `action=${action}`, `endpoint=/internal/runner/execute`],
         output: {
           action,
           ...(response.item !== undefined ? { result: response.item, output: response.item } : {})

@@ -108,7 +108,7 @@ export class JobExecutor {
     this.logger = options.logger;
     this.telemetry = options.telemetry;
 
-    const promptBuilder = options.promptBuilder ?? new PromptBuilderService();
+    const promptBuilder = options.promptBuilder ?? new PromptBuilderService({ requireRegistryPrompt: true });
     const providerRegistry = options.providerRegistry ?? createDefaultProviderRegistry();
     const providerOrder = options.providerOrder ?? defaultProviderOrder;
     const generationHandler = createGenerationHandler({
@@ -162,12 +162,7 @@ export class JobExecutor {
   private async dispatchToHandler(job: Job): Promise<JobExecutionResult> {
     const handler = this.handlers[job.type];
     if (!handler) {
-      return {
-        nextStatus: "done",
-        payloadPatch: {
-          output: { message: `No handler registered for ${job.type}; marked as done.` }
-        }
-      };
+      throw new Error(`No handler registered for ${job.type}`);
     }
     return handler(job);
   }
@@ -278,6 +273,13 @@ export class JobExecutor {
       });
       await this.appendLog(job.id, `error retry=${nextRetryCount}/${current.maxRetries} ${toText(error)}`);
       await this.emitAudit("job.error", current, "failure", {
+        error: toText(error),
+        retryCount: nextRetryCount,
+        terminal: false
+      });
+      this.logger.error("job execution failed", {
+        tenantId: this.tenantId,
+        jobId: job.id,
         error: toText(error),
         retryCount: nextRetryCount,
         terminal: false
@@ -473,7 +475,7 @@ export class JobExecutor {
         occurredAt: nowIso()
       });
     } catch (error) {
-      this.logger.warn("audit telemetry failed", {
+      this.logger.error("audit telemetry failed", {
         tenantId: this.tenantId,
         jobId: job.id,
         action,
