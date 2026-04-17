@@ -133,4 +133,98 @@ describe("Auth + RBAC slice", () => {
     const body = response.json() as { items?: Array<{ email?: string }> };
     expect(Array.isArray(body.items)).toBe(true);
   });
+
+  it("lists tenant users with role and membership context", async () => {
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: {
+        email: "admin@control-plane.local",
+        password: "admin123!"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = login.json().item.token as string;
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/auth/users",
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items?: Array<{
+        email: string;
+        roles?: string[];
+        tenantMembership?: { role?: string };
+      }>;
+    };
+    const admin = body.items?.find((item) => item.email === "admin@control-plane.local");
+    expect(admin).toBeDefined();
+    expect(admin?.roles).toContain("admin");
+    expect(admin?.tenantMembership?.role).toBe("owner");
+  });
+
+  it("updates tenant membership for created users", async () => {
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: {
+        email: "admin@control-plane.local",
+        password: "admin123!"
+      }
+    });
+    expect(login.statusCode).toBe(200);
+    const token = login.json().item.token as string;
+    const userEmail = `ops-${Date.now()}@control-plane.local`;
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/auth/users",
+      headers: {
+        authorization: `Bearer ${token}`
+      },
+      payload: {
+        email: userEmail,
+        displayName: "Ops User",
+        password: "Temp123!pass",
+        roles: ["viewer"],
+        tenantRole: "user"
+      }
+    });
+    expect(create.statusCode).toBe(200);
+    const createdUserId = create.json().item.id as string;
+
+    const updateMembership = await app.inject({
+      method: "PUT",
+      url: `/auth/users/${createdUserId}/tenant-membership`,
+      headers: {
+        authorization: `Bearer ${token}`
+      },
+      payload: {
+        role: "manager"
+      }
+    });
+    expect(updateMembership.statusCode).toBe(200);
+    expect(updateMembership.json().item.role).toBe("manager");
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/auth/users",
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    });
+    expect(listed.statusCode).toBe(200);
+    const listedBody = listed.json() as {
+      items?: Array<{
+        id: string;
+        tenantMembership?: { role?: string };
+      }>;
+    };
+    const created = listedBody.items?.find((item) => item.id === createdUserId);
+    expect(created?.tenantMembership?.role).toBe("manager");
+  });
 });

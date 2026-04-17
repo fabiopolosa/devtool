@@ -326,4 +326,89 @@ describe("KnowledgeService", () => {
     expect(results[0]?.source).toBe("semantic");
     expect(results[0]?.score).toBeGreaterThanOrEqual(0.2);
   });
+
+  it("caches retrieval queries with short ttl and invalidates on knowledge updates", async () => {
+    const localStore = new InMemoryKnowledgeStore();
+    let nowMs = Date.parse("2026-04-17T10:00:00.000Z");
+    let semanticSearchCalls = 0;
+    const embeddingProvider: EmbeddingProvider = {
+      provider: "openai",
+      capabilityClass: "embedding",
+      discoverModels: async () => [],
+      healthcheck: async () => ({ status: "healthy", checkedAt: new Date(nowMs).toISOString() }),
+      embed: async ({ texts }) => ({
+        vectors: texts.map((text) => [text.length / 100, text.toLowerCase().includes("cache") ? 1 : 0.2]),
+        dimensions: 2,
+        modelId: "test-embedding"
+      })
+    };
+
+    const serviceWithCache = new KnowledgeService({
+      store: localStore,
+      embeddingProvider,
+      searchCacheTtlMs: 3_000,
+      now: () => new Date(nowMs),
+      semanticStore: {
+        searchKnowledge: async () => {
+          semanticSearchCalls += 1;
+          const rows = await localStore.listKnowledgeNodes({ projectId: "proj_cache" });
+          return {
+            available: true,
+            hits: rows.map((item) => ({ item, score: 0.9, source: "semantic" as const }))
+          };
+        },
+        upsertKnowledgeEmbedding: async () => true
+      }
+    });
+
+    const created = await serviceWithCache.createKnowledgeNode(
+      {
+        scope: "project",
+        tenantId: "tenant_default",
+        projectId: "proj_cache",
+        path: "/projects/proj_cache/notes/cache.md",
+        content: "# Cache\nKeep retrieval responses stable."
+      },
+      "test"
+    );
+    expect(created.id).toBeDefined();
+
+    await serviceWithCache.searchKnowledge({
+      tenantId: "tenant_default",
+      projectId: "proj_cache",
+      query: "cache retrieval",
+      limit: 1
+    });
+    await serviceWithCache.searchKnowledge({
+      tenantId: "tenant_default",
+      projectId: "proj_cache",
+      query: "cache retrieval",
+      limit: 1
+    });
+    expect(semanticSearchCalls).toBe(1);
+
+    nowMs += 4_000;
+    await serviceWithCache.searchKnowledge({
+      tenantId: "tenant_default",
+      projectId: "proj_cache",
+      query: "cache retrieval",
+      limit: 1
+    });
+    expect(semanticSearchCalls).toBe(2);
+
+    await serviceWithCache.updateKnowledgeNode(
+      created.id,
+      {
+        content: "# Cache\nUpdated note should invalidate cache."
+      },
+      "test"
+    );
+    await serviceWithCache.searchKnowledge({
+      tenantId: "tenant_default",
+      projectId: "proj_cache",
+      query: "cache retrieval",
+      limit: 1
+    });
+    expect(semanticSearchCalls).toBe(3);
+  });
 });

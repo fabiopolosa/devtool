@@ -6,6 +6,7 @@ import {
   getJob,
   getJobRuntimeSnapshot,
   listJobs,
+  summarizeJobsTelemetry,
   updateJobStatus
 } from "../services/jobs-service.js";
 import { requireTenantPermission } from "../tenant/rbac.js";
@@ -51,6 +52,17 @@ const parseBoolean = (value: string | undefined): boolean | undefined => {
   if (["true", "1", "yes"].includes(normalized)) return true;
   if (["false", "0", "no"].includes(normalized)) return false;
   return undefined;
+};
+
+const resolveErrorStatusCode = (error: unknown, fallback: number): number => {
+  const status =
+    typeof error === "object" && error !== null && "statusCode" in error
+      ? Number((error as { statusCode?: number }).statusCode)
+      : NaN;
+  if (Number.isInteger(status) && status >= 400 && status <= 599) {
+    return status;
+  }
+  return fallback;
 };
 
 export const jobsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -119,6 +131,29 @@ export const jobsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  fastify.get<{ Querystring: { projectId?: string; windowMinutes?: string } }>(
+    "/jobs/telemetry",
+    {
+      schema: { tags: ["jobs"], summary: "Summarize job telemetry (count, error rate, duration) per tenant/project" }
+    },
+    async (request, reply) => {
+      if (!requireTenantPermission(request, reply, "canView")) return;
+      const parsedWindow =
+        typeof request.query.windowMinutes === "string" && request.query.windowMinutes.trim().length > 0
+          ? Number.parseInt(request.query.windowMinutes, 10)
+          : undefined;
+      const telemetryInput: { projectId?: string; windowMinutes?: number } = {};
+      if (request.query.projectId) {
+        telemetryInput.projectId = request.query.projectId;
+      }
+      if (typeof parsedWindow === "number" && Number.isFinite(parsedWindow)) {
+        telemetryInput.windowMinutes = parsedWindow;
+      }
+      const item = await summarizeJobsTelemetry(telemetryInput);
+      return { item };
+    }
+  );
+
   fastify.post<{ Body: CreateJobBody }>(
     "/jobs",
     {
@@ -169,7 +204,7 @@ export const jobsRoutes: FastifyPluginAsync = async (fastify) => {
         });
         return { item };
       } catch (error) {
-        return reply.code(400).send({
+        return reply.code(resolveErrorStatusCode(error, 400)).send({
           error: "invalid_request",
           message: error instanceof Error ? error.message : "Unable to create job"
         });

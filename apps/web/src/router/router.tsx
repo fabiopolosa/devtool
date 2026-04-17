@@ -23,7 +23,6 @@ import { ProvidersPage } from '@/pages/ProvidersPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { AdminRbacPage } from '@/pages/AdminRbacPage';
 import { SkillsPage } from '@/pages/SkillsPage';
-import { AgentsOverviewPage } from '@/pages/AgentsOverviewPage';
 import { AgentsListPage } from '@/pages/AgentsListPage';
 import { AgentDetailPage } from '@/pages/AgentDetailPage';
 import { AgentCreatePage } from '@/pages/AgentCreatePage';
@@ -40,6 +39,8 @@ import { SettingsPage } from '@/pages/SettingsPage';
 import { SettingsProvidersPage } from '@/pages/SettingsProvidersPage';
 import { SettingsKnowledgePage } from '@/pages/SettingsKnowledgePage';
 import { SettingsPromptsPage } from '@/pages/SettingsPromptsPage';
+import { SettingsUsersPage } from '@/pages/SettingsUsersPage';
+import { WorkersPage } from '@/pages/WorkersPage';
 import { HelpPage } from '@/pages/HelpPage';
 
 const rootRoute = createRootRoute({
@@ -205,7 +206,7 @@ const projectBrainstormPlanRoute = createRoute({
 const agentsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'agents',
-  component: AgentsOverviewPage
+  component: AgentsListPage
 });
 
 const settingsRoute = createRoute({
@@ -304,6 +305,12 @@ const settingsTenantsRoute = createRoute({
   component: SettingsProvidersPage
 });
 
+const settingsUsersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/users',
+  component: SettingsUsersPage
+});
+
 const settingsKnowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings/knowledge',
@@ -322,10 +329,22 @@ const settingsModelsRoute = createRoute({
   component: ProvidersPage
 });
 
+const settingsPipelinesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/pipelines',
+  component: ProjectPipelinesPage
+});
+
 const settingsMachinesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings/machines',
-  component: StackPage
+  component: WorkersPage
+});
+
+const settingsWorkersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/workers',
+  component: WorkersPage
 });
 
 const settingsIntegrationsRoute = createRoute({
@@ -396,10 +415,13 @@ const routeTree = rootRoute.addChildren([
   settingsAuditRoute,
   settingsUsageRoute,
   settingsTenantsRoute,
+  settingsUsersRoute,
   settingsKnowledgeRoute,
   settingsPromptsRoute,
   settingsModelsRoute,
+  settingsPipelinesRoute,
   settingsMachinesRoute,
+  settingsWorkersRoute,
   settingsIntegrationsRoute,
   settingsRbacRoute,
   helpRoute,

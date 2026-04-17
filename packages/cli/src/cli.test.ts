@@ -317,19 +317,42 @@ describe("runCli", () => {
       if (method === "POST" && path === "/projects/prj_001/coding-workflows") {
         expect(payload.mode).toBe("local");
         return jsonResponse({
-          item: { id: "wf_001", state: "awaiting_plan_approval", title: "Flow" }
+          jobId: "job_create_001",
+          status: "pending"
+        });
+      }
+      if (method === "GET" && path === "/jobs/job_create_001") {
+        return jsonResponse({
+          item: { id: "job_create_001", status: "done" }
+        });
+      }
+      if (method === "GET" && path === "/projects/prj_001/coding-workflows") {
+        return jsonResponse({
+          items: [{ id: "wf_001", state: "awaiting_plan_approval", title: "Flow", updatedAt: "2026-04-16T10:00:00.000Z" }]
         });
       }
       if (method === "POST" && path === "/projects/prj_001/coding-workflows/wf_001/plan/approve") {
         expect(payload.mode).toBe("local");
         return jsonResponse({
-          item: { id: "wf_001", state: "awaiting_patch_approval", title: "Flow" }
+          jobId: "job_plan_001",
+          status: "pending"
+        });
+      }
+      if (method === "GET" && path === "/jobs/job_plan_001") {
+        return jsonResponse({
+          item: { id: "job_plan_001", status: "done" }
         });
       }
       if (method === "POST" && path === "/projects/prj_001/coding-workflows/wf_001/patch/approve") {
         expect(payload.mode).toBe("local");
         return jsonResponse({
-          item: { id: "wf_001", state: "review", title: "Flow" }
+          jobId: "job_patch_001",
+          status: "pending"
+        });
+      }
+      if (method === "GET" && path === "/jobs/job_patch_001") {
+        return jsonResponse({
+          item: { id: "job_patch_001", status: "done" }
         });
       }
       if (method === "GET" && path === "/projects/prj_001/coding-workflows/wf_001") {
@@ -378,19 +401,42 @@ describe("runCli", () => {
       if (method === "POST" && path === "/projects/prj_001/coding-workflows") {
         expect(payload.mode).toBe("local");
         return jsonResponse({
-          item: { id: "wf_auto_local", state: "awaiting_plan_approval", title: "Flow" }
+          jobId: "job_create_local",
+          status: "pending"
+        });
+      }
+      if (method === "GET" && path === "/jobs/job_create_local") {
+        return jsonResponse({
+          item: { id: "job_create_local", status: "done" }
+        });
+      }
+      if (method === "GET" && path === "/projects/prj_001/coding-workflows") {
+        return jsonResponse({
+          items: [{ id: "wf_auto_local", state: "awaiting_plan_approval", title: "Flow", updatedAt: "2026-04-16T10:00:00.000Z" }]
         });
       }
       if (method === "POST" && path === "/projects/prj_001/coding-workflows/wf_auto_local/plan/approve") {
         expect(payload.mode).toBe("local");
         return jsonResponse({
-          item: { id: "wf_auto_local", state: "awaiting_patch_approval", title: "Flow" }
+          jobId: "job_plan_local",
+          status: "pending"
+        });
+      }
+      if (method === "GET" && path === "/jobs/job_plan_local") {
+        return jsonResponse({
+          item: { id: "job_plan_local", status: "done" }
         });
       }
       if (method === "POST" && path === "/projects/prj_001/coding-workflows/wf_auto_local/patch/approve") {
         expect(payload.mode).toBe("local");
         return jsonResponse({
-          item: { id: "wf_auto_local", state: "completed", title: "Flow" }
+          jobId: "job_patch_local",
+          status: "pending"
+        });
+      }
+      if (method === "GET" && path === "/jobs/job_patch_local") {
+        return jsonResponse({
+          item: { id: "job_patch_local", status: "done" }
         });
       }
       if (method === "GET" && path === "/projects/prj_001/coding-workflows/wf_auto_local") {
@@ -509,5 +555,261 @@ describe("runCli", () => {
     expect(err).toEqual([]);
     const payload = JSON.parse(out.join("\n")) as { mode: string };
     expect(payload.mode).toBe("local");
+  });
+
+  it("shows worker status with capabilities and heartbeat", async () => {
+    const now = new Date().toISOString();
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const raw = typeof input === "string" ? input : input.toString();
+      const url = new URL(raw);
+      if (url.pathname === "/machines") {
+        return jsonResponse({
+          items: [
+            {
+              id: "machine_local_1",
+              status: "online",
+              services: ["shell", "internal_runner"],
+              lastHeartbeatAt: now,
+              metadata: { execution: { mode: "local" } }
+            }
+          ]
+        });
+      }
+      return jsonResponse({ message: "not_found" }, 404);
+    });
+
+    const { deps, out, err } = createDeps({ fetchFn });
+    const code = await runCli(["worker", "status"], deps);
+
+    expect(code).toBe(0);
+    expect(err).toEqual([]);
+    expect(out.join("\n")).toContain("machine_local_1");
+    expect(out.join("\n")).toContain("running");
+    expect(out.join("\n")).toContain("shell");
+  });
+
+  it("marks worker offline with worker stop", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = typeof input === "string" ? input : input.toString();
+      const url = new URL(raw);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+      if (method === "GET" && path === "/machines") {
+        return jsonResponse({
+          items: [
+            {
+              id: "machine_local_1",
+              status: "online",
+              services: ["shell", "internal_runner"],
+              lastHeartbeatAt: new Date().toISOString(),
+              metadata: { execution: { mode: "local" } }
+            }
+          ]
+        });
+      }
+      if (method === "POST" && path === "/execution/workers/machine_local_1/heartbeat") {
+        const payload = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+        expect(payload.status).toBe("offline");
+        return jsonResponse({ item: { id: "machine_local_1" } });
+      }
+      return jsonResponse({ message: "not_found" }, 404);
+    });
+
+    const { deps, out, err } = createDeps({ fetchFn });
+    const code = await runCli(["worker", "stop"], deps);
+
+    expect(code).toBe(0);
+    expect(err).toEqual([]);
+    expect(out.join("\n")).toContain("OK Worker marked offline");
+    expect(out.join("\n")).toContain("machine_local_1");
+  });
+
+  it("attaches a project workspace path", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = typeof input === "string" ? input : input.toString();
+      const url = new URL(raw);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+
+      if (method === "GET" && path === "/projects") {
+        return jsonResponse({
+          items: [{ id: "prj_001", key: "alpha", name: "Alpha", status: "active" }]
+        });
+      }
+
+      if (method === "GET" && path === "/workspaces?projectId=prj_001") {
+        return jsonResponse({ items: [] });
+      }
+
+      if (method === "POST" && path === "/workspaces") {
+        const payload = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+        expect(payload.projectId).toBe("prj_001");
+        expect(payload.mode).toBe("local");
+        expect(payload.localPath).toBe("/Users/andromeda/devtool");
+        return jsonResponse({
+          item: {
+            id: "ws_001",
+            tenantId: "tenant_default",
+            projectId: "prj_001",
+            mode: "local",
+            localPath: "/Users/andromeda/devtool",
+            runtimeStatus: "stopped",
+            runtimeDetails: {},
+            createdAt: "2026-04-16T10:00:00.000Z",
+            updatedAt: "2026-04-16T10:00:00.000Z"
+          }
+        });
+      }
+
+      return jsonResponse({ message: "not_found" }, 404);
+    });
+
+    const { deps, out, err } = createDeps({ fetchFn });
+    const code = await runCli(["workspace", "attach", "/Users/andromeda/devtool"], deps);
+
+    expect(code).toBe(0);
+    expect(err).toEqual([]);
+    expect(out.join("\n")).toContain("OK Workspace attached");
+    expect(out.join("\n")).toContain("ws_001");
+  });
+
+  it("starts workspace through runner job and waits for completion", async () => {
+    let workspaceQueryCount = 0;
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = typeof input === "string" ? input : input.toString();
+      const url = new URL(raw);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+
+      if (method === "GET" && path === "/machines") {
+        return jsonResponse({
+          items: [
+            {
+              id: "machine_local_1",
+              status: "online",
+              agents: ["local-worker"],
+              services: ["shell", "internal_runner"],
+              lastHeartbeatAt: new Date().toISOString(),
+              metadata: { execution: { mode: "local" } }
+            }
+          ]
+        });
+      }
+
+      if (method === "GET" && path === "/projects") {
+        return jsonResponse({
+          items: [{ id: "prj_001", key: "alpha", name: "Alpha", status: "active" }]
+        });
+      }
+
+      if (method === "GET" && path === "/workspaces?projectId=prj_001") {
+        workspaceQueryCount += 1;
+        return jsonResponse({
+          items: [
+            {
+              id: "ws_001",
+              tenantId: "tenant_default",
+              projectId: "prj_001",
+              mode: "local",
+              localPath: "/Users/andromeda/devtool",
+              runtimeStatus: workspaceQueryCount > 1 ? "running" : "starting",
+              runtimeDetails: {},
+              createdAt: "2026-04-16T10:00:00.000Z",
+              updatedAt: "2026-04-16T10:00:00.000Z"
+            }
+          ]
+        });
+      }
+
+      if (method === "PATCH" && path === "/workspaces/ws_001") {
+        const payload = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+        expect(payload.action).toBe("start");
+        expect(payload.executionMode).toBe("local");
+        return jsonResponse({
+          item: {
+            id: "ws_001",
+            projectId: "prj_001",
+            mode: "local",
+            runtimeStatus: "starting",
+            createdAt: "2026-04-16T10:00:00.000Z",
+            updatedAt: "2026-04-16T10:00:00.000Z"
+          },
+          jobId: "job_ws_start_001",
+          status: "pending"
+        });
+      }
+
+      if (method === "GET" && path === "/jobs/job_ws_start_001") {
+        return jsonResponse({
+          item: {
+            id: "job_ws_start_001",
+            status: "done"
+          }
+        });
+      }
+
+      return jsonResponse({ message: "not_found" }, 404);
+    });
+
+    const { deps, out, err } = createDeps({ fetchFn });
+    const code = await runCli(["workspace", "start"], deps);
+
+    expect(code).toBe(0);
+    expect(err).toEqual([]);
+    expect(out.join("\n")).toContain("OK Workspace start completed");
+    expect(out.join("\n")).toContain("runtime: running");
+    expect(out.join("\n")).toContain("job_ws_start_001");
+  });
+
+  it("creates and edits agents from CLI", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = typeof input === "string" ? input : input.toString();
+      const url = new URL(raw);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const path = `${url.pathname}${url.search}`;
+
+      if (method === "POST" && path === "/agents") {
+        const payload = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+        expect(payload.name).toBe("planner");
+        expect(payload.role).toBe("planner");
+        return jsonResponse({
+          item: {
+            id: "agent_900",
+            name: "planner",
+            role: "planner",
+            status: "active"
+          }
+        });
+      }
+
+      if (method === "PATCH" && path === "/agents/agent_900") {
+        const payload = init?.body ? (JSON.parse(init.body.toString()) as Record<string, unknown>) : {};
+        expect(payload.role).toBe("reviewer");
+        return jsonResponse({
+          item: {
+            id: "agent_900",
+            name: "planner",
+            role: "reviewer",
+            status: "active"
+          }
+        });
+      }
+
+      return jsonResponse({ message: "not_found" }, 404);
+    });
+
+    const { deps, out, err } = createDeps({ fetchFn });
+    const createCode = await runCli(["agents", "create", "planner", "--role", "planner"], deps);
+    expect(createCode).toBe(0);
+    expect(err).toEqual([]);
+    expect(out.join("\n")).toContain("OK Agent created");
+
+    out.length = 0;
+
+    const editCode = await runCli(["agents", "edit", "agent_900", "--role", "reviewer"], deps);
+    expect(editCode).toBe(0);
+    expect(err).toEqual([]);
+    expect(out.join("\n")).toContain("OK Agent updated");
+    expect(out.join("\n")).toContain("reviewer");
   });
 });

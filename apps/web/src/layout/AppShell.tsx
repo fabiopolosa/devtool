@@ -2,7 +2,6 @@ import { Link, Outlet, useMatchRoute, useNavigate, useRouterState } from '@tanst
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Job, Project } from '@cp/domain';
 import { Button } from '@/components/common';
-import { getOwnerMode, onOwnerModeChange, setOwnerMode } from '@/owner-mode';
 import { useAppStore } from '@/store/app-store';
 import { getThemeMode, onThemeChange, setThemeMode, toggleThemeMode, type ThemeMode } from '@/theme';
 
@@ -10,6 +9,7 @@ type ShellNavItem = {
   to: string;
   label: string;
   tier?: 'primary' | 'secondary';
+  access?: 'project' | 'tenant' | 'system';
   params?: Record<string, string>;
 };
 
@@ -82,12 +82,12 @@ export function AppShell() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (routerState) => routerState.location.pathname });
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => getThemeMode());
-  const [ownerMode, setOwnerModeState] = useState<boolean>(() => getOwnerMode());
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [chatPending, setChatPending] = useState(false);
   const [chatLogs, setChatLogs] = useState<AgentChatLog[]>([]);
   const [platformMenuOpen, setPlatformMenuOpen] = useState(false);
+  const [ownerGuardNotice, setOwnerGuardNotice] = useState<string | undefined>();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | undefined>();
@@ -101,9 +101,29 @@ export function AppShell() {
   }, []);
 
   const isLoginRoute = Boolean(matchRoute({ to: '/login' }));
-  const isPrivilegedUser =
-    auth.enabled && Boolean(auth.principal?.roles.some((role) => role === 'admin' || role === 'owner'));
-  const canUseOwnerMode = !auth.enabled || isPrivilegedUser;
+  const userRoleNames = auth.principal?.roles ?? [];
+  const userRoleLabel = userRoleNames.length > 0 ? userRoleNames.join(', ') : 'none';
+  const userTenantRole = auth.principal?.tenantRole;
+  const tenantRoleLabel = userTenantRole ?? 'unknown';
+  const hasAuthenticatedSession = !auth.enabled || Boolean(!auth.required && auth.principal);
+  const isSystemOwner = !auth.enabled || Boolean(userRoleNames.includes('owner') || userTenantRole === 'owner');
+  const isTenantAdmin =
+    !auth.enabled
+    || isSystemOwner
+    || Boolean(userRoleNames.includes('admin') || userTenantRole === 'admin');
+  const ownerModeActive = isSystemOwner;
+  const canAccessPlatformProjectTier = hasAuthenticatedSession;
+  const canAccessPlatformTenantTier = hasAuthenticatedSession && isTenantAdmin;
+  const canAccessPlatformSystemTier = hasAuthenticatedSession && isSystemOwner;
+  const hasAccessForTier = useCallback(
+    (tier: 'project' | 'tenant' | 'system'): boolean => {
+      if (tier === 'project') return canAccessPlatformProjectTier;
+      if (tier === 'tenant') return canAccessPlatformTenantTier;
+      return canAccessPlatformSystemTier;
+    },
+    [canAccessPlatformProjectTier, canAccessPlatformSystemTier, canAccessPlatformTenantTier]
+  );
+  const showOwnerModeDebugPanel = import.meta.env.DEV;
   const brandName = ((import.meta.env.VITE_PLATFORM_BRAND as string | undefined) ?? '').trim() || 'DevTools';
   const openApprovals = state.approvals.filter((approval) => approval.status === 'pending').length;
   const runningJobsCount = jobs.filter((job) => resolveJobStage(job) === 'running').length;
@@ -114,15 +134,140 @@ export function AppShell() {
   const runnerLikelyActive = runningJobsCount > 0 || readyJobsCount > 0 || waitingDependencyJobsCount > 0;
 
   useEffect(() => {
-    if (!auth.enabled || !auth.required || isLoginRoute) return;
+    if (!auth.enabled || auth.loading || !auth.required || isLoginRoute) return;
     void navigate({ to: '/login' });
-  }, [auth.enabled, auth.required, isLoginRoute, navigate]);
+  }, [auth.enabled, auth.loading, auth.required, isLoginRoute, navigate]);
 
   useEffect(() => {
-    if (!pathname.startsWith('/settings/')) return;
-    if (canUseOwnerMode) return;
-    void navigate({ to: '/projects' });
-  }, [canUseOwnerMode, navigate, pathname]);
+    if (!auth.enabled || auth.loading || auth.required || !auth.principal || !isLoginRoute) return;
+    void navigate({ to: '/' });
+  }, [auth.enabled, auth.loading, auth.principal, auth.required, isLoginRoute, navigate]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.info('[owner-mode] computed', {
+      ownerModeActive,
+      canAccessPlatformProjectTier,
+      canAccessPlatformTenantTier,
+      canAccessPlatformSystemTier,
+      authEnabled: auth.enabled,
+      authLoading: auth.loading,
+      authRequired: auth.required,
+      userRoles: userRoleLabel,
+      tenantRole: tenantRoleLabel,
+      path: pathname
+    });
+  }, [
+    auth.enabled,
+    auth.loading,
+    auth.required,
+    canAccessPlatformProjectTier,
+    canAccessPlatformTenantTier,
+    canAccessPlatformSystemTier,
+    ownerModeActive,
+    pathname,
+    tenantRoleLabel,
+    userRoleLabel
+  ]);
+
+  useEffect(() => {
+    const requiresTier = (() => {
+      if (pathname === '/settings' || pathname === '/agents') return 'project' as const;
+      if (pathname === '/providers') return 'tenant' as const;
+      if (pathname === '/tenants' || pathname === '/knowledge') return 'tenant' as const;
+      if (!pathname.startsWith('/settings/')) return undefined;
+      if (
+        pathname === '/settings/secrets'
+        || pathname === '/settings/integrations'
+        || pathname === '/settings/rbac'
+        || pathname === '/settings/audit'
+        || pathname === '/settings/database'
+        || pathname === '/settings/stack'
+        || pathname === '/settings/versioning'
+      ) {
+        return 'system' as const;
+      }
+      if (
+        pathname === '/settings/providers'
+        || pathname === '/settings/models'
+        || pathname === '/settings/knowledge'
+        || pathname === '/settings/pipelines'
+        || pathname === '/settings/prompts'
+        || pathname === '/settings/users'
+        || pathname === '/settings/workers'
+        || pathname === '/settings/machines'
+        || pathname === '/settings/agents'
+        || pathname === '/settings/agents/new'
+        || pathname.startsWith('/settings/agents/')
+        || pathname === '/settings/skills'
+        || pathname === '/settings/tenants'
+        || pathname === '/settings/runtime'
+        || pathname === '/settings/usage'
+        || pathname === '/settings/mcp'
+      ) {
+        return 'tenant' as const;
+      }
+      return 'project' as const;
+    })();
+
+    if (!requiresTier) return;
+    if (auth.enabled && (auth.loading || auth.required)) {
+      if (import.meta.env.DEV) {
+        console.info('[platform-access] guard deferred until auth session resolves', {
+          path: pathname,
+          authLoading: auth.loading,
+          authRequired: auth.required
+        });
+      }
+      return;
+    }
+    if (auth.enabled && !auth.required && !auth.principal) {
+      if (import.meta.env.DEV) {
+        console.info('[platform-access] guard deferred until principal is available', {
+          path: pathname
+        });
+      }
+      return;
+    }
+    if (hasAccessForTier(requiresTier)) {
+      setOwnerGuardNotice(undefined);
+      return;
+    }
+    const reason =
+      requiresTier === 'system'
+        ? `System settings require owner role (tenant role: ${tenantRoleLabel}; user roles: ${userRoleLabel}).`
+        : requiresTier === 'tenant'
+          ? `Tenant settings require admin/owner role (tenant role: ${tenantRoleLabel}; user roles: ${userRoleLabel}).`
+          : 'Sign in to access platform settings.';
+    if (import.meta.env.DEV) {
+      console.warn('[platform-access] route blocked', {
+        path: pathname,
+        reason,
+        requiresTier,
+        ownerModeActive,
+        userRoles: userRoleLabel,
+        tenantRole: tenantRoleLabel
+      });
+    }
+    setOwnerGuardNotice(reason);
+    void navigate({ to: '/settings' });
+  }, [
+    auth.enabled,
+    auth.loading,
+    auth.required,
+    hasAccessForTier,
+    navigate,
+    ownerModeActive,
+    pathname,
+    tenantRoleLabel,
+    userRoleLabel
+  ]);
+
+  useEffect(() => {
+    if (ownerModeActive) {
+      setOwnerGuardNotice(undefined);
+    }
+  }, [ownerModeActive]);
 
   useEffect(() => {
     const current = getThemeMode();
@@ -130,15 +275,6 @@ export function AppShell() {
     setThemeModeState(current);
     return onThemeChange(setThemeModeState);
   }, []);
-
-  useEffect(() => onOwnerModeChange(setOwnerModeState), []);
-
-  useEffect(() => {
-    if (!canUseOwnerMode && ownerMode) {
-      setOwnerMode(false);
-      setOwnerModeState(false);
-    }
-  }, [canUseOwnerMode, ownerMode]);
 
   useEffect(() => {
     setPlatformMenuOpen(false);
@@ -159,7 +295,7 @@ export function AppShell() {
   }, [pathname, sortedProjects]);
 
   const contextMode: ShellContextMode = useMemo(() => {
-    if (pathname.startsWith('/settings/')) return 'platform';
+    if (pathname === '/settings' || pathname.startsWith('/settings/')) return 'platform';
     if (pathname.startsWith('/project/')) {
       return 'project';
     }
@@ -198,20 +334,26 @@ export function AppShell() {
   );
 
   const platformMenuItems: ShellNavItem[] = useMemo(() => {
-    if (!canUseOwnerMode) return [];
-    return [
-      { to: '/settings/providers', label: 'Providers', tier: 'primary' },
-      { to: '/settings/models', label: 'Models', tier: 'primary' },
-      { to: '/settings/audit', label: 'Audit', tier: 'primary' },
-      { to: '/settings/usage', label: 'Usage', tier: 'primary' },
-      { to: '/settings/tenants', label: 'Tenants', tier: 'primary' },
-      { to: '/settings/secrets', label: 'Secrets', tier: 'primary' },
-      { to: '/settings/knowledge', label: 'Knowledge', tier: 'primary' },
-      { to: '/settings/prompts', label: 'Prompt Registry', tier: 'primary' },
-      { to: '/settings/machines', label: 'Machines', tier: 'secondary' },
-      { to: '/settings/integrations', label: 'Integrations', tier: 'secondary' }
+    if (!canAccessPlatformProjectTier) return [];
+    const candidates: ShellNavItem[] = [
+      { to: '/settings/providers', label: 'Providers', tier: 'primary', access: 'tenant' },
+      { to: '/settings/models', label: 'Models', tier: 'primary', access: 'tenant' },
+      { to: '/settings/knowledge', label: 'Knowledge', tier: 'primary', access: 'tenant' },
+      { to: '/settings/pipelines', label: 'Pipelines', tier: 'primary', access: 'tenant' },
+      { to: '/settings/users', label: 'Users', tier: 'primary', access: 'tenant' },
+      { to: '/settings/prompts', label: 'Prompt Registry', tier: 'primary', access: 'tenant' },
+      { to: '/settings/workers', label: 'Workers', tier: 'primary', access: 'tenant' },
+      { to: '/settings/agents', label: 'Agents', tier: 'secondary', access: 'tenant' },
+      { to: '/settings/skills', label: 'Skills', tier: 'secondary', access: 'project' },
+      { to: '/settings/usage', label: 'Usage', tier: 'secondary', access: 'tenant' },
+      { to: '/settings/tenants', label: 'Tenants', tier: 'secondary', access: 'tenant' },
+      { to: '/settings/secrets', label: 'Secrets', tier: 'secondary', access: 'system' },
+      { to: '/settings/integrations', label: 'Integrations', tier: 'secondary', access: 'system' },
+      { to: '/settings/audit', label: 'Audit', tier: 'secondary', access: 'system' },
+      { to: '/settings/rbac', label: 'RBAC', tier: 'secondary', access: 'system' }
     ];
-  }, [canUseOwnerMode]);
+    return candidates.filter((item) => hasAccessForTier(item.access ?? 'project'));
+  }, [canAccessPlatformProjectTier, hasAccessForTier]);
 
   const projectNavItems: ShellNavItem[] = useMemo(() => {
     if (!selectedProject?.id) return [];
@@ -390,12 +532,35 @@ export function AppShell() {
 
   useEffect(() => {
     if (context.mode !== 'project' || !selectedProject?.id || (auth.enabled && auth.required)) return;
-    const intervalMs = runnerLikelyActive ? 1500 : 5000;
-    // Polling-first runtime update; this effect can be swapped with websocket subscriptions later.
-    const timer = window.setInterval(() => {
-      void loadProjectJobs();
-    }, intervalMs);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+    let inFlight = false;
+    const schedule = (delayMs: number): void => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void tick();
+      }, delayMs);
+    };
+    const tick = async (): Promise<void> => {
+      if (cancelled || inFlight) {
+        schedule(runnerLikelyActive ? 1500 : 5000);
+        return;
+      }
+      inFlight = true;
+      try {
+        await loadProjectJobs();
+      } finally {
+        inFlight = false;
+      }
+      schedule(runnerLikelyActive ? 1500 : 5000);
+    };
+    schedule(runnerLikelyActive ? 1500 : 5000);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
   }, [
     auth.enabled,
     auth.required,
@@ -507,7 +672,29 @@ export function AppShell() {
       ? `platform · ${context.tenantId}`
       : context.mode === 'project'
         ? `project · ${context.projectId ?? 'unselected'}`
-        : `global · ${context.tenantId}`;
+      : `global · ${context.tenantId}`;
+
+  if (auth.enabled && isLoginRoute) {
+    return (
+      <div className="platform-root context-global text-[color:var(--text)]">
+        <main className="mx-auto w-full max-w-xl px-4 py-10">
+          <Outlet />
+        </main>
+      </div>
+    );
+  }
+
+  if (auth.enabled && (auth.loading || auth.required || !auth.principal)) {
+    return (
+      <div className="platform-root context-global text-[color:var(--text)]">
+        <main className="mx-auto w-full max-w-xl px-4 py-10">
+          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-6 text-sm text-[color:var(--muted)]">
+            {auth.loading ? 'Resolving session…' : 'Redirecting to sign in…'}
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className={`platform-root context-${context.mode} text-[color:var(--text)]`}>
@@ -526,7 +713,7 @@ export function AppShell() {
               {item.label}
             </Link>
           ))}
-          {canUseOwnerMode ? (
+          {canAccessPlatformProjectTier ? (
             <div className="platform-megamenu">
               <button
                 type="button"
@@ -553,6 +740,14 @@ export function AppShell() {
               ) : null}
             </div>
           ) : null}
+          {canAccessPlatformProjectTier ? (
+            <Link
+              to="/settings"
+              className={`nav-link platform-topbar-link ${isActive({ to: '/settings', label: 'Settings' }) ? 'nav-link-active' : ''}`}
+            >
+              Settings
+            </Link>
+          ) : null}
           <Link
             to="/help"
             className={`nav-link platform-topbar-link ${isActive({ to: '/help', label: 'Help' }) ? 'nav-link-active' : ''}`}
@@ -562,7 +757,7 @@ export function AppShell() {
         </div>
         <div className="platform-topbar-right">
           <div className="platform-session-text">tenant {tenantName}</div>
-          <div className="platform-session-text">owner mode {ownerMode ? 'on' : 'off'}</div>
+          <div className="platform-session-text">System Access: {ownerModeActive ? 'OWNER' : 'RESTRICTED'}</div>
         </div>
       </header>
 
@@ -702,6 +897,14 @@ export function AppShell() {
 
           {auth.enabled && auth.error && !isLoginRoute ? (
             <div className="platform-error-row platform-workspace-banner">{auth.error}</div>
+          ) : null}
+          {showOwnerModeDebugPanel ? (
+            <div className="platform-context-chip platform-workspace-banner" data-testid="owner-mode-debug-panel">
+              ownerModeActive={String(ownerModeActive)} | userRoles={userRoleLabel} | tenantRole={tenantRoleLabel}
+            </div>
+          ) : null}
+          {ownerGuardNotice ? (
+            <div className="platform-error-row platform-workspace-banner">{ownerGuardNotice}</div>
           ) : null}
 
           <section className="platform-workspace-body">

@@ -52,9 +52,23 @@ export const processAgentChatMessage = async (
   }
 
   const planId = typeof context.planId === "string" ? context.planId : undefined;
+  const knowledgeSummary =
+    typeof context.knowledgeSummary === "string" && context.knowledgeSummary.trim().length > 0
+      ? context.knowledgeSummary.trim()
+      : undefined;
+  const contextNoteCount =
+    typeof context.contextNoteCount === "number" && Number.isFinite(context.contextNoteCount)
+      ? Math.max(0, context.contextNoteCount)
+      : undefined;
+  const contextHint =
+    knowledgeSummary || typeof contextNoteCount === "number"
+      ? `Injected context${typeof contextNoteCount === "number" ? `: ${contextNoteCount} notes` : ""}${
+          knowledgeSummary ? " + knowledge summary" : ""
+        }.`
+      : undefined;
   const responseText = updatedJob
-    ? `Context received for job ${updatedJob.id}. Status is now ${updatedJob.status}.`
-    : `Message received${jobId ? ` for job ${jobId}` : ""}${planId ? ` (plan ${planId})` : ""}. No job transition was required.`;
+    ? `Context received for job ${updatedJob.id}. Status is now ${updatedJob.status}.${contextHint ? ` ${contextHint}` : ""}`
+    : `Message received${jobId ? ` for job ${jobId}` : ""}${planId ? ` (plan ${planId})` : ""}. No job transition was required.${contextHint ? ` ${contextHint}` : ""}`;
 
   return {
     response: responseText,

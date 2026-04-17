@@ -25,6 +25,7 @@ import type {
   SchemaDoc,
   Environment,
   Machine,
+  Workspace,
   LocalRepository,
   VersionSnapshot,
   Repository,
@@ -101,6 +102,7 @@ export interface ApiSeedData {
   schemaDocs: SchemaDoc[];
   environments: Environment[];
   machines: Machine[];
+  workspaces: Workspace[];
   localRepositories: LocalRepository[];
   versionSnapshots: VersionSnapshot[];
   tenants: Tenant[];

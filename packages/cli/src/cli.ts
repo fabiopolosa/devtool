@@ -62,6 +62,21 @@ interface ProjectItem {
   status: string;
 }
 
+interface WorkspaceItem {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  mode: "local" | "remote";
+  localPath?: string;
+  runtimeStatus: string;
+  runtimeDetails?: Record<string, unknown>;
+  lastStartedAt?: string;
+  lastStoppedAt?: string;
+  lastDeployedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface ProviderConfigItem {
   id: string;
   provider?: string;
@@ -100,6 +115,8 @@ interface JobRuntimeSnapshot {
 
 interface MachineSummary {
   id: string;
+  name?: string;
+  host?: string;
   status?: string;
   agents?: string[];
   services?: string[];
@@ -111,12 +128,21 @@ interface CodingWorkflowItem {
   id: string;
   state: string;
   title: string;
+  request?: string;
+  updatedAt?: string;
   actionRequired?: boolean;
   reviewSummary?: string;
   plan?: {
     summary?: string;
   };
   generatedTaskIds?: string[];
+}
+
+interface AsyncJobHandle {
+  jobId?: string;
+  status?: string;
+  item?: CodingWorkflowItem;
+  message?: string;
 }
 
 interface CommandResult {
@@ -175,17 +201,26 @@ Usage:
   devtools project create <name> [--description <text>] [--key <project-key>]
   devtools project list
   devtools project use <id|name|key>
+  devtools workspace attach <path> [--project <project-id>] [--mode <local|remote>]
+  devtools workspace start [--project <project-id>] [--mode <local|remote|hybrid>]
+  devtools workspace stop [--project <project-id>] [--mode <local|remote|hybrid>]
+  devtools workspace deploy [--project <project-id>] [--mode <local|remote|hybrid>]
+  devtools workspace restart [--project <project-id>] [--mode <local|remote|hybrid>]
 
   devtools providers test <provider|provider-config-id>
 
   devtools coding run --request <text> [--project <project-id>] [--title <text>] [--no-auto-approve]
+  devtools worker status
   devtools worker start [--mode <local|hybrid>] [--interval <ms>] [--once]
+  devtools worker stop [<machine-id>]
 
   devtools jobs list [--status <status>] [--project <project-id>] [--all]
   devtools logs tail [--job <job-id>] [--project <project-id>] [--interval <ms>] [--once]
 
   devtools context open [--project <project-id>]
   devtools agents list
+  devtools agents create <name> --role <role> [--description <text>] [--capabilities a,b]
+  devtools agents edit <id> [--name <name>] [--role <role>] [--description <text>] [--capabilities a,b]
 
 Global options:
   --base-url <url>    API base URL (default: DEVTOOLS_API_BASE_URL or http://localhost:4000)
@@ -564,33 +599,63 @@ const workerHeartbeatFresh = (timestamp: string | undefined): boolean => {
   return Date.now() - parsed <= 45_000;
 };
 
-const machineSupportsLocalExecution = (machine: MachineSummary): boolean => {
-  if (machine.agents?.includes("local-worker")) return true;
+const machineExecutionMode = (machine: MachineSummary): ExecutionMode | undefined => {
   const execution = machine.metadata && typeof machine.metadata === "object"
     ? (machine.metadata.execution as Record<string, unknown> | undefined)
     : undefined;
   const mode = typeof execution?.mode === "string" ? execution.mode.trim().toLowerCase() : undefined;
-  if (mode === "local" || mode === "hybrid") return true;
+  if (mode === "local" || mode === "hybrid" || mode === "remote") {
+    return mode;
+  }
+  if (machine.agents?.includes("local-worker")) return "local";
+  if (machine.agents?.includes("remote-worker")) return "remote";
   const services = (machine.services ?? []).map((entry) => entry.toLowerCase());
-  return services.includes("internal_runner") || services.includes("shell");
+  if (services.includes("shell")) return "local";
+  if (services.includes("internal_runner")) return "remote";
+  return undefined;
+};
+
+const machineSupportsLocalExecution = (machine: MachineSummary): boolean => {
+  const mode = machineExecutionMode(machine);
+  return mode === "local" || mode === "hybrid";
+};
+
+const machineSupportsRemoteExecution = (machine: MachineSummary): boolean => {
+  const mode = machineExecutionMode(machine);
+  return mode === "remote" || mode === "hybrid";
+};
+
+const machineIsActive = (machine: MachineSummary): boolean => {
+  const status = (machine.status ?? "").trim().toLowerCase();
+  if (status !== "online" && status !== "degraded") return false;
+  return workerHeartbeatFresh(machine.lastHeartbeatAt);
+};
+
+const isExecutionWorker = (machine: MachineSummary): boolean =>
+  machineSupportsLocalExecution(machine) || machineSupportsRemoteExecution(machine);
+
+const detectExecutionWorkers = async (
+  client: ReturnType<typeof createApiClient>
+): Promise<{ local?: MachineSummary; remote?: MachineSummary }> => {
+  try {
+    const response = await client.get<{ items?: MachineSummary[] }>("/machines");
+    const machines = response.items ?? [];
+    const local = machines.find((machine) => machineIsActive(machine) && machineSupportsLocalExecution(machine));
+    const remote = machines.find((machine) => machineIsActive(machine) && machineSupportsRemoteExecution(machine));
+    return {
+      ...(local ? { local } : {}),
+      ...(remote ? { remote } : {})
+    };
+  } catch {
+    return {};
+  }
 };
 
 const detectActiveLocalWorker = async (
   client: ReturnType<typeof createApiClient>
 ): Promise<{ available: boolean; machineId?: string }> => {
-  try {
-    const response = await client.get<{ items?: MachineSummary[] }>("/machines");
-    const machines = response.items ?? [];
-    const active = machines.find((machine) => {
-      const status = (machine.status ?? "").trim().toLowerCase();
-      if (status !== "online" && status !== "degraded") return false;
-      if (!workerHeartbeatFresh(machine.lastHeartbeatAt)) return false;
-      return machineSupportsLocalExecution(machine);
-    });
-    return active ? { available: true, machineId: active.id } : { available: false };
-  } catch {
-    return { available: false };
-  }
+  const workers = await detectExecutionWorkers(client);
+  return workers.local ? { available: true, machineId: workers.local.id } : { available: false };
 };
 
 const resolveExecutionModeWithDetection = async (input: {
@@ -608,29 +673,28 @@ const resolveExecutionModeWithDetection = async (input: {
     };
   }
 
-  const worker = await detectActiveLocalWorker(input.client);
-  if (worker.available) {
+  const workers = await detectExecutionWorkers(input.client);
+  if (workers.local) {
     return {
       mode: "local",
       source: "auto_local_worker",
-      reason: `active local worker${worker.machineId ? ` ${worker.machineId}` : ""} detected`,
-      ...(worker.machineId ? { machineId: worker.machineId } : {})
+      reason: `active local worker${workers.local.id ? ` ${workers.local.id}` : ""} detected`,
+      ...(workers.local.id ? { machineId: workers.local.id } : {})
     };
   }
 
-  if (input.profile.defaultMode) {
+  if (workers.remote) {
     return {
-      mode: input.profile.defaultMode,
+      mode: "remote",
       source: "profile",
-      reason: `using profile default (${input.profile.defaultMode})`
+      reason: `active remote worker${workers.remote.id ? ` ${workers.remote.id}` : ""} detected`,
+      ...(workers.remote.id ? { machineId: workers.remote.id } : {})
     };
   }
 
-  return {
-    mode: input.fallback,
-    source: "fallback",
-    reason: `using fallback (${input.fallback})`
-  };
+  throw new Error(
+    "No execution worker is available. Start 'devtools worker start --mode local' or bring the remote worker online."
+  );
 };
 
 const parseCsv = (value: string | undefined): string[] =>
@@ -957,6 +1021,223 @@ const runProjectUse = async (input: {
   };
 };
 
+const toWorkspaceMode = (value: ExecutionMode | undefined): "local" | "remote" | undefined => {
+  if (!value) return undefined;
+  if (value === "remote") return "remote";
+  return "local";
+};
+
+const resolveWorkspaceForProject = async (input: {
+  client: ReturnType<typeof createApiClient>;
+  projectId: string;
+}): Promise<WorkspaceItem | undefined> => {
+  const response = await input.client.get<{ items?: WorkspaceItem[] }>(
+    `/workspaces?projectId=${encodeURIComponent(input.projectId)}`
+  );
+  return response.items?.[0];
+};
+
+const ensureWorkspaceForProject = async (input: {
+  client: ReturnType<typeof createApiClient>;
+  projectId: string;
+  mode?: "local" | "remote";
+  localPath?: string;
+  actor?: string;
+}): Promise<WorkspaceItem> => {
+  const existing = await resolveWorkspaceForProject({
+    client: input.client,
+    projectId: input.projectId
+  });
+  if (existing) return existing;
+
+  const created = await input.client.post<{ item: WorkspaceItem }>("/workspaces", {
+    projectId: input.projectId,
+    ...(input.mode ? { mode: input.mode } : {}),
+    ...(input.localPath ? { localPath: input.localPath } : {}),
+    ...(input.actor ? { actor: input.actor } : {})
+  });
+  return created.item;
+};
+
+const waitForRunnerJobTerminal = async (input: {
+  client: ReturnType<typeof createApiClient>;
+  deps: CliDeps;
+  jobId: string;
+  label: string;
+  waitMs?: number;
+  pollMs?: number;
+}): Promise<void> => {
+  const maxWaitMs = Math.max(5_000, input.waitMs ?? 45_000);
+  const pollMs = Math.max(200, input.pollMs ?? 900);
+  const startedAt = Date.now();
+  while (Date.now() - startedAt <= maxWaitMs) {
+    const snapshot = await input.client.get<{
+      item?: {
+        id: string;
+        status: string;
+        payload?: Record<string, unknown>;
+      };
+    }>(`/jobs/${input.jobId}`);
+    const status = snapshot.item?.status ?? "";
+    if (status === "done" || status === "waiting_user") return;
+    if (status === "error") {
+      const payload = snapshot.item?.payload;
+      const lastError =
+        payload && typeof payload.lastError === "object" && payload.lastError !== null
+          ? (payload.lastError as Record<string, unknown>)
+          : undefined;
+      const errorMessage =
+        typeof lastError?.message === "string" ? lastError.message : `${input.label} failed (${input.jobId})`;
+      throw new Error(errorMessage);
+    }
+    await input.deps.sleepFn(pollMs);
+  }
+  throw new Error(`Timed out while waiting for ${input.label} (${input.jobId})`);
+};
+
+const runWorkspaceAttach = async (input: {
+  client: ReturnType<typeof createApiClient>;
+  args: string[];
+  flags: Record<string, FlagValue>;
+  config: CliConfig;
+  deps: CliDeps;
+  webBaseUrl: string;
+}): Promise<CommandResult> => {
+  const localPath = input.args.join(" ").trim();
+  if (!localPath) {
+    throw new Error("Workspace path is required. Example: devtools workspace attach /Users/me/project");
+  }
+  const projectId = await resolveProjectId({
+    flags: input.flags,
+    config: input.config,
+    client: input.client
+  });
+  if (!projectId) {
+    throw new Error("No active project found. Use 'devtools project use <id>' or pass --project.");
+  }
+
+  const requestedMode = toExecutionMode(asStringFlag(input.flags, "mode"));
+  const workspaceMode = toWorkspaceMode(requestedMode) ?? "local";
+  const existing = await resolveWorkspaceForProject({
+    client: input.client,
+    projectId
+  });
+  const item = existing
+    ? (
+        await input.client.patch<{ item: WorkspaceItem }>(`/workspaces/${existing.id}`, {
+          mode: workspaceMode,
+          localPath
+        })
+      ).item
+    : (
+        await input.client.post<{ item: WorkspaceItem }>("/workspaces", {
+          projectId,
+          mode: workspaceMode,
+          localPath
+        })
+      ).item;
+
+  return {
+    lines: [
+      "OK Workspace attached",
+      `workspace: ${item.id}`,
+      `project: ${item.projectId}`,
+      `mode: ${item.mode}`,
+      `path: ${item.localPath ?? "n/a"}`,
+      `runtime: ${item.runtimeStatus}`
+    ],
+    quietLine: item.id,
+    json: {
+      status: "ok",
+      action: "workspace.attach",
+      item
+    },
+    openUrl: `${input.webBaseUrl}/project/${projectId}`
+  };
+};
+
+const runWorkspaceAction = async (input: {
+  action: "start" | "stop" | "deploy" | "restart";
+  client: ReturnType<typeof createApiClient>;
+  flags: Record<string, FlagValue>;
+  config: CliConfig;
+  deps: CliDeps;
+  profile: ExecutionProfileConfig;
+  webBaseUrl: string;
+}): Promise<CommandResult> => {
+  const projectId = await resolveProjectId({
+    flags: input.flags,
+    config: input.config,
+    client: input.client
+  });
+  if (!projectId) {
+    throw new Error("No active project found. Use 'devtools project use <id>' or pass --project.");
+  }
+
+  const executionMode = await resolveExecutionModeWithDetection({
+    flags: input.flags,
+    profile: input.profile,
+    fallback: "remote",
+    client: input.client
+  });
+  const workspace = await ensureWorkspaceForProject({
+    client: input.client,
+    projectId,
+    mode: toWorkspaceMode(executionMode.mode) ?? "remote"
+  });
+
+  const dispatched = await input.client.patch<{
+    item?: WorkspaceItem;
+    jobId?: string;
+    status?: string;
+    message?: string;
+  }>(`/workspaces/${workspace.id}`, {
+    action: input.action,
+    executionMode: executionMode.mode
+  });
+  if (!dispatched.jobId) {
+    throw new Error(dispatched.message ?? `Workspace ${input.action} did not return a job id`);
+  }
+
+  await waitForRunnerJobTerminal({
+    client: input.client,
+    deps: input.deps,
+    jobId: dispatched.jobId,
+    label: `workspace ${input.action}`
+  });
+  const refreshed = await resolveWorkspaceForProject({
+    client: input.client,
+    projectId
+  });
+  if (!refreshed) {
+    throw new Error("Workspace disappeared after execution.");
+  }
+
+  return {
+    lines: [
+      `OK Workspace ${input.action} completed`,
+      `workspace: ${refreshed.id}`,
+      `project: ${refreshed.projectId}`,
+      `mode: ${refreshed.mode}`,
+      `runtime: ${refreshed.runtimeStatus}`,
+      `route mode: ${executionMode.mode} (${executionMode.reason})`,
+      `job: ${dispatched.jobId}`
+    ],
+    quietLine: refreshed.id,
+    json: {
+      status: "ok",
+      action: `workspace.${input.action}`,
+      projectId,
+      mode: executionMode.mode,
+      modeSource: executionMode.source,
+      modeReason: executionMode.reason,
+      jobId: dispatched.jobId,
+      workspace: refreshed
+    },
+    openUrl: `${input.webBaseUrl}/project/${projectId}`
+  };
+};
+
 const runProvidersTest = async (input: {
   client: ReturnType<typeof createApiClient>;
   args: string[];
@@ -1051,7 +1332,7 @@ const runCodingRun = async (input: {
 
   const title = asStringFlag(input.flags, "title") ?? requestText.slice(0, 72);
   const mode = input.executionMode.mode;
-  const created = await input.client.post<{ item: CodingWorkflowItem }>(
+  const created = await input.client.post<AsyncJobHandle>(
     `/projects/${projectId}/coding-workflows`,
     {
       title,
@@ -1060,12 +1341,8 @@ const runCodingRun = async (input: {
     }
   );
   debugDump(input.deps, input.debug, "coding.create.response", created);
-
-  let workflow = created.item;
   const lines: string[] = [
-    `mode: ${mode} (${input.executionMode.reason})`,
-    `OK Workflow created (${workflow.id})`,
-    `state: ${workflow.state}`
+    `mode: ${mode} (${input.executionMode.reason})`
   ];
 
   const autoApprove = asBooleanFlag(input.flags, "auto-approve", true);
@@ -1074,25 +1351,103 @@ const runCodingRun = async (input: {
   const maxWaitMs = Math.max(5_000, asIntegerFlag(input.flags, "wait-ms") ?? 45_000);
   const pollMs = Math.max(200, asIntegerFlag(input.flags, "poll-ms") ?? 900);
 
+  const waitForJobTerminal = async (jobId: string, label: string): Promise<void> => {
+    while (Date.now() - startMs <= maxWaitMs) {
+      const snapshot = await input.client.get<{
+        item?: {
+          id: string;
+          status: string;
+          payload?: Record<string, unknown>;
+        };
+      }>(`/jobs/${jobId}`);
+      const status = snapshot.item?.status ?? "";
+      if (status === "done" || status === "waiting_user") return;
+      if (status === "error") {
+        const payload = snapshot.item?.payload;
+        const lastError =
+          payload && typeof payload.lastError === "object" && payload.lastError !== null
+            ? (payload.lastError as Record<string, unknown>)
+            : undefined;
+        const errorMessage =
+          typeof lastError?.message === "string" ? lastError.message : `${label} failed (${jobId})`;
+        throw new Error(errorMessage);
+      }
+      await input.deps.sleepFn(pollMs);
+    }
+    throw new Error(`Timed out while waiting for ${label} (${jobId})`);
+  };
+
+  const loadLatestWorkflow = async (): Promise<CodingWorkflowItem> => {
+    const list = await input.client.get<{ items?: CodingWorkflowItem[] }>(
+      `/projects/${projectId}/coding-workflows`
+    );
+    const candidates = list.items ?? [];
+    const byTitle = candidates.filter((item) => item.title === title);
+    const ordered = [...(byTitle.length > 0 ? byTitle : candidates)].sort((left, right) =>
+      (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "")
+    );
+    const latestWorkflow = ordered[0];
+    if (!latestWorkflow) {
+      throw new Error("Unable to resolve created workflow from project list.");
+    }
+    return latestWorkflow;
+  };
+
+  let workflow: CodingWorkflowItem;
+  if (created.item) {
+    workflow = created.item;
+  } else if (created.jobId) {
+    lines.push(`queued create job: ${created.jobId} (${created.status ?? "pending"})`);
+    await waitForJobTerminal(created.jobId, "workflow creation");
+    workflow = await loadLatestWorkflow();
+  } else {
+    throw new Error(created.message ?? "Invalid create workflow response.");
+  }
+
+  lines.push(`OK Workflow created (${workflow.id})`);
+  lines.push(`state: ${workflow.state}`);
+
   while (Date.now() - startMs <= maxWaitMs) {
     if (autoApprove && (workflow.state === "awaiting_plan_approval" || workflow.state === "planning")) {
-      const planApproval = await input.client.post<{ item: CodingWorkflowItem }>(
+      const planApproval = await input.client.post<AsyncJobHandle>(
         `/projects/${projectId}/coding-workflows/${workflow.id}/plan/approve`,
         { mode }
       );
       debugDump(input.deps, input.debug, "coding.plan.approve.response", planApproval);
-      workflow = planApproval.item;
+      if (planApproval.item) {
+        workflow = planApproval.item;
+      } else if (planApproval.jobId) {
+        lines.push(`plan approval job: ${planApproval.jobId} (${planApproval.status ?? "pending"})`);
+        await waitForJobTerminal(planApproval.jobId, "plan approval");
+        const latestWorkflow = await input.client.get<{ item: CodingWorkflowItem }>(
+          `/projects/${projectId}/coding-workflows/${workflow.id}`
+        );
+        workflow = latestWorkflow.item;
+      } else {
+        throw new Error(planApproval.message ?? "Invalid plan approval response.");
+      }
       lines.push(`plan: approved -> ${workflow.state}`);
       continue;
     }
 
     if (autoApprove && workflow.state === "awaiting_patch_approval") {
-      const patchApproval = await input.client.post<{ item: CodingWorkflowItem }>(
+      const patchApproval = await input.client.post<AsyncJobHandle>(
         `/projects/${projectId}/coding-workflows/${workflow.id}/patch/approve`,
         { mode }
       );
       debugDump(input.deps, input.debug, "coding.patch.approve.response", patchApproval);
-      workflow = patchApproval.item;
+      if (patchApproval.item) {
+        workflow = patchApproval.item;
+      } else if (patchApproval.jobId) {
+        lines.push(`patch approval job: ${patchApproval.jobId} (${patchApproval.status ?? "pending"})`);
+        await waitForJobTerminal(patchApproval.jobId, "patch approval");
+        const latestWorkflow = await input.client.get<{ item: CodingWorkflowItem }>(
+          `/projects/${projectId}/coding-workflows/${workflow.id}`
+        );
+        workflow = latestWorkflow.item;
+      } else {
+        throw new Error(patchApproval.message ?? "Invalid patch approval response.");
+      }
       lines.push(`patch: approved -> ${workflow.state}`);
       continue;
     }
@@ -1383,7 +1738,7 @@ const runWorkerStart = async (input: {
 
   return {
     lines: [
-      `OK Worker stopped`,
+      `OK Worker session completed`,
       `machine: ${summary.machineId}`,
       `mode: ${mode}`,
       `processed: ${summary.processed}`,
@@ -1399,6 +1754,230 @@ const runWorkerStart = async (input: {
       failures: summary.failures,
       iterations: summary.iterations,
       capabilities: summary.capabilities
+    }
+  };
+};
+
+const runWorkerStatus = async (input: {
+  client: ReturnType<typeof createApiClient>;
+}): Promise<CommandResult> => {
+  const response = await input.client.get<{ items?: MachineSummary[] }>("/machines");
+  const workers = (response.items ?? []).filter((machine) => isExecutionWorker(machine));
+  if (workers.length === 0) {
+    return {
+      lines: ["No workers registered."],
+      json: {
+        status: "ok",
+        action: "worker.status",
+        items: []
+      }
+    };
+  }
+
+  const rows = workers.map((machine) => {
+    const mode = machineExecutionMode(machine) ?? "unknown";
+    const state = machineIsActive(machine) ? "running" : "stopped";
+    const capabilities = (machine.services ?? []).join(",") || "-";
+    return [
+      machine.id,
+      mode,
+      state,
+      machine.status ?? "unknown",
+      machine.lastHeartbeatAt ?? "n/a",
+      capabilities
+    ];
+  });
+
+  return {
+    lines: [renderTable(["ID", "MODE", "STATE", "STATUS", "LAST HEARTBEAT", "CAPABILITIES"], rows)],
+    ...(rows[0]?.[0] ? { quietLine: rows[0][0] } : {}),
+    json: {
+      status: "ok",
+      action: "worker.status",
+      items: workers.map((machine) => ({
+        id: machine.id,
+        mode: machineExecutionMode(machine) ?? "unknown",
+        state: machineIsActive(machine) ? "running" : "stopped",
+        status: machine.status ?? "unknown",
+        lastHeartbeatAt: machine.lastHeartbeatAt ?? null,
+        capabilities: machine.services ?? []
+      }))
+    }
+  };
+};
+
+const runWorkerStop = async (input: {
+  client: ReturnType<typeof createApiClient>;
+  args: string[];
+}): Promise<CommandResult> => {
+  const response = await input.client.get<{ items?: MachineSummary[] }>("/machines");
+  const workers = (response.items ?? []).filter((machine) => isExecutionWorker(machine));
+  if (workers.length === 0) {
+    throw new Error("No workers found to stop.");
+  }
+
+  const requestedMachineId = (input.args[0] ?? "").trim();
+  const target = requestedMachineId
+    ? workers.find((machine) => machine.id === requestedMachineId)
+    : workers.find((machine) => machineIsActive(machine) && machineSupportsLocalExecution(machine))
+      ?? workers.find((machine) => machineIsActive(machine) && machineSupportsRemoteExecution(machine))
+      ?? workers[0];
+
+  if (!target) {
+    throw new Error(`Worker '${requestedMachineId}' not found.`);
+  }
+
+  await input.client.post(`/execution/workers/${target.id}/heartbeat`, {
+    status: "offline",
+    capabilities: target.services ?? []
+  });
+
+  return {
+    lines: [
+      "OK Worker marked offline",
+      `machine: ${target.id}`,
+      `mode: ${machineExecutionMode(target) ?? "unknown"}`
+    ],
+    quietLine: target.id,
+    json: {
+      status: "ok",
+      action: "worker.stop",
+      item: {
+        id: target.id,
+        mode: machineExecutionMode(target) ?? "unknown"
+      }
+    }
+  };
+};
+
+const toAgentAdapterType = (value: string | undefined): "legacy_cli" | "custom_cli" | "mcp_runtime" => {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "legacy_cli" || normalized === "custom_cli" || normalized === "mcp_runtime") {
+    return normalized;
+  }
+  return "mcp_runtime";
+};
+
+const toAgentStatus = (
+  value: string | undefined
+): "active" | "paused" | "degraded" | "error" | undefined => {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "active" || normalized === "paused" || normalized === "degraded" || normalized === "error") {
+    return normalized;
+  }
+  return undefined;
+};
+
+const inferAgentCapabilities = (role: string): string[] => {
+  const normalized = role.trim().toLowerCase();
+  if (normalized.includes("coder") || normalized.includes("builder")) return ["coding"];
+  if (normalized.includes("research")) return ["chat_reasoning"];
+  if (normalized.includes("review")) return ["chat_reasoning", "coding"];
+  return ["chat_reasoning"];
+};
+
+const parseRuntimeConfigFlag = (value: string | undefined): Record<string, unknown> => {
+  if (!value) return { promptSource: "registry" };
+  const parsed = JSON.parse(value) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("--runtime-config must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
+};
+
+const runAgentsCreate = async (input: {
+  client: ReturnType<typeof createApiClient>;
+  args: string[];
+  flags: Record<string, FlagValue>;
+}): Promise<CommandResult> => {
+  const name = (asStringFlag(input.flags, "name") ?? input.args.join(" ")).trim();
+  const role = (asStringFlag(input.flags, "role") ?? "").trim();
+  if (!name) throw new Error("Agent name is required. Example: devtools agents create planner --role planner");
+  if (!role) throw new Error("Agent role is required. Example: devtools agents create planner --role planner");
+
+  const capabilities = normalizeAllowlist(parseCsv(asStringFlag(input.flags, "capabilities")));
+  const desiredSkills = normalizeAllowlist(parseCsv(asStringFlag(input.flags, "skills")));
+  const status = toAgentStatus(asStringFlag(input.flags, "status")) ?? "active";
+  const adapterType = toAgentAdapterType(asStringFlag(input.flags, "adapter"));
+  const runtimeConfig = parseRuntimeConfigFlag(asStringFlag(input.flags, "runtime-config"));
+
+  const created = await input.client.post<{ item: AgentItem }>("/agents", {
+    name,
+    role,
+    icon: asStringFlag(input.flags, "icon") ?? "agent",
+    description: asStringFlag(input.flags, "description") ?? `Agent ${name}`,
+    adapterType,
+    desiredSkills,
+    ...(asStringFlag(input.flags, "report-to") ? { reportTo: asStringFlag(input.flags, "report-to") } : {}),
+    runtimeConfig,
+    capabilities: capabilities.length > 0 ? capabilities : inferAgentCapabilities(role),
+    status
+  });
+
+  return {
+    lines: [
+      "OK Agent created",
+      `id: ${created.item.id}`,
+      `name: ${created.item.name}`,
+      `role: ${created.item.role}`,
+      `status: ${created.item.status}`
+    ],
+    quietLine: created.item.id,
+    json: {
+      status: "ok",
+      action: "agents.create",
+      item: created.item
+    }
+  };
+};
+
+const runAgentsEdit = async (input: {
+  client: ReturnType<typeof createApiClient>;
+  args: string[];
+  flags: Record<string, FlagValue>;
+}): Promise<CommandResult> => {
+  const agentId = (input.args[0] ?? "").trim();
+  if (!agentId) throw new Error("Agent id is required. Example: devtools agents edit agent_001 --role reviewer");
+
+  const capabilities = normalizeAllowlist(parseCsv(asStringFlag(input.flags, "capabilities")));
+  const desiredSkills = normalizeAllowlist(parseCsv(asStringFlag(input.flags, "skills")));
+  const status = toAgentStatus(asStringFlag(input.flags, "status"));
+  const runtimeConfigFlag = asStringFlag(input.flags, "runtime-config");
+  const patch: Record<string, unknown> = {
+    ...(asStringFlag(input.flags, "name") ? { name: asStringFlag(input.flags, "name") } : {}),
+    ...(asStringFlag(input.flags, "role") ? { role: asStringFlag(input.flags, "role") } : {}),
+    ...(asStringFlag(input.flags, "icon") ? { icon: asStringFlag(input.flags, "icon") } : {}),
+    ...(asStringFlag(input.flags, "description")
+      ? { description: asStringFlag(input.flags, "description") }
+      : {}),
+    ...(asStringFlag(input.flags, "adapter")
+      ? { adapterType: toAgentAdapterType(asStringFlag(input.flags, "adapter")) }
+      : {}),
+    ...(asStringFlag(input.flags, "report-to") ? { reportTo: asStringFlag(input.flags, "report-to") } : {}),
+    ...(capabilities.length > 0 ? { capabilities } : {}),
+    ...(desiredSkills.length > 0 ? { desiredSkills } : {}),
+    ...(status ? { status } : {}),
+    ...(runtimeConfigFlag ? { runtimeConfig: parseRuntimeConfigFlag(runtimeConfigFlag) } : {})
+  };
+
+  if (Object.keys(patch).length === 0) {
+    throw new Error("No edits provided. Pass at least one flag like --role, --description, --capabilities, or --status.");
+  }
+
+  const updated = await input.client.patch<{ item: AgentItem }>(`/agents/${agentId}`, patch);
+  return {
+    lines: [
+      "OK Agent updated",
+      `id: ${updated.item.id}`,
+      `name: ${updated.item.name}`,
+      `role: ${updated.item.role}`,
+      `status: ${updated.item.status}`
+    ],
+    quietLine: updated.item.id,
+    json: {
+      status: "ok",
+      action: "agents.edit",
+      item: updated.item
     }
   };
 };
@@ -1809,6 +2388,55 @@ export const runCli = async (argv: string[], customDeps: Partial<CliDeps> = {}):
         tenantId,
         baseUrl
       });
+    } else if (command === "workspace" && subcommand === "attach") {
+      result = await runWorkspaceAttach({
+        client,
+        args,
+        flags,
+        config,
+        deps,
+        webBaseUrl
+      });
+    } else if (command === "workspace" && subcommand === "start") {
+      result = await runWorkspaceAction({
+        action: "start",
+        client,
+        flags,
+        config,
+        deps,
+        profile,
+        webBaseUrl
+      });
+    } else if (command === "workspace" && subcommand === "stop") {
+      result = await runWorkspaceAction({
+        action: "stop",
+        client,
+        flags,
+        config,
+        deps,
+        profile,
+        webBaseUrl
+      });
+    } else if (command === "workspace" && subcommand === "deploy") {
+      result = await runWorkspaceAction({
+        action: "deploy",
+        client,
+        flags,
+        config,
+        deps,
+        profile,
+        webBaseUrl
+      });
+    } else if (command === "workspace" && subcommand === "restart") {
+      result = await runWorkspaceAction({
+        action: "restart",
+        client,
+        flags,
+        config,
+        deps,
+        profile,
+        webBaseUrl
+      });
     } else if (command === "providers" && subcommand === "test") {
       result = await runProvidersTest({
         client,
@@ -1842,8 +2470,29 @@ export const runCli = async (argv: string[], customDeps: Partial<CliDeps> = {}):
         jsonMode,
         quietMode
       });
+    } else if (command === "worker" && subcommand === "status") {
+      result = await runWorkerStatus({
+        client
+      });
+    } else if (command === "worker" && subcommand === "stop") {
+      result = await runWorkerStop({
+        client,
+        args
+      });
     } else if (command === "agents" && subcommand === "list") {
       result = await runAgentsList({ client, debug, deps });
+    } else if (command === "agents" && subcommand === "create") {
+      result = await runAgentsCreate({
+        client,
+        args,
+        flags
+      });
+    } else if (command === "agents" && subcommand === "edit") {
+      result = await runAgentsEdit({
+        client,
+        args,
+        flags
+      });
     } else if (command === "jobs" && subcommand === "list") {
       result = await runJobsList({ client, flags, config });
     } else if (command === "logs" && subcommand === "tail") {

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { KnowledgeConfig, KnowledgeScope } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
-import { getOwnerMode, onOwnerModeChange } from "@/owner-mode";
 import { useAppStore } from "@/store/app-store";
 
 type EffectiveConfigResponse = {
@@ -40,7 +39,6 @@ const parseCaptureModes = (raw: string): string[] =>
 
 export function SettingsKnowledgePage() {
   const { auth, authActions } = useAppStore();
-  const [ownerMode, setOwnerMode] = useState<boolean>(() => getOwnerMode());
   const [draft, setDraft] = useState<ConfigDraft>(defaultDraft);
   const [items, setItems] = useState<KnowledgeConfig[]>([]);
   const [source, setSource] = useState<EffectiveConfigResponse["source"]>("default");
@@ -51,7 +49,9 @@ export function SettingsKnowledgePage() {
 
   const canManage =
     !auth.enabled ||
-    Boolean(auth.principal?.roles.includes("owner") || auth.principal?.roles.includes("admin"));
+    Boolean(auth.principal?.roles.includes("owner") || auth.principal?.roles.includes("admin")) ||
+    auth.principal?.tenantRole === "owner" ||
+    auth.principal?.tenantRole === "admin";
   const effectiveLabel = useMemo(() => {
     if (source === "default") return "default policy";
     if (source === "project") return "project override";
@@ -59,8 +59,6 @@ export function SettingsKnowledgePage() {
     if (source === "system") return "system override";
     return "unknown";
   }, [source]);
-
-  useEffect(() => onOwnerModeChange(setOwnerMode), []);
 
   const hydrateDraft = useCallback((config: KnowledgeConfig | undefined) => {
     if (!config) {
@@ -162,14 +160,9 @@ export function SettingsKnowledgePage() {
           title="Knowledge Configuration"
           subtitle="Control capture, retrieval and mutation policies per tenant/project scope"
         />
-        {!ownerMode ? (
-          <p className="text-sm text-amber-300">
-            Owner mode is disabled. Enable it in Settings to access platform-level controls quickly.
-          </p>
-        ) : null}
         {!canManage ? (
           <p className="text-sm text-rose-300">
-            Owner role required when authentication is enabled.
+            Admin or owner role required when authentication is enabled.
           </p>
         ) : null}
         {error ? <p className="text-sm text-rose-300">{error}</p> : null}

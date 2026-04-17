@@ -9,7 +9,7 @@ import {
   registerExecutionWorker,
   type ExecutionMode
 } from "../services/execution-router-service.js";
-import { executeInternalRunnerAction } from "../services/internal-runner-action-service.js";
+import { dispatchAndAwaitRunnerJob, getRunnerJobOutput } from "../services/job-dispatch-service.js";
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -237,8 +237,23 @@ export const executionRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const payload = asRecord(body.payload) ?? {};
-      const item = await executeInternalRunnerAction({ action, payload });
-      return { item };
+      const mode = toExecutionMode(body.mode);
+      const job = await dispatchAndAwaitRunnerJob(
+        {
+          tenantId: request.tenantId ?? "tenant_default",
+          createdBy: request.authPrincipal?.userId ?? "execution_control",
+          type: "system",
+          title: `Execution internal action: ${action}`,
+          payload: {
+            internalAction: action,
+            ...payload,
+            ...(mode ? { execution: { mode } } : {})
+          }
+        },
+        { timeoutMs: 20_000 }
+      );
+      const item = getRunnerJobOutput<Record<string, unknown>>(job) ?? {};
+      return { item, jobId: job.id };
     }
   );
 };

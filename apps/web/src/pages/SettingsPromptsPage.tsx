@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PromptRegistryEntry, PromptRegistryScope, PromptRegistryStatus } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
-import { getOwnerMode, onOwnerModeChange } from "@/owner-mode";
 import { useAppStore } from "@/store/app-store";
 
 type PromptDraft = {
@@ -37,7 +36,6 @@ const parseMetadata = (raw: string): Record<string, unknown> | undefined => {
 
 export function SettingsPromptsPage() {
   const { auth, authActions } = useAppStore();
-  const [ownerMode, setOwnerMode] = useState<boolean>(() => getOwnerMode());
   const [items, setItems] = useState<PromptRegistryEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [scopeFilter, setScopeFilter] = useState<PromptRegistryScope | "all">("all");
@@ -51,9 +49,9 @@ export function SettingsPromptsPage() {
 
   const canManage =
     !auth.enabled ||
-    Boolean(auth.principal?.roles.includes("owner") || auth.principal?.roles.includes("admin"));
-
-  useEffect(() => onOwnerModeChange(setOwnerMode), []);
+    Boolean(auth.principal?.roles.includes("owner") || auth.principal?.roles.includes("admin")) ||
+    auth.principal?.tenantRole === "owner" ||
+    auth.principal?.tenantRole === "admin";
 
   const hydrateDraft = useCallback((item: PromptRegistryEntry | undefined) => {
     if (!item) {
@@ -217,14 +215,9 @@ export function SettingsPromptsPage() {
     <div className="space-y-5">
       <Panel>
         <SectionHeading title="Prompt Registry" subtitle="Governed prompt versions and overrides" />
-        {!ownerMode ? (
-          <p className="text-sm text-[color:var(--muted)]">
-            Owner mode is disabled. The registry is still visible for inspection.
-          </p>
-        ) : null}
         {!canManage ? (
           <p className="text-sm text-[color:var(--muted)]">
-            Owner privileges are required to mutate prompt records when authentication is enabled.
+            Admin or owner privileges are required to mutate prompt records when authentication is enabled.
           </p>
         ) : null}
         {error ? <p className="text-sm text-rose-300">{error}</p> : null}

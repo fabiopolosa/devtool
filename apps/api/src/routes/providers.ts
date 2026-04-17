@@ -259,7 +259,7 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
         actor
       });
 
-      return { item: await toProviderConfigResponse(created) };
+      return { success: true, item: await toProviderConfigResponse(created) };
     }
   );
 
@@ -342,7 +342,7 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
           actor
         });
 
-        return { item: await toProviderConfigResponse(updated) };
+        return { success: true, item: await toProviderConfigResponse(updated) };
       } catch (error) {
         if (error instanceof Error && error.message.includes("Record not found")) {
           return reply.code(404).send({
@@ -412,6 +412,7 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
       const usageWindow = await resolveProviderRateLimitUsage(request.tenantId, provider);
 
       return {
+        success: true,
         status: validation.status === "valid" ? "ok" : "error",
         latencyMs: validation.latencyMs ?? 0,
         models: availableModels,
@@ -468,7 +469,7 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
             updatedBy: actor
           });
         }
-        return { item: {} };
+        return { success: true, item: {} };
       }
 
       const selectedConfig = configs.find((config) => config.id === defaultProviderConfigId);
@@ -518,6 +519,7 @@ export const providersRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       return {
+        success: true,
         item: {
           defaultProviderConfigId: selectedConfig.id,
           defaultProvider: selectedConfig.providerId ?? selectedConfig.provider,

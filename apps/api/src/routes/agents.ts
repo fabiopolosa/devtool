@@ -8,6 +8,12 @@ import {
   dispatchAndAwaitRunnerJob,
   getRunnerJobOutput
 } from "../services/job-dispatch-service.js";
+import { listContextNotes } from "../services/context-service.js";
+import { skillsService } from "../services/skills-service.js";
+import {
+  buildCompactKnowledgeContext,
+  formatCompactKnowledgeContext
+} from "../services/knowledge-service.js";
 import { requireTenantPermission } from "../tenant/rbac.js";
 
 const createAgentBodySchema = agentConfigSchema
@@ -23,7 +29,8 @@ const operationBodySchema = z
   .object({
     reason: z.string().min(1).optional(),
     timeoutMs: z.number().int().positive().optional(),
-    metadata: z.record(z.unknown()).optional()
+    metadata: z.record(z.unknown()).optional(),
+    projectId: z.string().min(1).optional()
   })
   .optional();
 
@@ -65,6 +72,36 @@ const toOperationOptions = (
   if (data.timeoutMs !== undefined) options.timeoutMs = data.timeoutMs;
   if (data.metadata !== undefined) options.metadata = { ...data.metadata };
   return Object.keys(options).length > 0 ? options : undefined;
+};
+
+const buildAgentRuntimeContextMetadata = async (input: {
+  tenantId: string;
+  projectId?: string;
+  query: string;
+}): Promise<Record<string, unknown> | undefined> => {
+  if (!input.projectId) return undefined;
+
+  const [knowledgeEntries, notes] = await Promise.all([
+    buildCompactKnowledgeContext({
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+      query: input.query,
+      limit: 6
+    }),
+    listContextNotes({
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+      limit: 6
+    })
+  ]);
+
+  return {
+    projectId: input.projectId,
+    knowledgeSummary: formatCompactKnowledgeContext(knowledgeEntries),
+    knowledgeEntryCount: knowledgeEntries.length,
+    contextNoteCount: notes.items.length,
+    contextNotes: notes.items.slice(0, 4).map((note) => ({ path: note.path, title: note.title }))
+  };
 };
 
 export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -236,10 +273,26 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
 
       try {
         const actor = request.authPrincipal?.userId ?? "agent_runtime";
-        const options = toOperationOptions(parse.data);
+        const tenantId = request.tenantId ?? "tenant_default";
+        const projectId = parse.data?.projectId?.trim();
+        let options = toOperationOptions(parse.data);
+        const contextMetadata = await buildAgentRuntimeContextMetadata({
+          tenantId,
+          ...(projectId ? { projectId } : {}),
+          query: options?.reason ?? `agent heartbeat for ${request.params.agentId}`
+        });
+        if (contextMetadata) {
+          options = {
+            ...(options ?? {}),
+            metadata: {
+              ...(options?.metadata ?? {}),
+              ...contextMetadata
+            }
+          };
+        }
         const job = await dispatchAndAwaitRunnerJob(
           {
-            tenantId: request.tenantId ?? "tenant_default",
+            tenantId,
             type: "system",
             title: `Agent heartbeat ${request.params.agentId}`,
             createdBy: actor,
@@ -281,10 +334,26 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
 
       try {
         const actor = request.authPrincipal?.userId ?? "agent_runtime";
-        const options = toOperationOptions(parse.data);
+        const tenantId = request.tenantId ?? "tenant_default";
+        const projectId = parse.data?.projectId?.trim();
+        let options = toOperationOptions(parse.data);
+        const contextMetadata = await buildAgentRuntimeContextMetadata({
+          tenantId,
+          ...(projectId ? { projectId } : {}),
+          query: options?.reason ?? `agent diagnose for ${request.params.agentId}`
+        });
+        if (contextMetadata) {
+          options = {
+            ...(options ?? {}),
+            metadata: {
+              ...(options?.metadata ?? {}),
+              ...contextMetadata
+            }
+          };
+        }
         const job = await dispatchAndAwaitRunnerJob(
           {
-            tenantId: request.tenantId ?? "tenant_default",
+            tenantId,
             type: "system",
             title: `Agent diagnose ${request.params.agentId}`,
             createdBy: actor,
@@ -306,6 +375,117 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Agent not found"
+        });
+      }
+    }
+  );
+
+  fastify.post<{
+    Params: { agentId: string; skillId: string };
+    Body?: {
+      mode?: "remote" | "local" | "hybrid";
+      command?: string;
+      args?: string[];
+      input?: Record<string, unknown>;
+      confirm?: boolean;
+    };
+  }>(
+    "/agents/:agentId/skills/:skillId/execute",
+    {
+      schema: {
+        tags: ["agents"],
+        summary: "Execute an assigned skill for an agent via runner"
+      }
+    },
+    async (request, reply) => {
+      if (!requireTenantPermission(request, reply, "canRunAgent")) return;
+      const agent = await agentsService.getAgent(request.params.agentId);
+      if (!agent) {
+        return reply.code(404).send({ error: "not_found", message: "Agent not found" });
+      }
+
+      const skill = await skillsService.getSkill(request.params.skillId);
+      if (!skill) {
+        return reply.code(404).send({ error: "not_found", message: "Skill not found" });
+      }
+      const skillTenantId =
+        skill.metadata && typeof skill.metadata["tenantId"] === "string" && skill.metadata["tenantId"].trim().length > 0
+          ? String(skill.metadata["tenantId"]).trim()
+          : undefined;
+      const tenantId = request.tenantId ?? "tenant_default";
+      if (skillTenantId && skillTenantId !== tenantId) {
+        return reply.code(404).send({ error: "not_found", message: "Skill not found" });
+      }
+      const actor = request.authPrincipal?.userId ?? "agent_runtime";
+      if (!skillsService.canActorAccessSkill(skill, actor)) {
+        return reply.code(403).send({
+          error: "forbidden",
+          message: "Skill scope policy denies access for this actor"
+        });
+      }
+
+      const assigned = agent.desiredSkills.includes(skill.id) || agent.desiredSkills.includes(skill.name);
+      if (!assigned) {
+        return reply.code(400).send({
+          error: "skill_not_assigned",
+          message: `Skill '${skill.name}' is not assigned to agent '${agent.name}'`
+        });
+      }
+
+      const mode =
+        request.body?.mode === "local" || request.body?.mode === "remote" || request.body?.mode === "hybrid"
+          ? request.body.mode
+          : undefined;
+      const projectId =
+        request.body?.input && typeof request.body.input["projectId"] === "string"
+          ? (request.body.input["projectId"] as string)
+          : undefined;
+
+      try {
+        const job = await dispatchAndAwaitRunnerJob(
+          {
+            tenantId: request.tenantId ?? "tenant_default",
+            type: "system",
+            title: `Agent ${agent.name} execute skill ${skill.name}`,
+            createdBy: actor,
+            payload: {
+              internalAction: "skill.execute",
+              skillId: skill.id,
+              actor,
+              tenantId: request.tenantId ?? "tenant_default",
+              ...(projectId ? { projectId } : {}),
+              ...(typeof request.body?.command === "string" && request.body.command.trim().length > 0
+                ? { command: request.body.command.trim() }
+                : {}),
+              ...(Array.isArray(request.body?.args)
+                ? {
+                    args: request.body.args.filter(
+                      (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+                    )
+                  }
+                : {}),
+              ...(request.body?.input && typeof request.body.input === "object" && !Array.isArray(request.body.input)
+                ? { input: request.body.input }
+                : {}),
+              ...(typeof request.body?.confirm === "boolean" ? { confirm: request.body.confirm } : {}),
+              ...(mode ? { execution: { mode } } : {})
+            },
+            resourceType: "agent",
+            resourceId: agent.id,
+            ...(projectId ? { projectId } : {})
+          },
+          { timeoutMs: 120_000 }
+        );
+        const output = getRunnerJobOutput<{ result?: unknown }>(job);
+        return {
+          jobId: job.id,
+          status: job.status,
+          item: output?.result ?? output ?? null
+        };
+      } catch (error) {
+        return reply.code(400).send({
+          error: "skill_execute_failed",
+          message: error instanceof Error ? error.message : "Unable to execute skill"
         });
       }
     }

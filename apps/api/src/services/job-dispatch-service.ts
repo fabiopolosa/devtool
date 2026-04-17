@@ -1,6 +1,5 @@
 import type { Job, JobType } from "@cp/domain";
 import { createJob, getJob, updateJob } from "./jobs-service.js";
-import { executeInternalRunnerAction } from "./internal-runner-action-service.js";
 
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -15,11 +14,11 @@ const asString = (value: unknown): string | undefined =>
 
 const unclaimedFastFailMs = Math.max(
   1_000,
-  Number.parseInt(process.env.RUNNER_UNCLAIMED_FAST_FAIL_MS ?? "", 10) || 12_000
+  Number.parseInt(process.env.RUNNER_UNCLAIMED_FAST_FAIL_MS ?? "", 10) || 4_500
 );
 const remoteIdleFastFailMs = Math.max(
   1_000,
-  Number.parseInt(process.env.RUNNER_REMOTE_IDLE_FAST_FAIL_MS ?? "", 10) || 15_000
+  Number.parseInt(process.env.RUNNER_REMOTE_IDLE_FAST_FAIL_MS ?? "", 10) || 4_500
 );
 
 export interface DispatchRunnerJobInput {
@@ -39,102 +38,6 @@ export interface AwaitRunnerJobOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
 }
-
-const shouldInlineRunnerExecution = (): boolean => process.env.NODE_ENV === "test";
-
-const resolveInlineCompletion = (
-  action: string,
-  payload: Record<string, unknown>
-): {
-  status: "done" | "waiting_user";
-  actionRequired: boolean;
-  actionType?: "input";
-} => {
-  if (action === "brainstorm.start_session" && payload.generatePlan === false) {
-    return {
-      status: "waiting_user",
-      actionRequired: true,
-      actionType: "input"
-    };
-  }
-
-  return {
-    status: "done",
-    actionRequired: false
-  };
-};
-
-const executeRunnerJobInline = async (job: Job): Promise<Job> => {
-  const payload = asRecord(job.payload) ?? {};
-  const action = typeof payload.internalAction === "string" ? payload.internalAction.trim() : "";
-  if (!action) {
-    throw new Error(`Inline runner execution requires payload.internalAction (job ${job.id})`);
-  }
-
-  const startedAt = new Date().toISOString();
-  await updateJob(job.id, {
-    status: "running",
-    actionRequired: false,
-    ready: false,
-    startedAt
-  });
-
-  try {
-    const result = await executeInternalRunnerAction({
-      action,
-      payload
-    });
-    const completion = resolveInlineCompletion(action, payload);
-    const completedAt = completion.status === "done" ? new Date().toISOString() : undefined;
-    const nextPayload = {
-      ...(job.payload ?? {}),
-      output: {
-        stage: "internal_runner",
-        action,
-        result
-      }
-    };
-    await updateJob(job.id, {
-      status: completion.status,
-      actionRequired: completion.actionRequired,
-      ...(completion.actionType ? { actionType: completion.actionType } : {}),
-      ready: false,
-      ...(completedAt ? { completedAt } : {}),
-      payload: nextPayload
-    });
-  } catch (error) {
-    const failedAt = new Date().toISOString();
-    const nextPayload = {
-      ...(job.payload ?? {}),
-      lastError: {
-        at: failedAt,
-        message: error instanceof Error ? error.message : String(error)
-      }
-    };
-    await updateJob(job.id, {
-      status: "error",
-      actionRequired: true,
-      ready: false,
-      completedAt: failedAt,
-      payload: nextPayload
-    });
-  }
-
-  const updated = await getJob(job.id);
-  if (!updated) {
-    throw new Error(`Inline runner job not found after execution: ${job.id}`);
-  }
-  if (updated.status === "error") {
-    const failedPayload = asRecord(updated.payload);
-    const lastError = asRecord(failedPayload?.lastError);
-    const message =
-      typeof lastError?.message === "string"
-        ? lastError.message
-        : `Inline runner job failed: ${job.id}`;
-    throw new Error(message);
-  }
-  return updated;
-};
 
 export const dispatchRunnerJob = async (input: DispatchRunnerJobInput): Promise<Job> =>
   createJob({
@@ -193,7 +96,7 @@ export const awaitRunnerJobCompletion = async (
       !claimedByMachineId
     ) {
       const failedAt = new Date().toISOString();
-      const message = `No local worker claimed job ${jobId}. Start 'devtools worker start --mode local'.`;
+      const message = `No local worker available for job ${jobId}. Start 'devtools worker start --mode local' and retry.`;
       await updateJob(item.id, {
         status: "error",
         actionRequired: true,
@@ -217,7 +120,7 @@ export const awaitRunnerJobCompletion = async (
       !claimedByMachineId
     ) {
       const failedAt = new Date().toISOString();
-      const message = `No worker claimed hybrid job ${jobId}. Start 'devtools worker start --mode hybrid' or ensure remote worker is online.`;
+      const message = `No compatible worker claimed hybrid job ${jobId}. Start 'devtools worker start --mode hybrid' or use '--mode local'.`;
       await updateJob(item.id, {
         status: "error",
         actionRequired: true,
@@ -240,7 +143,7 @@ export const awaitRunnerJobCompletion = async (
       dispatchTarget === "remote_worker"
     ) {
       const failedAt = new Date().toISOString();
-      const message = `No remote worker picked up job ${jobId}. Start the worker service or run again with '--mode local'.`;
+      const message = `No remote worker available for job ${jobId}. Start the remote worker service, or run 'devtools worker start --mode local' and retry with '--mode local'.`;
       await updateJob(item.id, {
         status: "error",
         actionRequired: true,
@@ -286,9 +189,6 @@ export const dispatchAndAwaitRunnerJob = async (
   options?: AwaitRunnerJobOptions
 ): Promise<Job> => {
   const job = await dispatchRunnerJob(input);
-  if (shouldInlineRunnerExecution()) {
-    return executeRunnerJobInline(job);
-  }
   return awaitRunnerJobCompletion(job.id, options);
 };
 

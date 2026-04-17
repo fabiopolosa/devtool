@@ -838,11 +838,26 @@ export const skills = pgTable(
     installed: boolean("installed").notNull(),
     categories: jsonb("categories").$type<string[]>().notNull(),
     instructions: text("instructions").notNull(),
+    scope: text("scope").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceRef: text("source_ref"),
+    capabilities: jsonb("capabilities").$type<string[]>().notNull(),
+    validationStatus: text("validation_status").notNull(),
+    validationErrors: jsonb("validation_errors").$type<string[]>().notNull(),
+    validationWarnings: jsonb("validation_warnings").$type<string[]>().notNull(),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true, mode: "string" }),
+    sandboxProfile: jsonb("sandbox_profile").$type<Record<string, unknown>>().notNull(),
+    executionConfig: jsonb("execution_config").$type<Record<string, unknown>>().notNull(),
+    currentVersion: text("current_version"),
+    versionHistory: jsonb("version_history").$type<Record<string, unknown>[]>().notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull(),
     ...auditColumns
   },
   (table) => [
     index("idx_skills_name").on(table.name),
     index("idx_skills_installed").on(table.installed),
+    index("idx_skills_scope").on(table.scope),
+    index("idx_skills_validation_status").on(table.validationStatus),
     uniqueIndex("ux_skills_repository_name").on(table.repositoryUrl, table.name)
   ]
 );
@@ -934,6 +949,28 @@ export const machines = pgTable(
     ...auditColumns
   },
   (table) => [index("idx_machines_environment").on(table.environmentId), index("idx_machines_status").on(table.status)]
+);
+
+export const workspaces = pgTable(
+  "workspaces",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    projectId: text("project_id").notNull(),
+    mode: text("mode").notNull(),
+    localPath: text("local_path"),
+    runtimeStatus: text("runtime_status").notNull(),
+    runtimeDetails: jsonb("runtime_details").$type<Record<string, unknown>>().notNull(),
+    lastStartedAt: timestamp("last_started_at", { withTimezone: true, mode: "string" }),
+    lastStoppedAt: timestamp("last_stopped_at", { withTimezone: true, mode: "string" }),
+    lastDeployedAt: timestamp("last_deployed_at", { withTimezone: true, mode: "string" }),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("ux_workspaces_tenant_project").on(table.tenantId, table.projectId),
+    index("idx_workspaces_project").on(table.projectId),
+    index("idx_workspaces_runtime_status").on(table.runtimeStatus)
+  ]
 );
 
 export const localRepositories = pgTable(

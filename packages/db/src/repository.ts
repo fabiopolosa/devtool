@@ -25,6 +25,7 @@ import {
   memoryChunks,
   memoryEntries,
   machines,
+  workspaces,
   mcpConnections,
   mcpDelegationRuns,
   modelRoutingPreferences,
@@ -86,6 +87,7 @@ const tableMap: Record<TableName, AnyPgTable> = {
   schema_docs: schemaDocs,
   environments,
   machines,
+  workspaces,
   local_repositories: localRepositories,
   version_snapshots: versionSnapshots,
   projects,
@@ -145,6 +147,7 @@ const tableMap: Record<TableName, AnyPgTable> = {
 
 const tenantAwareTables = new Set<TableName>([
   "provider_configs",
+  "workspaces",
   "projects",
   "repositories",
   "project_repository_links",

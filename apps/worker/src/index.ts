@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { cpus, hostname, platform, totalmem } from "node:os";
 import { Queue, Worker, Job, type QueueOptions } from "bullmq";
 import { Redis } from "ioredis";
-import { DEFAULT_TENANT_ID } from "@cp/db";
 import { loadEnv } from "@cp/config";
 import { PromptBuilderService } from "@cp/prompt-builder";
 import type { AgentRuntimeJobData } from "@cp/agents";
@@ -36,6 +36,18 @@ const internalRunnerBaseUrl = (
 ).replace(/\/$/, "");
 const internalRunnerToken = process.env.RUNNER_INTERNAL_TOKEN?.trim();
 const workflowLoader = new WorkflowLoader();
+const runnerExecutionRegisterEnabled = process.env.RUNNER_EXECUTION_REGISTER !== "0";
+const runnerExecutionHeartbeatMs = Math.max(
+  1_000,
+  Number.parseInt(process.env.RUNNER_EXECUTION_HEARTBEAT_MS ?? "", 10) || 10_000
+);
+const runnerExecutionName = process.env.RUNNER_EXECUTION_WORKER_NAME?.trim() || `${hostname()}-remote-runner`;
+const runnerExecutionHost = process.env.RUNNER_EXECUTION_WORKER_HOST?.trim() || hostname();
+const runnerExecutionCapabilities = ["internal_runner", "remote_worker"];
+const runnerExecutionToken = process.env.RUNNER_EXECUTION_TOKEN?.trim();
+const defaultTenantId = process.env.DEFAULT_TENANT_ID?.trim() || "tenant_default";
+let runnerExecutionMachineId: string | null = null;
+let runnerExecutionHeartbeatTimer: NodeJS.Timeout | null = null;
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -83,6 +95,92 @@ const asUsageRecord = (value: unknown): RunnerUsageRecord | undefined => {
     cost: Math.max(0, cost),
     ...(asRecord(record.metadata) ? { metadata: record.metadata as Record<string, unknown> } : {})
   };
+};
+
+const executionRequestHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+  if (internalRunnerToken) {
+    headers["x-runner-token"] = internalRunnerToken;
+  }
+  if (runnerExecutionToken) {
+    headers["authorization"] = `Bearer ${runnerExecutionToken}`;
+  }
+  return headers;
+};
+
+const postExecutionControl = async <T>(path: string, body: Record<string, unknown>): Promise<T> => {
+  const response = await fetch(`${internalRunnerBaseUrl}${path}`, {
+    method: "POST",
+    headers: executionRequestHeaders(),
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw new Error(await toErrorMessage(response));
+  }
+  return (await response.json()) as T;
+};
+
+const registerRunnerExecutionWorker = async (): Promise<void> => {
+  if (!runnerExecutionRegisterEnabled) return;
+  try {
+    const response = await postExecutionControl<{ item?: { id?: string } }>(
+      "/execution/workers/register",
+      {
+        name: runnerExecutionName,
+        host: runnerExecutionHost,
+        mode: "remote",
+        capabilities: runnerExecutionCapabilities,
+        metadata: {
+          platform: platform(),
+          cpuCores: cpus().length,
+          ramGb: Math.round(totalmem() / 1024 / 1024 / 1024),
+          executionType: "remote_runner"
+        }
+      }
+    );
+    runnerExecutionMachineId = asNonEmptyString(response.item?.id ?? undefined) ?? null;
+    if (!runnerExecutionMachineId) return;
+
+    await postExecutionControl(`/execution/workers/${runnerExecutionMachineId}/heartbeat`, {
+      status: "online",
+      capabilities: runnerExecutionCapabilities
+    });
+
+    if (runnerExecutionHeartbeatTimer) {
+      clearInterval(runnerExecutionHeartbeatTimer);
+      runnerExecutionHeartbeatTimer = null;
+    }
+    runnerExecutionHeartbeatTimer = setInterval(() => {
+      if (!runnerExecutionMachineId) return;
+      void postExecutionControl(`/execution/workers/${runnerExecutionMachineId}/heartbeat`, {
+        status: "online",
+        capabilities: runnerExecutionCapabilities
+      }).catch((error) => {
+        console.warn("[worker] execution heartbeat failed", error);
+      });
+    }, runnerExecutionHeartbeatMs);
+
+    console.log("[worker] execution worker registered", {
+      machineId: runnerExecutionMachineId,
+      mode: "remote"
+    });
+  } catch (error) {
+    console.warn("[worker] execution worker registration skipped", error);
+  }
+};
+
+const markRunnerExecutionWorkerOffline = async (): Promise<void> => {
+  if (!runnerExecutionMachineId) return;
+  try {
+    await postExecutionControl(`/execution/workers/${runnerExecutionMachineId}/heartbeat`, {
+      status: "offline",
+      capabilities: runnerExecutionCapabilities
+    });
+  } catch (error) {
+    console.warn("[worker] execution worker offline heartbeat failed", error);
+  }
 };
 
 const normalizeBudget = (value: unknown): BudgetLimits => {
@@ -471,7 +569,11 @@ const localRepoWorker = new Worker<LocalRepoJobData>(
   { connection }
 );
 
-const jobStore = new DagWorkerJobStore();
+const jobStore = new DagWorkerJobStore({
+  baseUrl: internalRunnerBaseUrl,
+  ...(internalRunnerToken ? { runnerToken: internalRunnerToken } : {}),
+  ...(runnerExecutionToken ? { authorizationToken: runnerExecutionToken } : {})
+});
 const providerRateLimiter = new InMemoryProviderRateLimiter({
   resolveLimits: async (tenantId, provider) => jobStore.getProviderRateLimits(tenantId, provider)
 });
@@ -527,7 +629,7 @@ const startTenantRunner = async (tenantId: string): Promise<void> => {
 
 const ensureTenantRunners = async (): Promise<void> => {
   const tenants = await jobStore.listTenants();
-  const tenantIds = new Set<string>([DEFAULT_TENANT_ID, ...tenants.map((tenant) => tenant.id)]);
+  const tenantIds = new Set<string>([defaultTenantId, ...tenants.map((tenant) => tenant.id)]);
   for (const tenantId of tenantIds) {
     await startTenantRunner(tenantId);
   }
@@ -535,6 +637,7 @@ const ensureTenantRunners = async (): Promise<void> => {
 
 const startDagRunners = async (): Promise<void> => {
   await ensureTenantRunners();
+  await registerRunnerExecutionWorker();
   tenantRefreshTimer = setInterval(() => {
     void ensureTenantRunners().catch((error) => {
       console.error("[worker] tenant runner refresh failed", error);
@@ -543,6 +646,11 @@ const startDagRunners = async (): Promise<void> => {
 };
 
 const stopDagRunners = async (): Promise<void> => {
+  if (runnerExecutionHeartbeatTimer) {
+    clearInterval(runnerExecutionHeartbeatTimer);
+    runnerExecutionHeartbeatTimer = null;
+  }
+
   if (tenantRefreshTimer) {
     clearInterval(tenantRefreshTimer);
     tenantRefreshTimer = null;
@@ -552,6 +660,8 @@ const stopDagRunners = async (): Promise<void> => {
     await runner.stop();
     dagRunners.delete(tenantId);
   }
+
+  await markRunnerExecutionWorkerOffline();
 };
 
 const shutdown = async () => {

@@ -14,3 +14,4 @@ export * from "./schema-observability-service.js";
 export * from "./environments-service.js";
 export * from "./local-repos-service.js";
 export * from "./versioning-service.js";
+export * from "./workspaces-service.js";

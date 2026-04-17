@@ -1,16 +1,25 @@
 import type { FastifyInstance } from "fastify";
+import {
+  startTestExecutionWorkerHarness,
+  type TestExecutionWorkerHarness
+} from "./helpers/execution-worker-harness.js";
 
 describe("API contract", () => {
   let app: FastifyInstance;
+  let workerHarness: TestExecutionWorkerHarness;
 
   beforeAll(async () => {
     process.env.API_STORE_MODE = "in_memory";
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
+    workerHarness = await startTestExecutionWorkerHarness();
   });
 
   afterAll(async () => {
+    if (workerHarness) {
+      await workerHarness.stop();
+    }
     if (app) {
       await app.close();
     }
@@ -31,6 +40,7 @@ describe("API contract", () => {
   it("returns list contracts for core resources", async () => {
     const endpoints = [
       "/projects",
+      "/workspaces",
       "/repositories",
       "/roadmap",
       "/tasks",
@@ -135,6 +145,28 @@ describe("API contract", () => {
     expect(Array.isArray(runtimeBody.item.logs)).toBe(true);
     expect(runtimeBody.item.logs[0]).toHaveProperty("timestamp");
     expect(runtimeBody.item.logs[0]).toHaveProperty("event");
+  });
+
+  it("returns telemetry summary for jobs", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/jobs/telemetry?windowMinutes=60"
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      item?: {
+        totalJobs: number;
+        failedJobs: number;
+        errorRate: number;
+        avgDurationMs: number;
+        byProject: Array<{ projectId: string; totalJobs: number }>;
+      };
+    };
+    expect(typeof body.item?.totalJobs).toBe("number");
+    expect(typeof body.item?.failedJobs).toBe("number");
+    expect(typeof body.item?.errorRate).toBe("number");
+    expect(typeof body.item?.avgDurationMs).toBe("number");
+    expect(Array.isArray(body.item?.byProject)).toBe(true);
   });
 
   it("streams run events as SSE", async () => {

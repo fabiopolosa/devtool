@@ -34,3 +34,4 @@ export * from "./knowledge-config.schema.js";
 export * from "./context-note.schema.js";
 export * from "./coding-workflow.schema.js";
 export * from "./prompt.schema.js";
+export * from "./workspace.schema.js";

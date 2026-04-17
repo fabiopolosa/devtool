@@ -15,6 +15,7 @@ import type {
   MemoryChunk,
   MemoryEntry,
   Machine,
+  Workspace,
   McpConnection,
   McpDelegationRun,
   LocalRepository,
@@ -67,6 +68,7 @@ export interface DatabaseTables {
   schema_docs: SchemaDoc;
   environments: Environment;
   machines: Machine;
+  workspaces: Workspace;
   local_repositories: LocalRepository;
   version_snapshots: VersionSnapshot;
   projects: Project;

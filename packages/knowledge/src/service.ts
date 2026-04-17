@@ -212,19 +212,35 @@ export interface KnowledgeServiceOptions {
   embeddingProvider?: EmbeddingProvider;
   semanticStore?: KnowledgeSemanticStore;
   knowledgeRootDir?: string;
+  searchCacheTtlMs?: number;
   now?: () => Date;
   idGenerator?: () => string;
+}
+
+interface SearchCacheEntry {
+  expiresAtMs: number;
+  items: SearchKnowledgeResult[];
 }
 
 export class KnowledgeService {
   private readonly now: () => Date;
   private readonly idGenerator: () => string;
   private readonly knowledgeRootDir: string;
+  private readonly searchCacheTtlMs: number;
+  private readonly searchCache = new Map<string, SearchCacheEntry>();
 
   constructor(private readonly options: KnowledgeServiceOptions) {
     this.now = options.now ?? (() => new Date());
     this.idGenerator = options.idGenerator ?? (() => randomUUID());
     this.knowledgeRootDir = options.knowledgeRootDir ?? resolveDefaultKnowledgeRoot();
+    const envSearchCacheTtlMs = Number.parseInt(process.env.KNOWLEDGE_SEARCH_CACHE_TTL_MS ?? "", 10);
+    const resolvedCacheTtlMs =
+      options.searchCacheTtlMs ??
+      (Number.isFinite(envSearchCacheTtlMs) ? envSearchCacheTtlMs : 5_000);
+    this.searchCacheTtlMs = Math.max(
+      0,
+      Math.trunc(resolvedCacheTtlMs)
+    );
   }
 
   async listKnowledge(filters?: {
@@ -264,6 +280,7 @@ export class KnowledgeService {
       updatedBy: actor
     };
     const created = await this.options.store.createKnowledgeNode(node);
+    this.invalidateSearchCache();
     if (Array.isArray(created.embedding) && created.embedding.length > 0) {
       await this.syncSemanticEmbedding(created.id, created.embedding);
       return created;
@@ -303,6 +320,7 @@ export class KnowledgeService {
       updatedAt: this.now().toISOString(),
       updatedBy: actor
     });
+    this.invalidateSearchCache();
     if (Array.isArray(updated.embedding) && updated.embedding.length > 0) {
       await this.syncSemanticEmbedding(updated.id, updated.embedding);
       return updated;
@@ -318,6 +336,7 @@ export class KnowledgeService {
   }
 
   async deleteKnowledgeNode(nodeId: string): Promise<void> {
+    this.invalidateSearchCache();
     await this.options.store.deleteKnowledgeNode(nodeId);
   }
 
@@ -371,19 +390,31 @@ export class KnowledgeService {
     const limit = Math.max(1, input.limit ?? 8);
     const threshold = typeof input.threshold === "number" ? Math.min(Math.max(input.threshold, 0), 1) : 0;
     const query = input.query.trim();
+    const cacheKey = this.buildSearchCacheKey({
+      tenantId: input.tenantId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      query,
+      limit,
+      threshold
+    });
+    const cached = this.readSearchCache(cacheKey);
+    if (cached) {
+      return cached;
+    }
     const queryTokens = tokenize(query);
     const nodes = await this.candidatesForTenantProject(input.tenantId, input.projectId);
-    if (nodes.length === 0) return [];
+    if (nodes.length === 0) return this.writeSearchCache(cacheKey, []);
 
     const lexicalSorted = [...nodes]
       .map((item) => ({ item, lexical: lexicalScore(queryTokens, item) }))
       .sort((left, right) => right.lexical - left.lexical || right.item.updatedAt.localeCompare(left.item.updatedAt));
 
     if (!this.options.embeddingProvider || query.length === 0) {
-      return lexicalSorted
+      const lexicalOnly = lexicalSorted
         .slice(0, limit)
         .map(({ item, lexical }) => ({ item, score: lexical, source: "lexical" as const }))
         .filter((entry) => entry.score >= threshold);
+      return this.writeSearchCache(cacheKey, lexicalOnly);
     }
 
     let queryVector: number[];
@@ -393,9 +424,10 @@ export class KnowledgeService {
         role: "planner"
       });
     } catch {
-      return lexicalSorted
+      const lexicalFallback = lexicalSorted
         .slice(0, limit)
         .map(({ item, lexical }) => ({ item, score: lexical, source: "lexical" as const }));
+      return this.writeSearchCache(cacheKey, lexicalFallback);
     }
 
     if (this.options.semanticStore) {
@@ -407,7 +439,7 @@ export class KnowledgeService {
         threshold
       });
       if (semantic.available) {
-        return semantic.hits.slice(0, limit);
+        return this.writeSearchCache(cacheKey, semantic.hits.slice(0, limit));
       }
     }
 
@@ -425,10 +457,11 @@ export class KnowledgeService {
       });
     }
 
-    return scored
+    const ranked = scored
       .sort((left, right) => right.score - left.score || right.item.updatedAt.localeCompare(left.item.updatedAt))
       .filter((entry) => entry.score >= threshold)
       .slice(0, limit);
+    return this.writeSearchCache(cacheKey, ranked);
   }
 
   async buildGenerationKnowledgeContext(input: {
@@ -553,6 +586,48 @@ export class KnowledgeService {
     return entries
       .map((entry) => `[${entry.scope}] ${entry.title}: ${truncate(safeTrim(entry.excerpt), 180)}`)
       .join("\n");
+  }
+
+  private invalidateSearchCache(): void {
+    if (this.searchCache.size === 0) return;
+    this.searchCache.clear();
+  }
+
+  private buildSearchCacheKey(input: {
+    tenantId: string;
+    projectId?: string;
+    query: string;
+    limit: number;
+    threshold: number;
+  }): string {
+    return [
+      input.tenantId.trim(),
+      input.projectId?.trim() ?? "*",
+      input.query.toLowerCase(),
+      String(input.limit),
+      input.threshold.toFixed(4)
+    ].join("|");
+  }
+
+  private readSearchCache(cacheKey: string): SearchKnowledgeResult[] | null {
+    if (this.searchCacheTtlMs <= 0) return null;
+    const hit = this.searchCache.get(cacheKey);
+    if (!hit) return null;
+    if (this.now().getTime() >= hit.expiresAtMs) {
+      this.searchCache.delete(cacheKey);
+      return null;
+    }
+    return hit.items;
+  }
+
+  private writeSearchCache(cacheKey: string, items: SearchKnowledgeResult[]): SearchKnowledgeResult[] {
+    if (this.searchCacheTtlMs > 0) {
+      this.searchCache.set(cacheKey, {
+        expiresAtMs: this.now().getTime() + this.searchCacheTtlMs,
+        items
+      });
+    }
+    return items;
   }
 
   private async candidatesForTenantProject(tenantId: string, projectId?: string): Promise<KnowledgeNode[]> {

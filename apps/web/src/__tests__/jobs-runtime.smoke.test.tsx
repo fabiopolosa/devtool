@@ -14,7 +14,6 @@ describe("Jobs operations rail smoke", () => {
   });
 
   it("renders launcher + operations rail with live queue stats", async () => {
-    vi.stubEnv("VITE_ALLOW_MOCK_DATA", "true");
     vi.resetModules();
     const [{ RouterProvider }, { router }, { AppStoreProvider }] = await Promise.all([
       import("@tanstack/react-router"),
@@ -33,6 +32,26 @@ describe("Jobs operations rail smoke", () => {
             return rawUrl;
           }
         })();
+
+        if (path === "/projects") {
+          return jsonResponse({
+            items: [
+              {
+                id: "proj-control-plane",
+                tenantId: "tenant_default",
+                key: "control-plane",
+                name: "Control Plane",
+                description: "Test project",
+                status: "active",
+                policySetId: "policy-main",
+                createdAt: "2026-04-15T08:00:00.000Z",
+                createdBy: "system",
+                updatedAt: "2026-04-15T08:00:01.000Z",
+                updatedBy: "system"
+              }
+            ]
+          });
+        }
 
         if (/^\/projects\/[^/]+\/jobs/.test(path)) {
           return jsonResponse({

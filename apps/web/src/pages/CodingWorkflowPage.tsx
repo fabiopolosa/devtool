@@ -1,8 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CodingWorkflow, CodingWorkflowDecisionStatus, CodingWorkflowState } from '@cp/domain';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CodingWorkflow, CodingWorkflowDecisionStatus, CodingWorkflowState, Job } from '@cp/domain';
 import { Button, Input, Panel, Pill, SectionHeading } from '@/components/common';
 import { useAppStore } from '@/store/app-store';
-import { usePathParam } from './_utils';
+import {
+  asyncJobTone,
+  isAsyncJobTerminal,
+  localWorkerPickupSuggestion,
+  readJobErrorMessage,
+  shouldFailFastNoWorker,
+  toAsyncJobStatus,
+  type AsyncJobStatus,
+  type JobRuntimeLogLine,
+  usePathParam
+} from './_utils';
 
 const stateTone = (state: CodingWorkflowState | undefined) => {
   if (state === 'completed' || state === 'plan_approved') return 'good';
@@ -35,6 +45,25 @@ const workflowStepIndex = (state: CodingWorkflowState): number => {
   return 4;
 };
 
+type AsyncActionResponse = {
+  jobId?: string;
+  status?: AsyncJobStatus;
+  result?: unknown;
+  message?: string;
+};
+
+type JobDetailResponse = {
+  item?: Job | null;
+  message?: string;
+};
+
+type JobRuntimeResponse = {
+  item?: {
+    logs?: JobRuntimeLogLine[];
+  } | null;
+  message?: string;
+};
+
 export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
   const { authActions } = useAppStore();
   const routeProjectId = usePathParam(2);
@@ -47,6 +76,12 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [actionBusy, setActionBusy] = useState<string | undefined>();
+  const [activeJobId, setActiveJobId] = useState<string | undefined>();
+  const [activeJobStatus, setActiveJobStatus] = useState<AsyncJobStatus | undefined>();
+  const [activeJobLogs, setActiveJobLogs] = useState<JobRuntimeLogLine[]>([]);
+  const [activeJobError, setActiveJobError] = useState<string | undefined>();
+  const pollTimeoutRef = useRef<number | undefined>(undefined);
+  const pollInFlightRef = useRef(false);
 
   const selectedWorkflow = useMemo(
     () => items.find((item) => item.id === selectedWorkflowId) ?? items[0],
@@ -107,10 +142,81 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
     void loadWorkflows();
   }, [loadWorkflows]);
 
+  useEffect(
+    () => () => {
+      if (pollTimeoutRef.current !== undefined) {
+        window.clearTimeout(pollTimeoutRef.current);
+      }
+    },
+    []
+  );
+
+  const pollJobStatus = useCallback(
+    async (jobId: string): Promise<void> => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      try {
+        const [{ response: jobResponse, body: jobBody }, { response: runtimeResponse, body: runtimeBody }] =
+          await Promise.all([
+            authActions.apiFetchJson<JobDetailResponse>(`/jobs/${jobId}`),
+            authActions.apiFetchJson<JobRuntimeResponse>(`/jobs/${jobId}/runtime`)
+          ]);
+        if (!jobResponse.ok || !jobBody.item) {
+          throw new Error(jobBody.message ?? `Unable to inspect job ${jobId} (HTTP ${jobResponse.status})`);
+        }
+
+        const nextStatus = toAsyncJobStatus(jobBody.item);
+        const nextLogs = runtimeResponse.ok ? runtimeBody.item?.logs ?? [] : [];
+        const nextError = readJobErrorMessage(jobBody.item);
+
+        if (shouldFailFastNoWorker(jobBody.item, nextLogs)) {
+          setActiveJobStatus("error");
+          setActiveJobError(localWorkerPickupSuggestion);
+          setError(localWorkerPickupSuggestion);
+          setActionBusy(undefined);
+          return;
+        }
+
+        setActiveJobStatus(nextStatus);
+        setActiveJobLogs(nextLogs);
+        setActiveJobError(nextError);
+
+        if (nextStatus === "error") {
+          setError(nextError ?? `Job ${jobId} failed.`);
+          setActionBusy(undefined);
+          await loadWorkflows();
+          return;
+        }
+
+        if (isAsyncJobTerminal(nextStatus)) {
+          setActionBusy(undefined);
+          await loadWorkflows();
+          return;
+        }
+
+        const delayMs = nextStatus === "pending" ? 600 : 1000;
+        pollTimeoutRef.current = window.setTimeout(() => {
+          void pollJobStatus(jobId);
+        }, delayMs);
+      } catch (pollError) {
+        const message = pollError instanceof Error ? pollError.message : "Unable to refresh job status.";
+        setError(message);
+        setActiveJobError(message);
+        pollTimeoutRef.current = window.setTimeout(() => {
+          void pollJobStatus(jobId);
+        }, 1500);
+      } finally {
+        pollInFlightRef.current = false;
+      }
+    },
+    [authActions, loadWorkflows]
+  );
+
   const createRequest = useCallback(async () => {
     if (!scopedProjectId || !requestBody.trim()) return;
     setActionBusy('create');
     setError(undefined);
+    setActiveJobError(undefined);
     try {
       const response = await authActions.apiFetch(`/projects/${scopedProjectId}/coding-workflows`, {
         method: 'POST',
@@ -119,26 +225,44 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
           request: requestBody
         })
       });
-      const body = (await response.json()) as { item?: CodingWorkflow; message?: string };
-      if (!response.ok || !body.item) {
+      const body = (await response.json()) as AsyncActionResponse;
+      if (!response.ok || !body.jobId) {
         throw new Error(body.message ?? `Unable to create coding workflow (HTTP ${response.status})`);
       }
       setRequestBody('');
       setRequestTitle('');
-      setSelectedWorkflowId(body.item.id);
-      await loadWorkflows();
+      setActiveJobId(body.jobId);
+      setActiveJobStatus(body.status ?? 'pending');
+      setActiveJobLogs([]);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Unable to create coding workflow');
-    } finally {
       setActionBusy(undefined);
+    } finally {
+      if (pollTimeoutRef.current !== undefined) {
+        window.clearTimeout(pollTimeoutRef.current);
+      }
     }
-  }, [authActions, loadWorkflows, requestBody, requestTitle, scopedProjectId]);
+  }, [authActions, requestBody, requestTitle, scopedProjectId]);
+
+  useEffect(() => {
+    if (!activeJobId) return;
+    if (pollTimeoutRef.current !== undefined) {
+      window.clearTimeout(pollTimeoutRef.current);
+    }
+    void pollJobStatus(activeJobId);
+    return () => {
+      if (pollTimeoutRef.current !== undefined) {
+        window.clearTimeout(pollTimeoutRef.current);
+      }
+    };
+  }, [activeJobId, pollJobStatus]);
 
   const runAction = useCallback(
     async (workflowId: string, action: 'plan/approve' | 'plan/reject' | 'plan/request-revision' | 'patch/approve' | 'patch/reject' | 'patch/request-revision') => {
       if (!scopedProjectId) return;
       setActionBusy(action);
       setError(undefined);
+      setActiveJobError(undefined);
       try {
         const response = await authActions.apiFetch(`/projects/${scopedProjectId}/coding-workflows/${workflowId}/${action}`, {
           method: 'POST',
@@ -150,20 +274,25 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
               : {}
           )
         });
-        const body = (await response.json()) as { item?: CodingWorkflow; message?: string };
-        if (!response.ok || !body.item) {
+        const body = (await response.json()) as AsyncActionResponse;
+        if (!response.ok || !body.jobId) {
           throw new Error(body.message ?? `Unable to run workflow action (HTTP ${response.status})`);
         }
         setRevisionNote('');
-        setSelectedWorkflowId(body.item.id);
-        await loadWorkflows();
+        setSelectedWorkflowId(workflowId);
+        setActiveJobId(body.jobId);
+        setActiveJobStatus(body.status ?? 'pending');
+        setActiveJobLogs([]);
       } catch (actionError) {
         setError(actionError instanceof Error ? actionError.message : 'Unable to update workflow');
-      } finally {
         setActionBusy(undefined);
+      } finally {
+        if (pollTimeoutRef.current !== undefined) {
+          window.clearTimeout(pollTimeoutRef.current);
+        }
       }
     },
-    [authActions, loadWorkflows, revisionNote, scopedProjectId]
+    [authActions, revisionNote, scopedProjectId]
   );
 
   if (!scopedProjectId) {
@@ -270,6 +399,28 @@ export function CodingWorkflowPage({ projectId }: { projectId?: string }) {
           </div>
           <p className="mt-3 text-sm text-[color:var(--muted)]">{nextActionHint}</p>
         </div>
+
+        {activeJobId ? (
+          <div className="border border-white/10 bg-black/20 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="label">Execution job</div>
+              {activeJobStatus ? <Pill tone={asyncJobTone(activeJobStatus)}>{activeJobStatus}</Pill> : null}
+            </div>
+            <div className="mt-1 text-xs text-[color:var(--muted)]">jobId: {activeJobId}</div>
+            {activeJobError ? <p className="mt-2 text-sm text-[color:var(--bad)]">{activeJobError}</p> : null}
+            {activeJobLogs.length > 0 ? (
+              <div className="mt-3 space-y-1 border border-white/10 bg-white/5 p-2 text-xs text-[color:var(--muted)]">
+                {activeJobLogs.slice(-6).map((line, index) => (
+                  <div key={`${line.timestamp}:${line.event}:${index}`}>
+                    [{line.event}] {line.message}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-[color:var(--muted)]">Waiting for runner logs…</p>
+            )}
+          </div>
+        ) : null}
 
         {selectedWorkflow ? (
           <div className="space-y-4">

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { providerNames, type ProviderConfig, type ProviderModel } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
-import { getOwnerMode, onOwnerModeChange } from "@/owner-mode";
 import { useAppStore } from "@/store/app-store";
 
 type TenantItem = {
@@ -30,6 +29,12 @@ type ProviderRateLimitSnapshot = {
   tpmLimit: number | null;
 };
 
+type MutationResponse = {
+  success?: boolean;
+  item?: ProviderConfig;
+  message?: string;
+};
+
 const emptyDraft: RowDraft = {
   endpoint: "",
   authRef: "",
@@ -43,7 +48,6 @@ const providerNameOptions = [...providerNames];
 export function SettingsProvidersPage() {
   const { auth, authActions } = useAppStore();
   const mountedRef = useRef(true);
-  const [ownerMode, setOwnerMode] = useState<boolean>(() => getOwnerMode());
   const [items, setItems] = useState<ProviderConfig[]>([]);
   const [tenants, setTenants] = useState<TenantItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, RowDraft>>({});
@@ -65,14 +69,14 @@ export function SettingsProvidersPage() {
 
   const canManage =
     !auth.enabled ||
-    Boolean(auth.principal?.roles.includes("owner") || auth.principal?.roles.includes("admin"));
+    Boolean(auth.principal?.roles.includes("owner") || auth.principal?.roles.includes("admin")) ||
+    auth.principal?.tenantRole === "owner" ||
+    auth.principal?.tenantRole === "admin";
 
   useEffect(() => {
     mountedRef.current = true;
-    const off = onOwnerModeChange(setOwnerMode);
     return () => {
       mountedRef.current = false;
-      off();
     };
   }, []);
 
@@ -169,6 +173,12 @@ export function SettingsProvidersPage() {
 
   const load = useCallback(async () => {
     if (!mountedRef.current) return;
+    if (!canManage) {
+      setItems([]);
+      setTenants([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(undefined);
     try {
@@ -218,7 +228,7 @@ export function SettingsProvidersPage() {
       if (!mountedRef.current) return;
       setLoading(false);
     }
-  }, [authActions, hydrateDrafts, hydrateModelOptions, hydrateRateLimits]);
+  }, [authActions, canManage, hydrateDrafts, hydrateModelOptions, hydrateRateLimits]);
 
   useEffect(() => {
     void load();
@@ -252,9 +262,12 @@ export function SettingsProvidersPage() {
           enabled: true
         })
       });
-      const body = (await response.json()) as { message?: string };
+      const body = (await response.json()) as MutationResponse;
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to create provider config (HTTP ${response.status})`);
+      }
+      if (body.success === false) {
+        throw new Error(body.message ?? "Unable to create provider config.");
       }
       setCreateApiKey("");
       setCreateEndpoint("");
@@ -283,9 +296,12 @@ export function SettingsProvidersPage() {
           enabled: false
         })
       });
-      const body = (await response.json()) as { message?: string };
+      const body = (await response.json()) as MutationResponse;
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to create provider template (HTTP ${response.status})`);
+      }
+      if (body.success === false) {
+        throw new Error(body.message ?? "Unable to create provider template.");
       }
       setNotice(`Provider template created for ${providerId}. Add credentials and test connection.`);
       await load();
@@ -306,9 +322,12 @@ export function SettingsProvidersPage() {
         method: "PATCH",
         body: JSON.stringify(patch)
       });
-      const body = (await response.json()) as { message?: string };
+      const body = (await response.json()) as MutationResponse;
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to update provider config (HTTP ${response.status})`);
+      }
+      if (body.success === false) {
+        throw new Error(body.message ?? "Unable to update provider config.");
       }
       setNotice(`Provider config ${item.providerId ?? item.provider} updated.`);
       await load();
@@ -326,6 +345,7 @@ export function SettingsProvidersPage() {
     setNotice(undefined);
     try {
       const { response, body } = await authActions.apiFetchJson<{
+        success?: boolean;
         status?: "ok" | "error";
         latencyMs?: number;
         models?: string[];
@@ -338,8 +358,14 @@ export function SettingsProvidersPage() {
         availableModels?: string[];
         message?: string;
       }>(`/providers/config/${item.id}/test`, { method: "POST" });
-      if (!response.ok || !body.item) {
+      if (!response.ok) {
         throw new Error(body.message ?? `Unable to test provider config (HTTP ${response.status})`);
+      }
+      if (body.success === false) {
+        throw new Error(body.message ?? `Connection test failed for ${item.providerId ?? item.provider}.`);
+      }
+      if (!body.item) {
+        throw new Error("Provider test response missing item payload.");
       }
       setItems((current) =>
         current.map((entry) => (entry.id === item.id ? body.item ?? entry : entry))
@@ -396,7 +422,11 @@ export function SettingsProvidersPage() {
         payload.defaultProviderConfigId = null;
         payload.defaultModelId = null;
       }
-      const { response, body } = await authActions.apiFetchJson<{ item?: ProviderDefaults; message?: string }>(
+      const { response, body } = await authActions.apiFetchJson<{
+        item?: ProviderDefaults;
+        success?: boolean;
+        message?: string;
+      }>(
         "/providers/defaults",
         {
           method: "PATCH",
@@ -405,6 +435,9 @@ export function SettingsProvidersPage() {
       );
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to save defaults (HTTP ${response.status})`);
+      }
+      if (body.success === false) {
+        throw new Error(body.message ?? "Unable to save defaults.");
       }
       setNotice(defaultProviderConfigId ? "Default provider settings saved." : "Default provider settings cleared.");
       await load();
@@ -440,14 +473,9 @@ export function SettingsProvidersPage() {
     <div className="space-y-5">
       <Panel>
         <SectionHeading title="Owner Provider Settings" subtitle="Tenant-scoped provider activation and credentials" />
-        {!ownerMode ? (
-          <p className="text-sm text-amber-300">
-            Owner mode is currently disabled. Enable it in Settings to expose owner navigation shortcuts.
-          </p>
-        ) : null}
         {!canManage ? (
           <p className="text-sm text-rose-300">
-            Owner role required when authentication is enabled.
+            Admin or owner role required when authentication is enabled.
           </p>
         ) : null}
         {error ? <p className="text-sm text-rose-300">{error}</p> : null}

@@ -1,8 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  startTestExecutionWorkerHarness,
+  type TestExecutionWorkerHarness
+} from "./helpers/execution-worker-harness.js";
 
 describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", () => {
   let app: FastifyInstance;
+  let workerHarness: TestExecutionWorkerHarness;
 
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
@@ -14,10 +19,14 @@ describe("Brainstorming / Subprompts / MCP / Provider discovery API contract", (
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
+    workerHarness = await startTestExecutionWorkerHarness();
   });
 
   afterAll(async () => {
     vi.unstubAllGlobals();
+    if (workerHarness) {
+      await workerHarness.stop();
+    }
     if (app) {
       await app.close();
     }

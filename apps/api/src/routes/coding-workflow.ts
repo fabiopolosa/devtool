@@ -1,13 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import {
-  createCodingWorkflow,
   getCodingWorkflow,
   listCodingWorkflows
 } from "../services/coding-workflow-service.js";
-import {
-  dispatchAndAwaitRunnerJob,
-  getRunnerJobOutput
-} from "../services/job-dispatch-service.js";
+import { dispatchRunnerJob } from "../services/job-dispatch-service.js";
 import { requireTenantPermission } from "../tenant/rbac.js";
 
 interface CodingWorkflowCreateBody {
@@ -23,6 +19,8 @@ interface RevisionBody {
   mode?: "remote" | "local" | "hybrid";
 }
 
+type AsyncRouteStatus = "pending" | "running" | "waiting_user" | "done" | "error";
+
 const toActor = (request: { authPrincipal: { userId?: string } | undefined }, bodyActor?: string): string =>
   bodyActor ?? request.authPrincipal?.userId ?? "coding_workflow_service";
 
@@ -31,6 +29,28 @@ const toExecutionMode = (value: unknown): "remote" | "local" | "hybrid" | undefi
   const normalized = value.trim().toLowerCase();
   if (normalized === "remote" || normalized === "local" || normalized === "hybrid") return normalized;
   return undefined;
+};
+
+const toAsyncRouteStatus = (status: string): AsyncRouteStatus =>
+  status === "idle"
+    ? "pending"
+    : status === "running"
+      ? "running"
+      : status === "waiting_user"
+        ? "waiting_user"
+        : status === "done"
+          ? "done"
+          : "error";
+
+const resolveErrorStatusCode = (error: unknown, fallback: number): number => {
+  const status =
+    typeof error === "object" && error !== null && "statusCode" in error
+      ? Number((error as { statusCode?: number }).statusCode)
+      : NaN;
+  if (Number.isInteger(status) && status >= 400 && status <= 599) {
+    return status;
+  }
+  return fallback;
 };
 
 export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
@@ -73,7 +93,7 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
         const actor = toActor(request, request.body.actor);
         const mode = toExecutionMode(request.body.mode);
         const title = request.body.title?.trim() || request.body.request.slice(0, 64);
-        const job = await dispatchAndAwaitRunnerJob(
+        const job = await dispatchRunnerJob(
           {
             tenantId: request.tenantId ?? "tenant_default",
             projectId: request.params.projectId,
@@ -91,17 +111,11 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
             },
             resourceType: "project",
             resourceId: request.params.projectId
-          },
-          { timeoutMs: 120_000 }
+          }
         );
-
-        const output = getRunnerJobOutput<{ result?: Awaited<ReturnType<typeof createCodingWorkflow>> }>(job);
-        if (!output?.result) {
-          throw new Error("Runner completed coding workflow create job without result payload");
-        }
-        return { item: output.result };
+        return { jobId: job.id, status: toAsyncRouteStatus(job.status) };
       } catch (error) {
-        return reply.code(400).send({
+        return reply.code(resolveErrorStatusCode(error, 400)).send({
           error: "coding_workflow_runner_error",
           message: error instanceof Error ? error.message : "Unable to create coding workflow"
         });
@@ -136,7 +150,7 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const actor = toActor(request, request.body?.actor);
         const mode = toExecutionMode(request.body?.mode);
-        const job = await dispatchAndAwaitRunnerJob(
+        const job = await dispatchRunnerJob(
           {
             tenantId: request.tenantId ?? "tenant_default",
             projectId: request.params.projectId,
@@ -153,25 +167,11 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
             },
             resourceType: "project",
             resourceId: request.params.projectId
-          },
-          { timeoutMs: 120_000 }
+          }
         );
-
-        const output = getRunnerJobOutput<{
-          result?: {
-            item: Awaited<ReturnType<typeof getCodingWorkflow>>;
-            generatedTasks?: Array<Record<string, unknown>>;
-          };
-        }>(job);
-        if (!output?.result) {
-          throw new Error("Runner completed plan approval job without result payload");
-        }
-        return {
-          item: output.result.item,
-          ...(output.result.generatedTasks ? { generatedTasks: output.result.generatedTasks } : {})
-        };
+        return { jobId: job.id, status: toAsyncRouteStatus(job.status) };
       } catch (error) {
-        return reply.code(404).send({
+        return reply.code(resolveErrorStatusCode(error, 404)).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Coding workflow not found"
         });
@@ -187,7 +187,7 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const actor = toActor(request, request.body?.actor);
         const mode = toExecutionMode(request.body?.mode);
-        const job = await dispatchAndAwaitRunnerJob(
+        const job = await dispatchRunnerJob(
           {
             tenantId: request.tenantId ?? "tenant_default",
             projectId: request.params.projectId,
@@ -205,17 +205,11 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
             },
             resourceType: "project",
             resourceId: request.params.projectId
-          },
-          { timeoutMs: 120_000 }
+          }
         );
-
-        const output = getRunnerJobOutput<{ result?: unknown }>(job);
-        if (!output?.result) {
-          throw new Error("Runner completed plan reject job without result payload");
-        }
-        return { item: output.result };
+        return { jobId: job.id, status: toAsyncRouteStatus(job.status) };
       } catch (error) {
-        return reply.code(404).send({
+        return reply.code(resolveErrorStatusCode(error, 404)).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Coding workflow not found"
         });
@@ -231,7 +225,7 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const actor = toActor(request, request.body?.actor);
         const mode = toExecutionMode(request.body?.mode);
-        const job = await dispatchAndAwaitRunnerJob(
+        const job = await dispatchRunnerJob(
           {
             tenantId: request.tenantId ?? "tenant_default",
             projectId: request.params.projectId,
@@ -249,17 +243,11 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
             },
             resourceType: "project",
             resourceId: request.params.projectId
-          },
-          { timeoutMs: 120_000 }
+          }
         );
-
-        const output = getRunnerJobOutput<{ result?: unknown }>(job);
-        if (!output?.result) {
-          throw new Error("Runner completed plan revision job without result payload");
-        }
-        return { item: output.result };
+        return { jobId: job.id, status: toAsyncRouteStatus(job.status) };
       } catch (error) {
-        return reply.code(404).send({
+        return reply.code(resolveErrorStatusCode(error, 404)).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Coding workflow not found"
         });
@@ -275,7 +263,7 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const actor = toActor(request, request.body?.actor);
         const mode = toExecutionMode(request.body?.mode);
-        const job = await dispatchAndAwaitRunnerJob(
+        const job = await dispatchRunnerJob(
           {
             tenantId: request.tenantId ?? "tenant_default",
             projectId: request.params.projectId,
@@ -292,17 +280,11 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
             },
             resourceType: "project",
             resourceId: request.params.projectId
-          },
-          { timeoutMs: 120_000 }
+          }
         );
-
-        const output = getRunnerJobOutput<{ result?: unknown }>(job);
-        if (!output?.result) {
-          throw new Error("Runner completed patch approve job without result payload");
-        }
-        return { item: output.result };
+        return { jobId: job.id, status: toAsyncRouteStatus(job.status) };
       } catch (error) {
-        return reply.code(404).send({
+        return reply.code(resolveErrorStatusCode(error, 404)).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Coding workflow not found"
         });
@@ -318,7 +300,7 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const actor = toActor(request, request.body?.actor);
         const mode = toExecutionMode(request.body?.mode);
-        const job = await dispatchAndAwaitRunnerJob(
+        const job = await dispatchRunnerJob(
           {
             tenantId: request.tenantId ?? "tenant_default",
             projectId: request.params.projectId,
@@ -336,17 +318,11 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
             },
             resourceType: "project",
             resourceId: request.params.projectId
-          },
-          { timeoutMs: 120_000 }
+          }
         );
-
-        const output = getRunnerJobOutput<{ result?: unknown }>(job);
-        if (!output?.result) {
-          throw new Error("Runner completed patch reject job without result payload");
-        }
-        return { item: output.result };
+        return { jobId: job.id, status: toAsyncRouteStatus(job.status) };
       } catch (error) {
-        return reply.code(404).send({
+        return reply.code(resolveErrorStatusCode(error, 404)).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Coding workflow not found"
         });
@@ -362,7 +338,7 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const actor = toActor(request, request.body?.actor);
         const mode = toExecutionMode(request.body?.mode);
-        const job = await dispatchAndAwaitRunnerJob(
+        const job = await dispatchRunnerJob(
           {
             tenantId: request.tenantId ?? "tenant_default",
             projectId: request.params.projectId,
@@ -380,17 +356,11 @@ export const codingWorkflowRoutes: FastifyPluginAsync = async (fastify) => {
             },
             resourceType: "project",
             resourceId: request.params.projectId
-          },
-          { timeoutMs: 120_000 }
+          }
         );
-
-        const output = getRunnerJobOutput<{ result?: unknown }>(job);
-        if (!output?.result) {
-          throw new Error("Runner completed patch revision job without result payload");
-        }
-        return { item: output.result };
+        return { jobId: job.id, status: toAsyncRouteStatus(job.status) };
       } catch (error) {
-        return reply.code(404).send({
+        return reply.code(resolveErrorStatusCode(error, 404)).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Coding workflow not found"
         });

@@ -9,9 +9,21 @@ const parseFlag = (value: string | null): boolean => {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 };
 
+const defaultOwnerMode = (): boolean => {
+  const explicit = (import.meta.env.VITE_OWNER_MODE_DEFAULT as string | undefined) ?? "";
+  if (explicit.trim().length > 0) {
+    return parseFlag(explicit);
+  }
+  const mode = ((import.meta.env.MODE as string | undefined) ?? "").trim().toLowerCase();
+  if (mode === "test") return true;
+  return Boolean(import.meta.env.DEV);
+};
+
 export const getOwnerMode = (): OwnerMode => {
   if (typeof window === "undefined") return false;
-  return parseFlag(window.localStorage.getItem(ownerModeStorageKey));
+  const stored = window.localStorage.getItem(ownerModeStorageKey);
+  if (stored === null) return defaultOwnerMode();
+  return parseFlag(stored);
 };
 
 export const setOwnerMode = (enabled: OwnerMode): OwnerMode => {
@@ -41,4 +53,3 @@ export const onOwnerModeChange = (listener: (enabled: OwnerMode) => void): (() =
     window.removeEventListener(ownerModeEvent, onCustomEvent);
   };
 };
-

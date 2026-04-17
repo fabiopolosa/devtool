@@ -48,6 +48,14 @@ export function LoginPage() {
     };
   }, [auth.enabled, completeOidcCallback, navigate]);
 
+  useEffect(() => {
+    if (!auth.enabled) return;
+    if (auth.loading) return;
+    if (auth.required) return;
+    if (!auth.principal) return;
+    void navigate({ to: '/' });
+  }, [auth.enabled, auth.loading, auth.principal, auth.required, navigate]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!auth.enabled) return;

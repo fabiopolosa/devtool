@@ -7,6 +7,17 @@ import { resolveExecutionRoute } from "./execution-router-service.js";
 const nowIso = (): string => new Date().toISOString();
 const providerNameSet = new Set<ProviderName>(providerNames);
 
+const readEnvInteger = (name: string, fallback: number): number => {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const getJobRateLimitConfig = (): { windowMs: number; perTenant: number; perUser: number } => ({
+  windowMs: Math.max(1_000, readEnvInteger("JOB_RATE_LIMIT_WINDOW_MS", 60_000)),
+  perTenant: Math.max(0, readEnvInteger("JOB_RATE_LIMIT_PER_TENANT", 300)),
+  perUser: Math.max(0, readEnvInteger("JOB_RATE_LIMIT_PER_USER", 120))
+});
+
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -36,6 +47,35 @@ const readRequestedProvider = (payload: Record<string, unknown> | undefined): Pr
 
 const readRequestedModel = (payload: Record<string, unknown> | undefined): string | undefined =>
   asString(payload?.modelId) ?? asString(payload?.model);
+
+const readInternalAction = (payload: Record<string, unknown> | undefined): string | undefined =>
+  asString(payload?.internalAction);
+
+const shouldApplyExecutionRateLimit = (input: {
+  type: JobType;
+  payload: Record<string, unknown>;
+}): boolean => {
+  if (input.type === "generation") return true;
+  const internalAction = readInternalAction(input.payload);
+  if (!internalAction) return false;
+  return (
+    internalAction.startsWith("pipeline.") ||
+    internalAction === "skill.execute" ||
+    internalAction.startsWith("coding.")
+  );
+};
+
+const shouldApplyExecutionRateLimitToExistingJob = (job: Job): boolean => {
+  if (job.type === "generation") return true;
+  const payload = asRecord(job.payload) ?? {};
+  const internalAction = readInternalAction(payload);
+  if (!internalAction) return false;
+  return (
+    internalAction.startsWith("pipeline.") ||
+    internalAction === "skill.execute" ||
+    internalAction.startsWith("coding.")
+  );
+};
 
 const uniqueDependencies = (dependencies?: string[]): string[] =>
   [...new Set((dependencies ?? []).map((item) => item.trim()).filter((item) => item.length > 0))];
@@ -103,6 +143,43 @@ export interface JobRuntimeSnapshot {
   job: Job;
   dependencies: JobRuntimeDependency[];
   logs: JobRuntimeLogLine[];
+}
+
+export class JobRateLimitError extends Error {
+  readonly statusCode = 429;
+  readonly code = "rate_limit_exceeded";
+  readonly retryAfterSeconds: number;
+  readonly scope: "tenant" | "user";
+  readonly limit: number;
+  readonly windowMs: number;
+
+  constructor(input: {
+    scope: "tenant" | "user";
+    limit: number;
+    windowMs: number;
+    retryAfterSeconds: number;
+    message: string;
+  }) {
+    super(input.message);
+    this.name = "JobRateLimitError";
+    this.scope = input.scope;
+    this.limit = input.limit;
+    this.windowMs = input.windowMs;
+    this.retryAfterSeconds = input.retryAfterSeconds;
+  }
+}
+
+export interface JobsTelemetryRow {
+  totalJobs: number;
+  failedJobs: number;
+  errorRate: number;
+  avgDurationMs: number;
+}
+
+export interface JobsTelemetrySummary extends JobsTelemetryRow {
+  windowMinutes: number;
+  computedAt: string;
+  byProject: Array<{ projectId: string } & JobsTelemetryRow>;
 }
 
 const eventPriority: Record<JobRuntimeLogLine["event"], number> = {
@@ -354,6 +431,78 @@ const applyReadiness = async (): Promise<void> => {
   }
 };
 
+const durationMsForJob = (job: Job): number | null => {
+  if (!job.startedAt || !job.completedAt) return null;
+  const start = Date.parse(job.startedAt);
+  const end = Date.parse(job.completedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, Math.trunc(end - start));
+};
+
+const summarizeTelemetryRows = (jobs: Job[]): JobsTelemetryRow => {
+  const totalJobs = jobs.length;
+  const failedJobs = jobs.filter((job) => job.status === "error").length;
+  const durations = jobs
+    .map((job) => durationMsForJob(job))
+    .filter((value): value is number => typeof value === "number");
+  const avgDurationMs =
+    durations.length > 0
+      ? Math.trunc(durations.reduce((sum, current) => sum + current, 0) / durations.length)
+      : 0;
+  return {
+    totalJobs,
+    failedJobs,
+    errorRate: totalJobs > 0 ? Number((failedJobs / totalJobs).toFixed(4)) : 0,
+    avgDurationMs
+  };
+};
+
+const enforceExecutionRateLimit = async (input: {
+  type: JobType;
+  payload: Record<string, unknown>;
+  createdBy: string;
+}): Promise<void> => {
+  if (!shouldApplyExecutionRateLimit({ type: input.type, payload: input.payload })) return;
+  const config = getJobRateLimitConfig();
+  if (config.perTenant <= 0 && config.perUser <= 0) return;
+
+  const nowMs = Date.now();
+  const lowerBoundMs = nowMs - config.windowMs;
+  const recentJobs = (await apiStore.listJobs()).filter((job) => {
+    if (!shouldApplyExecutionRateLimitToExistingJob(job)) return false;
+    const createdAtMs = Date.parse(job.createdAt);
+    if (!Number.isFinite(createdAtMs)) return false;
+    return createdAtMs >= lowerBoundMs;
+  });
+
+  if (config.perTenant > 0 && recentJobs.length >= config.perTenant) {
+    throw new JobRateLimitError({
+      scope: "tenant",
+      limit: config.perTenant,
+      windowMs: config.windowMs,
+      retryAfterSeconds: Math.ceil(config.windowMs / 1_000),
+      message: `Tenant execution rate limit exceeded (${config.perTenant}/${Math.ceil(
+        config.windowMs / 1_000
+      )}s).`
+    });
+  }
+
+  if (config.perUser > 0) {
+    const recentByUser = recentJobs.filter((job) => job.createdBy === input.createdBy);
+    if (recentByUser.length >= config.perUser) {
+      throw new JobRateLimitError({
+        scope: "user",
+        limit: config.perUser,
+        windowMs: config.windowMs,
+        retryAfterSeconds: Math.ceil(config.windowMs / 1_000),
+        message: `User execution rate limit exceeded (${config.perUser}/${Math.ceil(
+          config.windowMs / 1_000
+        )}s).`
+      });
+    }
+  }
+};
+
 const statusLifecyclePatch = (
   status: JobStatus,
   current: Job
@@ -475,6 +624,12 @@ export const createJob = async (input: CreateJobInput): Promise<Job> => {
       };
     }
   }
+
+  await enforceExecutionRateLimit({
+    type: input.type,
+    payload: payloadRecord,
+    createdBy: input.createdBy
+  });
 
   const executionRoute = await resolveExecutionRoute({
     tenantId: input.tenantId,
@@ -612,4 +767,39 @@ export const getExecutableJobs = async (projectId?: string): Promise<Job[]> => {
     }
     return left.createdAt.localeCompare(right.createdAt);
   });
+};
+
+export const summarizeJobsTelemetry = async (input?: {
+  projectId?: string;
+  windowMinutes?: number;
+}): Promise<JobsTelemetrySummary> => {
+  const windowMinutes = Math.max(1, Math.min(24 * 60, Math.trunc(input?.windowMinutes ?? 60)));
+  const cutoffMs = Date.now() - windowMinutes * 60_000;
+  const jobs = (await listJobs(input?.projectId ? { projectId: input.projectId } : undefined)).filter((job) => {
+    const createdAtMs = Date.parse(job.createdAt);
+    if (!Number.isFinite(createdAtMs)) return false;
+    return createdAtMs >= cutoffMs;
+  });
+
+  const topLevel = summarizeTelemetryRows(jobs);
+  const byProjectBuckets = new Map<string, Job[]>();
+  for (const job of jobs) {
+    const projectId = job.projectId ?? "unscoped";
+    const current = byProjectBuckets.get(projectId) ?? [];
+    current.push(job);
+    byProjectBuckets.set(projectId, current);
+  }
+  const byProject = [...byProjectBuckets.entries()]
+    .map(([projectId, projectJobs]) => ({
+      projectId,
+      ...summarizeTelemetryRows(projectJobs)
+    }))
+    .sort((left, right) => right.totalJobs - left.totalJobs || left.projectId.localeCompare(right.projectId));
+
+  return {
+    ...topLevel,
+    windowMinutes,
+    computedAt: nowIso(),
+    byProject
+  };
 };

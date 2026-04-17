@@ -1,5 +1,10 @@
 import type { FastifyPluginAsync } from "fastify";
 import { apiStore } from "../services/api-store.js";
+import { listContextNotes } from "../services/context-service.js";
+import {
+  buildCompactKnowledgeContext,
+  formatCompactKnowledgeContext
+} from "../services/knowledge-service.js";
 import {
   dispatchAndAwaitRunnerJob,
   getRunnerJobOutput
@@ -35,9 +40,47 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
 
       try {
         const actor = request.authPrincipal?.userId ?? "chat_runtime";
+        const tenantId = request.tenantId ?? "tenant_default";
+        const incomingContext =
+          request.body.context && typeof request.body.context === "object" && !Array.isArray(request.body.context)
+            ? request.body.context
+            : undefined;
+        const projectId =
+          incomingContext && typeof incomingContext.projectId === "string" && incomingContext.projectId.trim().length > 0
+            ? incomingContext.projectId.trim()
+            : undefined;
+
+        let enrichedContext = incomingContext;
+        if (projectId) {
+          const [knowledgeEntries, contextNotes] = await Promise.all([
+            buildCompactKnowledgeContext({
+              tenantId,
+              projectId,
+              query: message,
+              limit: 6
+            }),
+            listContextNotes({
+              tenantId,
+              projectId,
+              limit: 6
+            })
+          ]);
+          enrichedContext = {
+            ...(incomingContext ?? {}),
+            projectId,
+            knowledgeEntryCount: knowledgeEntries.length,
+            knowledgeSummary: formatCompactKnowledgeContext(knowledgeEntries),
+            contextNoteCount: contextNotes.items.length,
+            contextNotes: contextNotes.items.slice(0, 4).map((note) => ({
+              path: note.path,
+              title: note.title
+            }))
+          };
+        }
+
         const runnerJob = await dispatchAndAwaitRunnerJob(
           {
-            tenantId: request.tenantId ?? "tenant_default",
+            tenantId,
             type: "system",
             title: `Process chat message${request.body.jobId ? ` for job ${request.body.jobId}` : ""}`,
             createdBy: actor,
@@ -45,7 +88,7 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
               internalAction: "chat.process_message",
               message,
               ...(request.body.jobId ? { jobId: request.body.jobId } : {}),
-              ...(request.body.context ? { context: request.body.context } : {})
+              ...(enrichedContext ? { context: enrichedContext } : {})
             },
             resourceType: "chat",
             ...(request.body.jobId ? { resourceId: request.body.jobId } : {})

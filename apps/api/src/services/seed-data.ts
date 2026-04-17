@@ -79,6 +79,7 @@ const project: Project = {
   updatedBy: "system"
 };
 
+
 const repository: Repository = {
   id: "repo_001",
   tenantId: defaultTenantId,
@@ -476,6 +477,51 @@ const geminiResearcherPrompt: PromptRegistryEntry = {
   version: "v1",
   content:
     "Run structured multi-step research, preserve source provenance, and return concise evidence-backed conclusions.",
+  status: "active",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const researchPipelinePrompt: PromptRegistryEntry = {
+  id: "prompt_workflow_research_pipeline_v1",
+  type: "workflow",
+  scope: "system",
+  target: "research_pipeline",
+  version: "v1",
+  content:
+    "Plan targeted queries, validate and score evidence, then synthesize concise confidence-rated findings with provenance.",
+  status: "active",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const contentPipelinePrompt: PromptRegistryEntry = {
+  id: "prompt_workflow_content_pipeline_v1",
+  type: "workflow",
+  scope: "system",
+  target: "content_pipeline",
+  version: "v1",
+  content:
+    "Generate long-form content through outline, section breakdown, drafting, and refinement. Keep structure explicit and evidence-aligned.",
+  status: "active",
+  createdAt: now,
+  createdBy: "system",
+  updatedAt: now,
+  updatedBy: "system"
+};
+
+const multimodalPipelinePrompt: PromptRegistryEntry = {
+  id: "prompt_workflow_multimodal_pipeline_v1",
+  type: "workflow",
+  scope: "system",
+  target: "multimodal_pipeline",
+  version: "v1",
+  content:
+    "Create coherent scene plans, shot definitions, and prompt-ready multimodal assets grounded in the content narrative.",
   status: "active",
   createdAt: now,
   createdBy: "system",
@@ -1183,6 +1229,44 @@ const researcherAgent: AgentConfig = {
   status: "active"
 };
 
+const contentDirectorAgent: AgentConfig = {
+  id: "agent_005",
+  name: "content-director",
+  role: "planner",
+  icon: "content",
+  description: "Default long-form content agent orchestrating outline, draft, and refinement stages.",
+  adapterType: "mcp_runtime",
+  desiredSkills: [],
+  reportTo: "planner",
+  runtimeConfig: {
+    promptSource: "registry",
+    workflow: "content_pipeline"
+  },
+  capabilities: ["chat_reasoning"],
+  createdAt: now,
+  updatedAt: now,
+  status: "active"
+};
+
+const multimodalDesignerAgent: AgentConfig = {
+  id: "agent_006",
+  name: "multimodal-designer",
+  role: "image_designer",
+  icon: "media",
+  description: "Default multimodal agent for scene design and asset prompt generation.",
+  adapterType: "mcp_runtime",
+  desiredSkills: [],
+  reportTo: "content-director",
+  runtimeConfig: {
+    promptSource: "registry",
+    workflow: "multimodal_pipeline"
+  },
+  capabilities: ["chat_reasoning", "image_generation"],
+  createdAt: now,
+  updatedAt: now,
+  status: "active"
+};
+
 const brainstormJob: Job = {
   id: "job_brainstorm_seed_001",
   tenantId: defaultTenantId,
@@ -1212,9 +1296,17 @@ export const seedData: ApiSeedData = {
   schemaDocs: [schemaDoc],
   environments: [environment],
   machines: [machine],
+  workspaces: [],
   localRepositories: [localRepository],
   versionSnapshots: [versionSnapshot],
-  agents: [plannerAgent, coderAgent, reviewerAgent, researcherAgent],
+  agents: [
+    plannerAgent,
+    coderAgent,
+    reviewerAgent,
+    researcherAgent,
+    contentDirectorAgent,
+    multimodalDesignerAgent
+  ],
   projects: [project],
   repositories: [repository],
   roadmap: [roadmapItem],
@@ -1240,7 +1332,15 @@ export const seedData: ApiSeedData = {
   providerBindings: [providerBinding],
   providerHealthchecks: [providerHealthcheck],
   providerDiscoveryLogs: [providerDiscoveryLog],
-  promptRegistry: [codexBuilderPrompt, plannerPrompt, claudeDebuggerPrompt, geminiResearcherPrompt],
+  promptRegistry: [
+    codexBuilderPrompt,
+    plannerPrompt,
+    claudeDebuggerPrompt,
+    geminiResearcherPrompt,
+    researchPipelinePrompt,
+    contentPipelinePrompt,
+    multimodalPipelinePrompt
+  ],
   experiments: [experiment],
   experimentRuns: [experimentRun],
   tenants: [defaultTenant],

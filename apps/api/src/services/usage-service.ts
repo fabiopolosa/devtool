@@ -4,7 +4,6 @@ import {
   DEFAULT_TENANT_ID,
   getCurrentTenantId,
   runWithTenantContext,
-  InMemoryDatabase,
   type RepositoryPort
 } from "@cp/db";
 import { apiStore } from "./api-store.js";
@@ -50,7 +49,6 @@ export interface UsageSummary {
 
 export class UsageService {
   private readonly repository: RepositoryPort<UsageEvent> | undefined;
-  private static fallbackDatabase: InMemoryDatabase | undefined;
 
   constructor(repository?: RepositoryPort<UsageEvent>) {
     this.repository = repository;
@@ -67,9 +65,10 @@ export class UsageService {
           repo<T extends string>(table: T): RepositoryPort<UsageEvent>;
         }
       ).repo("usage_events") as RepositoryPort<UsageEvent>;
-    } catch {
-      UsageService.fallbackDatabase ??= new InMemoryDatabase();
-      return UsageService.fallbackDatabase.repository("usage_events") as RepositoryPort<UsageEvent>;
+    } catch (error) {
+      throw new Error(
+        `Usage repository unavailable: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

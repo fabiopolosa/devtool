@@ -41,6 +41,8 @@ import {
   mcpRoutes,
   codingWorkflowRoutes,
   projectsRoutes,
+  workspacesRoutes,
+  pipelinesRoutes,
   repositoriesRoutes,
   retrievalRoutes,
   roadmapRoutes,
@@ -108,6 +110,8 @@ export async function buildApp() {
 
   await app.register(healthRoutes);
   await app.register(projectsRoutes);
+  await app.register(workspacesRoutes);
+  await app.register(pipelinesRoutes);
   await app.register(repositoriesRoutes);
   await app.register(roadmapRoutes);
   await app.register(tasksRoutes);

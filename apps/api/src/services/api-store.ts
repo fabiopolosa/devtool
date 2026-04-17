@@ -32,6 +32,7 @@ import type {
   MemoryChunk,
   MemoryEntry,
   Machine,
+  Workspace,
   McpConnection,
   McpDelegationRun,
   Policy,
@@ -170,6 +171,9 @@ export class ApiStore {
   async createUserTenant(userTenant: UserTenant): Promise<UserTenant> {
     return this.repo("user_tenants").create(userTenant);
   }
+  async updateUserTenant(userTenantId: string, patch: Partial<UserTenant>): Promise<UserTenant> {
+    return this.repo("user_tenants").update(userTenantId, patch);
+  }
   async listJobs(filters?: {
     type?: Job["type"];
     status?: Job["status"];
@@ -233,6 +237,17 @@ export class ApiStore {
     return this.repo("machines").update(machineId, patch);
   }
   async deleteMachine(machineId: string): Promise<void> { await this.repo("machines").delete(machineId); }
+  async listWorkspaces(filters?: { projectId?: string; runtimeStatus?: Workspace["runtimeStatus"] }): Promise<Workspace[]> {
+    return this.repo("workspaces").list({
+      ...(filters?.projectId ? { projectId: filters.projectId } : {}),
+      ...(filters?.runtimeStatus ? { runtimeStatus: filters.runtimeStatus } : {})
+    });
+  }
+  async getWorkspace(workspaceId: string): Promise<Workspace | null> { return this.repo("workspaces").getById(workspaceId); }
+  async createWorkspace(workspace: Workspace): Promise<Workspace> { return this.repo("workspaces").create(workspace); }
+  async updateWorkspace(workspaceId: string, patch: Partial<Workspace>): Promise<Workspace> {
+    return this.repo("workspaces").update(workspaceId, patch);
+  }
   async listLocalRepositories(): Promise<LocalRepository[]> { return this.repo("local_repositories").list(); }
   async getLocalRepository(localRepositoryId: string): Promise<LocalRepository | null> {
     return this.repo("local_repositories").getById(localRepositoryId);
@@ -550,6 +565,7 @@ export class ApiStore {
   async getSkill(skillId: string): Promise<Skill | null> { return this.repo("skills").getById(skillId); }
   async createSkill(skill: Skill): Promise<Skill> { return this.repo("skills").create(skill); }
   async updateSkill(skillId: string, patch: Partial<Skill>): Promise<Skill> { return this.repo("skills").update(skillId, patch); }
+  async deleteSkill(skillId: string): Promise<void> { await this.repo("skills").delete(skillId); }
   async findSkillByNameAndRepository(name: string, repositoryUrl: string): Promise<Skill | null> {
     const normalizedName = name.trim().toLowerCase();
     const normalizedRepositoryUrl = repositoryUrl.trim();
@@ -683,6 +699,7 @@ export class ApiStore {
     await this.seedTable("schema_docs", this.seed.schemaDocs);
     await this.seedTable("environments", this.seed.environments);
     await this.seedTable("machines", this.seed.machines);
+    await this.seedTable("workspaces", this.seed.workspaces);
     await this.seedTable("local_repositories", this.seed.localRepositories);
     await this.seedTable("version_snapshots", this.seed.versionSnapshots);
     await this.seedTable("agents", this.seed.agents);

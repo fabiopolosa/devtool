@@ -4,7 +4,6 @@ import {
   DEFAULT_TENANT_ID,
   getCurrentTenantId,
   runWithTenantContext,
-  InMemoryDatabase,
   type RepositoryPort
 } from "@cp/db";
 import { apiStore } from "./api-store.js";
@@ -48,7 +47,6 @@ export interface AuditLogInput {
 
 export class AuditLogService {
   private readonly repository: RepositoryPort<AuditEvent> | undefined;
-  private static fallbackDatabase: InMemoryDatabase | undefined;
 
   constructor(repository?: RepositoryPort<AuditEvent>) {
     this.repository = repository;
@@ -65,9 +63,10 @@ export class AuditLogService {
           repo<T extends string>(table: T): RepositoryPort<AuditEvent>;
         }
       ).repo("audit_events") as RepositoryPort<AuditEvent>;
-    } catch {
-      AuditLogService.fallbackDatabase ??= new InMemoryDatabase();
-      return AuditLogService.fallbackDatabase.repository("audit_events") as RepositoryPort<AuditEvent>;
+    } catch (error) {
+      throw new Error(
+        `Audit repository unavailable: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

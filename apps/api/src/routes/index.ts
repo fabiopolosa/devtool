@@ -1,5 +1,7 @@
 export * from "./health.js";
 export * from "./projects.js";
+export * from "./workspaces.js";
+export * from "./pipelines.js";
 export * from "./repositories.js";
 export * from "./roadmap.js";
 export * from "./tasks.js";

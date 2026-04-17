@@ -18,9 +18,21 @@ const parseRuntimeConfig = (raw: string): Record<string, unknown> => {
   return parsed as Record<string, unknown>;
 };
 
+type SkillScope = "system" | "tenant" | "user";
+
+const resolveSkillScope = (skill: Skill, userId?: string): SkillScope => {
+  if (skill.categories.includes("scope:system")) return "system";
+  if (skill.categories.includes("scope:user")) return "user";
+  if (skill.categories.includes("scope:tenant")) return "tenant";
+  if (skill.createdBy === "system" || skill.createdBy === "skills_service") return "system";
+  if (userId && skill.createdBy === userId) return "user";
+  if (skill.createdBy.startsWith("user:")) return "user";
+  return "tenant";
+};
+
 export function AgentCreatePage() {
   const navigate = useNavigate();
-  const { authActions } = useAppStore();
+  const { auth, authActions } = useAppStore();
   const mountedRef = useRef(false);
   const [availableManagers, setAvailableManagers] = useState<AgentConfig[]>([]);
   const [installedSkills, setInstalledSkills] = useState<Skill[]>([]);
@@ -31,6 +43,7 @@ export function AgentCreatePage() {
   const [adapterType, setAdapterType] = useState<"legacy_cli" | "custom_cli" | "mcp_runtime">("mcp_runtime");
   const [reportTo, setReportTo] = useState("");
   const [desiredSkills, setDesiredSkills] = useState<string[]>([]);
+  const [skillScopeFilter, setSkillScopeFilter] = useState<"all" | SkillScope>("all");
   const [selectedCapabilities, setSelectedCapabilities] = useState<CapabilityClass[]>(["coding"]);
   const [runtimeConfigRaw, setRuntimeConfigRaw] = useState(JSON.stringify(defaultRuntimeConfig, null, 2));
   const [error, setError] = useState<string | undefined>();
@@ -91,6 +104,15 @@ export function AgentCreatePage() {
   const managerOptions = useMemo(
     () => availableManagers.filter((agent) => agent.name !== name),
     [availableManagers, name]
+  );
+
+  const visibleSkills = useMemo(
+    () =>
+      installedSkills.filter((skill) => {
+        if (skillScopeFilter === "all") return true;
+        return resolveSkillScope(skill, auth.principal?.userId) === skillScopeFilter;
+      }),
+    [auth.principal?.userId, installedSkills, skillScopeFilter]
   );
 
   const submit = async (): Promise<void> => {
@@ -185,38 +207,54 @@ export function AgentCreatePage() {
       <Panel>
         <SectionHeading title="Manager + Skills" subtitle="Reporting line and desired skills" />
         <div className="grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)]">
-          <select
-            value={reportTo}
-            onChange={(event) => setReportTo(event.target.value)}
-            className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
-          >
-            <option value="">No manager</option>
-            {managerOptions.map((agent) => (
-              <option key={agent.id} value={agent.name}>
-                {agent.name}
-              </option>
-            ))}
-          </select>
+          <div className="space-y-2">
+            <select
+              value={reportTo}
+              onChange={(event) => setReportTo(event.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
+            >
+              <option value="">No manager</option>
+              {managerOptions.map((agent) => (
+                <option key={agent.id} value={agent.name}>
+                  {agent.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={skillScopeFilter}
+              onChange={(event) => setSkillScopeFilter(event.target.value as "all" | SkillScope)}
+              className="w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
+            >
+              <option value="all">All scopes</option>
+              <option value="system">System skills</option>
+              <option value="tenant">Tenant skills</option>
+              <option value="user">User skills</option>
+            </select>
+          </div>
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {installedSkills.map((skill) => {
+            {visibleSkills.map((skill) => {
               const selected = desiredSkills.includes(skill.name);
               return (
-                <button
-                  type="button"
+                <div
                   key={skill.id}
-                  onClick={() => toggleDesiredSkill(skill.name)}
-                  className={`rounded-xl border p-3 text-left text-sm transition ${
+                  className={`rounded-xl border p-3 text-left text-sm ${
                     selected
                       ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-100"
-                      : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
+                      : "border-white/10 bg-white/5 text-slate-200"
                   }`}
                 >
                   <div className="font-medium">{skill.name}</div>
                   <div className="mt-1 text-xs text-slate-400">{skill.repositoryUrl}</div>
-                </button>
+                  <div className="mt-1 text-xs text-cyan-100/80">scope: {resolveSkillScope(skill, auth.principal?.userId)}</div>
+                  <div className="mt-3">
+                    <Button variant={selected ? "secondary" : "primary"} onClick={() => toggleDesiredSkill(skill.name)}>
+                      {selected ? "Unassign" : "Assign"}
+                    </Button>
+                  </div>
+                </div>
               );
             })}
-            {installedSkills.length === 0 ? (
+            {visibleSkills.length === 0 ? (
               <p className="text-sm text-slate-400">No installed skills found. Install from the Skills page first.</p>
             ) : null}
           </div>

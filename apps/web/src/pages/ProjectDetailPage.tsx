@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Job } from '@cp/domain';
-import { Panel, SectionHeading } from '@/components/common';
+import { Button, Panel, Pill, SectionHeading } from '@/components/common';
 import { ApprovalBar, PlannerOutputCard, TaskTimeline } from '@/components/panels';
 import { usePathParam } from './_utils';
 import { useAppStore } from '@/store/app-store';
@@ -15,6 +15,62 @@ const resolveJobStage = (job: Job): 'waiting_user' | 'running' | 'done' | 'error
   return 'waiting_dependencies';
 };
 
+type WorkspaceItem = {
+  id: string;
+  projectId: string;
+  mode: 'local' | 'remote';
+  localPath?: string;
+  runtimeStatus: string;
+  runtimeDetails?: Record<string, unknown>;
+  lastStartedAt?: string;
+  lastStoppedAt?: string;
+  lastDeployedAt?: string;
+};
+
+type WorkspacePathValidation = {
+  checkedAt?: string;
+  status?: 'valid' | 'invalid' | 'not_required';
+  valid?: boolean;
+  path?: string;
+  reason?: string;
+  message?: string;
+  readable?: boolean;
+  writable?: boolean;
+  executable?: boolean;
+};
+
+type WorkspaceAction = 'start' | 'stop' | 'deploy' | 'restart';
+
+const resolveWorkspaceExecutionMode = (workspaceMode: WorkspaceItem['mode']): 'local' | 'remote' =>
+  workspaceMode === 'local' ? 'local' : 'remote';
+
+const resolveWorkspaceStatusTone = (
+  status: WorkspaceItem['runtimeStatus'] | 'not_configured'
+): 'default' | 'good' | 'warn' | 'bad' | 'accent' => {
+  if (status === 'running') return 'good';
+  if (status === 'starting' || status === 'deploying') return 'accent';
+  if (status === 'error') return 'bad';
+  if (status === 'unknown') return 'warn';
+  return 'default';
+};
+
+const extractWorkspacePathValidation = (workspace: WorkspaceItem | undefined): WorkspacePathValidation | undefined => {
+  const runtimeDetails = workspace?.runtimeDetails;
+  if (!runtimeDetails || typeof runtimeDetails !== 'object') return undefined;
+  const candidate = runtimeDetails.pathValidation;
+  if (!candidate || typeof candidate !== 'object') return undefined;
+  return candidate as WorkspacePathValidation;
+};
+
+const extractJobErrorMessage = (item: { payload?: Record<string, unknown> } | undefined, fallback: string): string => {
+  const payload = item?.payload;
+  const lastError =
+    payload && typeof payload.lastError === 'object' && payload.lastError !== null
+      ? (payload.lastError as Record<string, unknown>)
+      : undefined;
+  return typeof lastError?.message === 'string' ? lastError.message : fallback;
+};
+
 export function ProjectDetailPage() {
   const { state, dispatch, auth, authActions } = useAppStore();
   const projectId = usePathParam(1);
@@ -23,6 +79,22 @@ export function ProjectDetailPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | undefined>();
+  const [workspace, setWorkspace] = useState<WorkspaceItem | undefined>();
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceSaving, setWorkspaceSaving] = useState(false);
+  const [workspaceRunningAction, setWorkspaceRunningAction] = useState<WorkspaceAction | undefined>();
+  const [workspaceError, setWorkspaceError] = useState<string | undefined>();
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | undefined>();
+  const [workspaceModeDraft, setWorkspaceModeDraft] = useState<'local' | 'remote'>('local');
+  const [workspacePathDraft, setWorkspacePathDraft] = useState('');
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const orderedJobs = useMemo(
     () =>
       [...jobs].sort((left, right) => {
@@ -39,9 +111,11 @@ export function ProjectDetailPage() {
 
   const loadJobs = useCallback(async (): Promise<void> => {
     if (!scopedProjectId) {
+      if (!isMountedRef.current) return;
       setJobs([]);
       return;
     }
+    if (!isMountedRef.current) return;
     setJobsLoading(true);
     setJobsError(undefined);
     try {
@@ -51,19 +125,186 @@ export function ProjectDetailPage() {
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to load project jobs (HTTP ${response.status})`);
       }
+      if (!isMountedRef.current) return;
       setJobs(body.items ?? []);
     } catch (error) {
+      if (!isMountedRef.current) return;
       setJobsError(error instanceof Error ? error.message : 'Unable to load project jobs');
     } finally {
+      if (!isMountedRef.current) return;
       setJobsLoading(false);
     }
   }, [authActions, scopedProjectId]);
+
+  const loadWorkspace = useCallback(async (): Promise<void> => {
+    if (!scopedProjectId) {
+      if (!isMountedRef.current) return;
+      setWorkspace(undefined);
+      return;
+    }
+    if (!isMountedRef.current) return;
+    setWorkspaceLoading(true);
+    setWorkspaceError(undefined);
+    try {
+      const { response, body } = await authActions.apiFetchJson<{ items?: WorkspaceItem[]; message?: string }>(
+        `/workspaces?projectId=${encodeURIComponent(scopedProjectId)}`
+      );
+      if (!response.ok) {
+        throw new Error(body.message ?? `Unable to load workspace (HTTP ${response.status})`);
+      }
+      const item = body.items?.[0];
+      if (!isMountedRef.current) return;
+      setWorkspace(item);
+      setWorkspaceModeDraft(item?.mode ?? 'local');
+      setWorkspacePathDraft(item?.localPath ?? '');
+    } catch (error) {
+      if (!isMountedRef.current) return;
+      setWorkspaceError(error instanceof Error ? error.message : 'Unable to load workspace');
+    } finally {
+      if (!isMountedRef.current) return;
+      setWorkspaceLoading(false);
+    }
+  }, [authActions, scopedProjectId]);
+
+  const waitForJobCompletion = useCallback(
+    async (jobId: string, label: string): Promise<void> => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 45_000) {
+        const { response, body } = await authActions.apiFetchJson<{
+          item?: {
+            id: string;
+            status: string;
+            payload?: Record<string, unknown>;
+          };
+          message?: string;
+        }>(`/jobs/${jobId}`);
+        if (!response.ok) {
+          throw new Error(body.message ?? `Unable to load job ${jobId} (HTTP ${response.status})`);
+        }
+        const item = body.item;
+        if (!item) throw new Error(`Job not found: ${jobId}`);
+        if (item.status === 'done' || item.status === 'waiting_user') return;
+        if (item.status === 'error') {
+          throw new Error(extractJobErrorMessage(item, `${label} failed (${jobId})`));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      }
+      throw new Error(`Timed out while waiting for ${label} (${jobId})`);
+    },
+    [authActions]
+  );
+
+  const upsertWorkspaceConfig = useCallback(async (): Promise<WorkspaceItem> => {
+    if (!scopedProjectId) {
+      throw new Error('No project selected');
+    }
+
+    const localPath = workspacePathDraft.trim();
+    const payload = {
+      mode: workspaceModeDraft,
+      ...(localPath.length > 0 ? { localPath } : {})
+    };
+
+    if (!workspace) {
+      const { response, body } = await authActions.apiFetchJson<{ item?: WorkspaceItem; message?: string }>(
+        '/workspaces',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            projectId: scopedProjectId,
+            ...payload
+          })
+        }
+      );
+      if (!response.ok || !body.item) {
+        throw new Error(body.message ?? `Unable to create workspace (HTTP ${response.status})`);
+      }
+      return body.item;
+    }
+
+    const { response, body } = await authActions.apiFetchJson<{ item?: WorkspaceItem; message?: string }>(
+      `/workspaces/${workspace.id}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      }
+    );
+    if (!response.ok || !body.item) {
+      throw new Error(body.message ?? `Unable to update workspace (HTTP ${response.status})`);
+    }
+    return body.item;
+  }, [authActions, scopedProjectId, workspace, workspaceModeDraft, workspacePathDraft]);
+
+  const saveWorkspaceConfig = useCallback(async (): Promise<void> => {
+    if (!scopedProjectId) return;
+    setWorkspaceSaving(true);
+    setWorkspaceError(undefined);
+    setWorkspaceNotice(undefined);
+    try {
+      const item = await upsertWorkspaceConfig();
+      if (!isMountedRef.current) return;
+      setWorkspace(item);
+      setWorkspaceModeDraft(item.mode);
+      setWorkspacePathDraft(item.localPath ?? '');
+      setWorkspaceNotice('Workspace configuration saved.');
+    } catch (error) {
+      if (!isMountedRef.current) return;
+      setWorkspaceError(error instanceof Error ? error.message : 'Unable to save workspace');
+    } finally {
+      if (!isMountedRef.current) return;
+      setWorkspaceSaving(false);
+    }
+  }, [scopedProjectId, upsertWorkspaceConfig]);
+
+  const runWorkspaceRuntimeAction = useCallback(
+    async (action: WorkspaceAction): Promise<void> => {
+      if (!scopedProjectId) return;
+      setWorkspaceRunningAction(action);
+      setWorkspaceError(undefined);
+      setWorkspaceNotice(undefined);
+      try {
+        const currentWorkspace = workspace ?? (await upsertWorkspaceConfig());
+        const { response, body } = await authActions.apiFetchJson<{
+          item?: WorkspaceItem;
+          jobId?: string;
+          status?: string;
+          message?: string;
+        }>(`/workspaces/${currentWorkspace.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            action,
+            executionMode: resolveWorkspaceExecutionMode(currentWorkspace.mode)
+          })
+        });
+        if (!response.ok) {
+          throw new Error(body.message ?? `Unable to ${action} workspace (HTTP ${response.status})`);
+        }
+        if (body.jobId) {
+          await waitForJobCompletion(body.jobId, `workspace ${action}`);
+          if (!isMountedRef.current) return;
+          setWorkspaceNotice(`Workspace ${action} completed (job ${body.jobId}).`);
+        } else {
+          if (!isMountedRef.current) return;
+          setWorkspaceNotice(`Workspace ${action} dispatched.`);
+        }
+        await Promise.all([loadWorkspace(), loadJobs()]);
+      } catch (error) {
+        if (!isMountedRef.current) return;
+        setWorkspaceError(error instanceof Error ? error.message : `Unable to ${action} workspace`);
+      } finally {
+        if (!isMountedRef.current) return;
+        setWorkspaceRunningAction(undefined);
+      }
+    },
+    [authActions, loadJobs, loadWorkspace, scopedProjectId, upsertWorkspaceConfig, waitForJobCompletion, workspace]
+  );
 
   useEffect(() => {
     if (auth.enabled && auth.required) return;
     if (!scopedProjectId) return;
     void loadJobs();
-  }, [auth.enabled, auth.required, loadJobs, scopedProjectId]);
+    void loadWorkspace();
+  }, [auth.enabled, auth.required, loadJobs, loadWorkspace, scopedProjectId]);
 
   if (!project) return <Panel>No project found.</Panel>;
 
@@ -72,6 +313,24 @@ export function ProjectDetailPage() {
   const approvals = state.approvals.filter((item) => roadmap.some((r) => r.id === item.subjectId));
   const firstTask = tasks[0];
   const firstTaskRun = firstTask ? state.taskRuns.find((run) => run.taskId === firstTask.id) : undefined;
+  const workspaceStatus = (workspace?.runtimeStatus as WorkspaceItem['runtimeStatus'] | undefined) ?? 'not_configured';
+  const pathValidation = extractWorkspacePathValidation(workspace);
+  const pathValidationTone: 'default' | 'good' | 'warn' | 'bad' | 'accent' =
+    pathValidation?.status === 'valid'
+      ? 'good'
+      : pathValidation?.status === 'not_required'
+        ? 'default'
+        : pathValidation?.status === 'invalid'
+          ? 'bad'
+          : 'warn';
+  const pathValidationLabel =
+    pathValidation?.status === 'valid'
+      ? 'valid'
+      : pathValidation?.status === 'not_required'
+        ? 'not required'
+        : pathValidation?.status === 'invalid'
+          ? 'invalid'
+          : 'unknown';
 
   return (
     <div className="space-y-4">
@@ -87,6 +346,77 @@ export function ProjectDetailPage() {
           <Link to="/project/$projectId/repositories" params={{ projectId: project.id }} className="btn btn-ghost">Repositories</Link>
           <Link to="/project/$projectId/roadmap" params={{ projectId: project.id }} className="btn btn-ghost">Roadmap</Link>
         </div>
+      </Panel>
+
+      <Panel>
+        <SectionHeading
+          title="Workspace Runtime"
+          subtitle="Project execution workspace (not a folder abstraction)"
+          action={
+            <Button variant="secondary" onClick={() => void loadWorkspace()}>
+              {workspaceLoading ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          }
+        />
+        {workspaceError ? <p className="text-sm text-[color:var(--bad)]">{workspaceError}</p> : null}
+        {workspaceNotice ? <p className="text-sm text-emerald-300">{workspaceNotice}</p> : null}
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <div>
+            <div className="label">Mode</div>
+            <select
+              className="cp-input mt-1"
+              value={workspaceModeDraft}
+              onChange={(event) => setWorkspaceModeDraft(event.target.value as 'local' | 'remote')}
+              disabled={workspaceSaving || Boolean(workspaceRunningAction)}
+            >
+              <option value="local">local</option>
+              <option value="remote">remote</option>
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <div className="label">Local path (optional)</div>
+            <input
+              className="cp-input mt-1"
+              type="text"
+              value={workspacePathDraft}
+              onChange={(event) => setWorkspacePathDraft(event.target.value)}
+              placeholder="/Users/andromeda/devtool"
+              disabled={workspaceSaving || Boolean(workspaceRunningAction)}
+            />
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button variant="secondary" onClick={() => void saveWorkspaceConfig()} disabled={Boolean(workspaceRunningAction)}>
+            {workspaceSaving ? 'Saving...' : workspace ? 'Save workspace' : 'Create workspace'}
+          </Button>
+          <Button variant="primary" onClick={() => void runWorkspaceRuntimeAction('start')} disabled={workspaceSaving}>
+            {workspaceRunningAction === 'start' ? 'Starting...' : 'Start'}
+          </Button>
+          <Button variant="secondary" onClick={() => void runWorkspaceRuntimeAction('stop')} disabled={workspaceSaving}>
+            {workspaceRunningAction === 'stop' ? 'Stopping...' : 'Stop'}
+          </Button>
+          <Button variant="secondary" onClick={() => void runWorkspaceRuntimeAction('deploy')} disabled={workspaceSaving}>
+            {workspaceRunningAction === 'deploy' ? 'Deploying...' : 'Deploy'}
+          </Button>
+          <Button variant="secondary" onClick={() => void runWorkspaceRuntimeAction('restart')} disabled={workspaceSaving}>
+            {workspaceRunningAction === 'restart' ? 'Restarting...' : 'Restart'}
+          </Button>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--muted)]">
+          <Pill tone={resolveWorkspaceStatusTone(workspaceStatus)}>status {workspace?.runtimeStatus ?? 'not configured'}</Pill>
+          <Pill tone="default">mode {workspace?.mode ?? workspaceModeDraft}</Pill>
+          <Pill tone="default">path {(workspace?.localPath ?? workspacePathDraft) || 'n/a'}</Pill>
+          <Pill tone={pathValidationTone}>path validation {pathValidationLabel}</Pill>
+          {workspace?.lastStartedAt ? <Pill tone="good">started {workspace.lastStartedAt}</Pill> : null}
+          {workspace?.lastStoppedAt ? <Pill tone="warn">stopped {workspace.lastStoppedAt}</Pill> : null}
+          {workspace?.lastDeployedAt ? <Pill tone="accent">deployed {workspace.lastDeployedAt}</Pill> : null}
+        </div>
+        {pathValidation?.message ? (
+          <p className={`mt-2 text-xs ${pathValidation.status === 'invalid' ? 'text-[color:var(--bad)]' : 'text-[color:var(--muted)]'}`}>
+            {pathValidation.message}
+            {pathValidation.path ? ` (${pathValidation.path})` : ''}
+          </p>
+        ) : null}
       </Panel>
 
       <div className="grid gap-4 xl:grid-cols-2">

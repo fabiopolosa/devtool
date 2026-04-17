@@ -49,12 +49,14 @@ export function Button({
   children,
   onClick,
   variant = 'ghost',
-  type = 'button'
+  type = 'button',
+  disabled = false
 }: {
   children: ReactNode;
   onClick?: (() => void) | undefined;
   variant?: 'ghost' | 'primary' | 'secondary';
   type?: 'button' | 'submit';
+  disabled?: boolean;
 }) {
   const variants = {
     ghost: 'btn-ghost',
@@ -62,7 +64,7 @@ export function Button({
     secondary: 'btn-secondary'
   };
   return (
-    <button type={type} onClick={onClick} className={clsx('btn', variants[variant])}>
+    <button type={type} onClick={onClick} disabled={disabled} className={clsx('btn', variants[variant])}>
       {children}
     </button>
   );

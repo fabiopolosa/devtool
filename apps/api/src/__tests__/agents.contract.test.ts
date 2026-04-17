@@ -1,7 +1,12 @@
 import type { FastifyInstance } from "fastify";
+import {
+  startTestExecutionWorkerHarness,
+  type TestExecutionWorkerHarness
+} from "./helpers/execution-worker-harness.js";
 
 describe("Agents API contract", () => {
   let app: FastifyInstance;
+  let workerHarness: TestExecutionWorkerHarness;
 
   beforeAll(async () => {
     process.env.API_STORE_MODE = "in_memory";
@@ -9,9 +14,13 @@ describe("Agents API contract", () => {
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
+    workerHarness = await startTestExecutionWorkerHarness();
   });
 
   afterAll(async () => {
+    if (workerHarness) {
+      await workerHarness.stop();
+    }
     if (app) {
       await app.close();
     }
@@ -88,6 +97,53 @@ describe("Agents API contract", () => {
       url: `/agents/${created.item.id}`
     });
     expect(deleteResponse.statusCode).toBe(200);
+  });
+
+  it("executes assigned skill via agent runtime", async () => {
+    const skillsResponse = await app.inject({ method: "GET", url: "/skills/installed" });
+    expect(skillsResponse.statusCode).toBe(200);
+    const skillsBody = skillsResponse.json() as { items: Array<{ id: string; name: string }> };
+    const skill = skillsBody.items[0];
+    expect(skill).toBeDefined();
+    if (!skill) {
+      throw new Error("No installed skill available for agent execution contract test");
+    }
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        name: "skill-runner",
+        role: "worker",
+        icon: "bolt",
+        description: "Executes assigned skills",
+        adapterType: "legacy_cli",
+        desiredSkills: [skill.id],
+        reportTo: "planner",
+        runtimeConfig: {},
+        capabilities: ["coding"],
+        status: "active"
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const created = createResponse.json() as { item: { id: string } };
+
+    const executeResponse = await app.inject({
+      method: "POST",
+      url: `/agents/${created.item.id}/skills/${skill.id}/execute`,
+      payload: {
+        mode: "local"
+      }
+    });
+    expect(executeResponse.statusCode).toBe(200);
+    const executeBody = executeResponse.json() as {
+      jobId: string;
+      status: string;
+      item?: { success?: boolean };
+    };
+    expect(typeof executeBody.jobId).toBe("string");
+    expect(executeBody.status).toBe("done");
+    expect(executeBody.item?.success).toBe(true);
   });
 
   it("schedules heartbeat and diagnose jobs and exposes snapshots/events", async () => {

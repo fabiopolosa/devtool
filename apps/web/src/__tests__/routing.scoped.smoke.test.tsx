@@ -36,7 +36,6 @@ describe("Scoped routing smoke", () => {
   });
 
   it("supports platform scoped providers configuration route", async () => {
-    window.localStorage.setItem("cp_owner_mode", "1");
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ items: [] })));
     window.history.pushState({}, "", "/settings/providers");
     await router.navigate({ to: "/settings/providers" });
@@ -49,6 +48,54 @@ describe("Scoped routing smoke", () => {
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/settings/providers");
+    });
+  });
+
+  it("keeps tenant settings accessible in auth-disabled runtime", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ items: [] })));
+    window.history.pushState({}, "", "/settings/providers");
+    await router.navigate({ to: "/settings/providers" });
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <RouterProvider router={router} />
+      </AppStoreProvider>
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/settings/providers");
+    });
+  });
+
+  it("supports users settings route in auth-disabled runtime", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ items: [] })));
+    window.history.pushState({}, "", "/settings/users");
+    await router.navigate({ to: "/settings/users" });
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <RouterProvider router={router} />
+      </AppStoreProvider>
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/settings/users");
+    });
+  });
+
+  it("keeps system settings accessible in auth-disabled runtime", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ items: [] })));
+    window.history.pushState({}, "", "/settings/secrets");
+    await router.navigate({ to: "/settings/secrets" });
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <RouterProvider router={router} />
+      </AppStoreProvider>
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/settings/secrets");
     });
   });
 

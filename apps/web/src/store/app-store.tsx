@@ -1,31 +1,4 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState } from 'react';
-import {
-  approvals as initialApprovals,
-  artifacts as initialArtifacts,
-  experimentRuns as initialExperimentRuns,
-  experiments as initialExperiments,
-  memoryChunks as initialMemoryChunks,
-  memoryEntries as initialMemoryEntries,
-  messages as initialMessages,
-  providerCapabilities as initialProviderCapabilities,
-  providerHealthchecks as initialProviderHealthchecks,
-  providerModels as initialProviderModels,
-  providers as initialProviders,
-  projectBindings as initialProjectBindings,
-  projectRepositoryLinks as initialProjectRepositoryLinks,
-  projects as initialProjects,
-  promptVersions as initialPromptVersions,
-  repositories as initialRepositories,
-  researchNotes as initialResearchNotes,
-  retrievalLogs as initialRetrievalLogs,
-  roadmapItems as initialRoadmapItems,
-  routingRules as initialRoutingRules,
-  taskRuns as initialTaskRuns,
-  tasks as initialTasks,
-  threads as initialThreads,
-  verificationResults as initialVerificationResults,
-  verificationSteps as initialVerificationSteps
-} from '@/data/mock';
 import type {
   Approval,
   Artifact,
@@ -90,6 +63,8 @@ export interface AuthPrincipal {
   displayName: string;
   roles: string[];
   permissions: string[];
+  tenantId?: string;
+  tenantRole?: string;
   authBypass: boolean;
 }
 
@@ -106,6 +81,12 @@ export interface AuthState {
 const sessionStorageKey = 'cp_auth_session_token';
 const refreshStorageKey = 'cp_auth_refresh_token';
 
+const readStoredToken = (storageKey: string): string | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  const value = window.localStorage.getItem(storageKey);
+  return value ?? undefined;
+};
+
 const parseFlag = (value: string | undefined, defaultValue: boolean): boolean => {
   if (value === undefined) return defaultValue;
   const normalized = value.trim().toLowerCase();
@@ -113,7 +94,6 @@ const parseFlag = (value: string | undefined, defaultValue: boolean): boolean =>
 };
 
 const authEnabledFromEnv = (): boolean => parseFlag(import.meta.env.VITE_AUTH_ENABLED, false);
-const mockDataEnabledFromEnv = (): boolean => parseFlag(import.meta.env.VITE_ALLOW_MOCK_DATA, false);
 const apiBaseUrlFromEnv = (): string => {
   const configured = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '');
   if (configured) return configured;
@@ -145,36 +125,6 @@ type Action =
   | { type: 'setTaskSkills'; taskId: string; skills: string[] }
   | { type: 'setTaskAssignedAgent'; taskId: string; agentId?: string };
 
-const mockState: AppState = {
-  projects: initialProjects,
-  repositories: initialRepositories,
-  projectRepositoryLinks: initialProjectRepositoryLinks,
-  roadmapItems: initialRoadmapItems,
-  tasks: initialTasks,
-  taskRuns: initialTaskRuns,
-  approvals: initialApprovals,
-  artifacts: initialArtifacts,
-  verificationResults: initialVerificationResults,
-  verificationSteps: initialVerificationSteps,
-  memoryEntries: initialMemoryEntries,
-  memoryChunks: initialMemoryChunks,
-  retrievalLogs: initialRetrievalLogs,
-  researchNotes: initialResearchNotes,
-  promptVersions: initialPromptVersions,
-  routingRules: initialRoutingRules,
-  experiments: initialExperiments,
-  experimentRuns: initialExperimentRuns,
-  threads: initialThreads,
-  messages: initialMessages,
-  providers: initialProviders,
-  providerCapabilities: initialProviderCapabilities,
-  providerModels: initialProviderModels,
-  projectBindings: initialProjectBindings,
-  providerHealthchecks: initialProviderHealthchecks,
-  taskSpecSkills: {},
-  taskAssignedAgents: {}
-};
-
 const createEmptyState = (): AppState => ({
   projects: [],
   repositories: [],
@@ -205,7 +155,7 @@ const createEmptyState = (): AppState => ({
   taskAssignedAgents: {}
 });
 
-const initialState: AppState = mockDataEnabledFromEnv() ? mockState : createEmptyState();
+const initialState: AppState = createEmptyState();
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -497,16 +447,34 @@ export function AppStoreProvider({
   children: React.ReactNode;
   authEnabledOverride?: boolean;
 }) {
-  const allowMockData = useMemo(() => mockDataEnabledFromEnv(), []);
   const [state, dispatch] = useReducer(reducer, initialState);
-  const [auth, setAuth] = useState<AuthState>({
-    enabled: authEnabledOverride ?? authEnabledFromEnv(),
-    loading: authEnabledOverride ?? authEnabledFromEnv(),
-    required: authEnabledOverride ?? authEnabledFromEnv(),
-    token: undefined,
-    refreshToken: undefined,
-    principal: undefined,
-    error: undefined
+  const [auth, setAuth] = useState<AuthState>(() => {
+    const enabled = authEnabledOverride ?? authEnabledFromEnv();
+    if (!enabled) {
+      return {
+        enabled,
+        loading: false,
+        required: false,
+        token: undefined,
+        refreshToken: undefined,
+        principal: undefined,
+        error: undefined
+      };
+    }
+
+    const storedToken = readStoredToken(sessionStorageKey);
+    const storedRefreshToken = readStoredToken(refreshStorageKey);
+    const hasStoredSession = Boolean(storedToken || storedRefreshToken);
+
+    return {
+      enabled,
+      loading: true,
+      required: !hasStoredSession,
+      token: storedToken,
+      refreshToken: storedRefreshToken,
+      principal: undefined,
+      error: undefined
+    };
   });
 
   const apiBaseUrl = useMemo(() => apiBaseUrlFromEnv(), []);
@@ -570,6 +538,8 @@ export function AppStoreProvider({
           user: { id: string; email: string; displayName: string };
           roles: string[];
           permissions: string[];
+          tenantId?: string;
+          tenantRole?: string;
         };
       };
 
@@ -603,6 +573,8 @@ export function AppStoreProvider({
           displayName: sessionItem.user.displayName,
           roles: sessionItem.roles,
           permissions: sessionItem.permissions,
+          ...(sessionItem.tenantId ? { tenantId: sessionItem.tenantId } : {}),
+          ...(sessionItem.tenantRole ? { tenantRole: sessionItem.tenantRole } : {}),
           authBypass: false
         },
         error: undefined
@@ -655,19 +627,20 @@ export function AppStoreProvider({
       }
 
       if (auth.enabled && (response.status === 401 || response.status === 403)) {
-        if (response.status === 401) {
+        const unauthenticated = response.status === 401;
+        if (unauthenticated) {
           setSessionToken(undefined);
           setRefreshToken(undefined);
         }
         setAuth((current) => ({
           ...current,
           loading: false,
-          required: true,
-          token: response.status === 401 ? undefined : current.token,
-          refreshToken: response.status === 401 ? undefined : current.refreshToken,
-          principal: response.status === 401 ? undefined : current.principal,
+          required: unauthenticated ? true : current.required,
+          token: unauthenticated ? undefined : current.token,
+          refreshToken: unauthenticated ? undefined : current.refreshToken,
+          principal: unauthenticated ? undefined : current.principal,
           error:
-            response.status === 401
+            unauthenticated
               ? 'Session missing or expired. Please log in.'
               : 'You are authenticated but do not have permission for this action.'
         }));
@@ -757,6 +730,8 @@ export function AppStoreProvider({
           displayName: string;
           roles: string[];
           permissions: string[];
+          tenantId?: string;
+          tenantRole?: string;
           authBypass: boolean;
         };
       };
@@ -788,6 +763,8 @@ export function AppStoreProvider({
           displayName: meItem.displayName,
           roles: meItem.roles,
           permissions: meItem.permissions,
+          ...(meItem.tenantId ? { tenantId: meItem.tenantId } : {}),
+          ...(meItem.tenantRole ? { tenantRole: meItem.tenantRole } : {}),
           authBypass: meItem.authBypass
         },
         error: undefined
@@ -812,7 +789,6 @@ export function AppStoreProvider({
   }, [bootstrapSession]);
 
   const syncProjects = useCallback(async (): Promise<void> => {
-    if (allowMockData) return;
     if (auth.enabled && auth.required) return;
     try {
       const { response, body } = await apiFetchJson<{ items?: Project[]; message?: string }>('/projects');
@@ -825,7 +801,7 @@ export function AppStoreProvider({
         console.error('Unable to sync projects from API', error);
       }
     }
-  }, [allowMockData, apiFetchJson, auth.enabled, auth.required]);
+  }, [apiFetchJson, auth.enabled, auth.required]);
 
   useEffect(() => {
     void syncProjects();
@@ -853,6 +829,8 @@ export function AppStoreProvider({
             user: { id: string; email: string; displayName: string };
             roles: string[];
             permissions: string[];
+            tenantId?: string;
+            tenantRole?: string;
           };
           message?: string;
         };
@@ -883,6 +861,8 @@ export function AppStoreProvider({
             displayName: loginItem.user.displayName,
             roles: loginItem.roles,
             permissions: loginItem.permissions,
+            ...(loginItem.tenantId ? { tenantId: loginItem.tenantId } : {}),
+            ...(loginItem.tenantRole ? { tenantRole: loginItem.tenantRole } : {}),
             authBypass: false
           },
           error: undefined
@@ -921,6 +901,8 @@ export function AppStoreProvider({
             user: { id: string; email: string; displayName: string };
             roles: string[];
             permissions: string[];
+            tenantId?: string;
+            tenantRole?: string;
           };
           message?: string;
         };
@@ -951,6 +933,8 @@ export function AppStoreProvider({
             displayName: item.user.displayName,
             roles: item.roles,
             permissions: item.permissions,
+            ...(item.tenantId ? { tenantId: item.tenantId } : {}),
+            ...(item.tenantRole ? { tenantRole: item.tenantRole } : {}),
             authBypass: false
           },
           error: undefined

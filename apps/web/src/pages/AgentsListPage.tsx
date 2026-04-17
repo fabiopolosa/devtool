@@ -23,6 +23,14 @@ type AgentRuntimeJobSnapshot = {
 
 export function AgentsListPage() {
   const { authActions } = useAppStore();
+  const projectId = useMemo(() => {
+    if (typeof window === "undefined") return undefined;
+    const parts = window.location.pathname.split("/").filter(Boolean);
+    if (parts[0] === "project" && parts[1] && parts[2] === "agents") {
+      return parts[1];
+    }
+    return undefined;
+  }, []);
   const [items, setItems] = useState<AgentConfig[]>([]);
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -74,7 +82,8 @@ export function AgentsListPage() {
         const response = await authActions.apiFetch(`/agents/${agentId}/${operation}`, {
           method: "POST",
           body: JSON.stringify({
-            reason: "manual_ui"
+            reason: "manual_ui",
+            ...(projectId ? { projectId } : {})
           })
         });
         const body = (await response.json()) as { item?: AgentRuntimeJobReference; message?: string };
@@ -89,7 +98,7 @@ export function AgentsListPage() {
         setRunningAgentId(undefined);
       }
     },
-    [authActions, inspectJob]
+    [authActions, inspectJob, projectId]
   );
 
   const filteredItems = useMemo(() => {
@@ -161,6 +170,11 @@ export function AgentsListPage() {
           </select>
         </div>
         {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
+        {projectId ? (
+          <p className="mt-3 text-xs text-cyan-100/80">
+            Project-scoped context injection active for runtime operations (project: {projectId}).
+          </p>
+        ) : null}
       </Panel>
 
       <div className="grid gap-4 xl:grid-cols-2">

@@ -79,29 +79,54 @@ const parseTimestampMs = (value: unknown): number | undefined => {
 
 const machineSupportsLocalExecution = (machine: Machine): boolean => {
   if (machine.agents.includes("local-worker")) return true;
+  if (machine.agents.includes("remote-worker")) return false;
   const metadata = asRecord(machine.metadata) ?? {};
   const execution = asRecord(metadata.execution) ?? {};
   const mode = asString(execution.mode)?.toLowerCase();
+  if (mode === "remote") return false;
   if (mode === "local" || mode === "hybrid") return true;
   const services = machine.services.map((entry) => entry.toLowerCase());
-  return services.includes("internal_runner") || services.includes("shell");
+  return services.includes("shell") || services.includes("docker");
 };
 
-const hasActiveLocalWorker = async (tenantId: string): Promise<{ machineId?: string }> => {
+const machineSupportsRemoteExecution = (machine: Machine): boolean => {
+  if (machine.agents.includes("remote-worker")) return true;
+  const metadata = asRecord(machine.metadata) ?? {};
+  const execution = asRecord(metadata.execution) ?? {};
+  const mode = asString(execution.mode)?.toLowerCase();
+  if (mode === "remote" || mode === "hybrid") return true;
+  if (mode === "local") return false;
+  if (machine.agents.includes("local-worker")) return false;
+  const services = machine.services.map((entry) => entry.toLowerCase());
+  return services.includes("internal_runner") && !services.includes("shell");
+};
+
+const machineIsActive = (machine: Machine): boolean => {
+  if (machine.status !== "online" && machine.status !== "degraded") return false;
+  const heartbeatMs = parseTimestampMs(machine.lastHeartbeatAt);
+  if (heartbeatMs === undefined) return true;
+  return Date.now() - heartbeatMs <= workerHeartbeatMaxAgeMs;
+};
+
+export interface ExecutionWorkerAvailability {
+  localMachineId?: string;
+  remoteMachineId?: string;
+}
+
+export const getExecutionWorkerAvailability = async (
+  tenantId: string
+): Promise<ExecutionWorkerAvailability> => {
   if (typeof apiStore.listMachines !== "function") return {};
 
   try {
     return await runWithTenantContext({ tenantId }, async () => {
       const machines = await apiStore.listMachines();
-      const now = Date.now();
-      const active = machines.find((machine) => {
-        if (machine.status !== "online" && machine.status !== "degraded") return false;
-        if (!machineSupportsLocalExecution(machine)) return false;
-        const heartbeatMs = parseTimestampMs(machine.lastHeartbeatAt);
-        if (heartbeatMs === undefined) return true;
-        return now - heartbeatMs <= workerHeartbeatMaxAgeMs;
-      });
-      return active ? { machineId: active.id } : {};
+      const local = machines.find((machine) => machineIsActive(machine) && machineSupportsLocalExecution(machine));
+      const remote = machines.find((machine) => machineIsActive(machine) && machineSupportsRemoteExecution(machine));
+      return {
+        ...(local ? { localMachineId: local.id } : {}),
+        ...(remote ? { remoteMachineId: remote.id } : {})
+      };
     });
   } catch {
     return {};
@@ -151,8 +176,14 @@ export const resolveExecutionRoute = async (
     toExecutionMode(payload.mode) ??
     toExecutionMode(payload.executionMode);
   const systemDefaultMode = toExecutionMode(process.env.EXECUTION_DEFAULT_MODE) ?? "remote";
-  const activeLocalWorker = requestedMode ? {} : await hasActiveLocalWorker(input.tenantId);
-  const mode = requestedMode ?? (activeLocalWorker.machineId ? "local" : systemDefaultMode);
+  const bypassWorkerAvailabilityChecks = process.env.NODE_ENV === "test";
+  const workerAvailability = await getExecutionWorkerAvailability(input.tenantId);
+  const autoResolvedMode: ExecutionMode | undefined = workerAvailability.localMachineId
+    ? "local"
+    : workerAvailability.remoteMachineId
+      ? "remote"
+      : undefined;
+  const mode = requestedMode ?? autoResolvedMode ?? systemDefaultMode;
   const adapter = inferAdapter({ payload, mode });
   const requiredCapabilities = inferRequiredCapabilities({
     adapter,
@@ -160,14 +191,40 @@ export const resolveExecutionRoute = async (
     payload,
     explicitCapabilities: asStringArray(payloadExecution?.requiredCapabilities)
   });
+  if (!bypassWorkerAvailabilityChecks) {
+    if (mode === "local" && !workerAvailability.localMachineId) {
+      throw new Error(
+        "No local worker available. Start one with 'devtools worker start --mode local'."
+      );
+    }
+    if (mode === "remote" && !workerAvailability.remoteMachineId) {
+      throw new Error(
+        "No remote worker available. Start the remote worker service or retry with '--mode local'."
+      );
+    }
+    if (mode === "hybrid" && !workerAvailability.localMachineId && !workerAvailability.remoteMachineId) {
+      throw new Error(
+        "No workers available for hybrid mode. Start a local worker or bring a remote worker online."
+      );
+    }
+    if (!requestedMode && !autoResolvedMode) {
+      throw new Error(
+        "No execution workers are available. Start 'devtools worker start --mode local' or bring a remote worker online."
+      );
+    }
+  }
   const dispatchTarget = defaultDispatchTargetForMode(mode);
   const source = requestedMode ? "payload" : "system";
   const reason =
     source === "payload"
       ? `requested mode=${mode} from job payload`
-      : activeLocalWorker.machineId
-        ? `auto-selected mode=local because worker ${activeLocalWorker.machineId} is online`
-        : `defaulted to system execution mode=${mode}`;
+      : mode === "local" && workerAvailability.localMachineId
+        ? `auto-selected mode=local because worker ${workerAvailability.localMachineId} is online`
+        : mode === "remote" && workerAvailability.remoteMachineId
+          ? `auto-selected mode=remote because worker ${workerAvailability.remoteMachineId} is online`
+          : bypassWorkerAvailabilityChecks
+            ? `test-mode defaulted to system execution mode=${mode}`
+            : `defaulted to system execution mode=${mode}`;
 
   return {
     mode,
@@ -236,13 +293,15 @@ export const registerExecutionWorker = async (
 ): Promise<Machine> => {
   const now = nowIso();
   const environment = await ensureLocalEnvironment(input.tenantId, input.actor);
+  const executionMode = input.mode ?? "local";
+  const workerAgentTag = executionMode === "remote" ? "remote-worker" : "local-worker";
   const capabilitySet = [...new Set((input.capabilities ?? []).map((entry) => entry.trim().toLowerCase()).filter(Boolean))];
   const workerName = input.name?.trim() || "Local Worker";
   const workerHost = input.host?.trim() || "localhost";
   const metadata = {
     ...((input.metadata ?? {}) as Record<string, unknown>),
     execution: {
-      mode: input.mode ?? "local",
+      mode: executionMode,
       capabilities: capabilitySet
     }
   };
@@ -271,7 +330,7 @@ export const registerExecutionWorker = async (
         gpuCount: 0,
         ramGb: 0,
         services: capabilitySet,
-        agents: ["local-worker"],
+        agents: [workerAgentTag],
         lastHeartbeatAt: now,
         metadata,
         createdAt: now,
@@ -287,7 +346,7 @@ export const registerExecutionWorker = async (
       host: workerHost,
       status: "online",
       services: capabilitySet.length > 0 ? capabilitySet : machine.services,
-      agents: [...new Set([...(machine.agents ?? []), "local-worker"])],
+      agents: [...new Set([...(machine.agents ?? []), workerAgentTag])],
       lastHeartbeatAt: now,
       metadata: {
         ...(machine.metadata ?? {}),

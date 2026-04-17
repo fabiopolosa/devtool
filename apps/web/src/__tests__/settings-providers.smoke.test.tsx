@@ -10,13 +10,34 @@ const jsonResponse = (body: unknown, status = 200): Response =>
     headers: { "content-type": "application/json" }
   });
 
-const installFetchMock = () => {
+const installFetchMock = (): { calledPaths: string[] } => {
+  const calledPaths: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const raw = typeof input === "string" ? input : input.toString();
       const url = raw.includes("://") ? new URL(raw) : new URL(raw, "http://localhost");
       const path = `${url.pathname}${url.search}`;
+      const method =
+        init?.method ??
+        (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET");
+      calledPaths.push(path);
+
+      if (path === "/providers/config" && method === "POST") {
+        return jsonResponse({
+          success: true,
+          item: {
+            id: "cfg_created",
+            tenantId: "tenant_default",
+            provider: "openai",
+            providerId: "openai",
+            enabled: true,
+            timeoutMs: 30000,
+            authRef: "secret://openai/api-key",
+            apiKey: "***"
+          }
+        });
+      }
 
       if (path === "/providers/config") {
         return jsonResponse({
@@ -33,6 +54,14 @@ const installFetchMock = () => {
             }
           ]
         });
+      }
+
+      if (path === "/providers/defaults" && method === "PATCH") {
+        return jsonResponse({ success: true, item: {} });
+      }
+
+      if (path === "/providers/defaults") {
+        return jsonResponse({ item: {} });
       }
 
       if (path === "/tenants") {
@@ -52,12 +81,15 @@ const installFetchMock = () => {
       return jsonResponse({ items: [] });
     })
   );
+  return { calledPaths };
 };
 
-describe("Owner mode + settings providers smoke", () => {
+describe("Role-based settings providers smoke", () => {
+  let calledPaths: string[] = [];
+
   beforeEach(() => {
     window.localStorage.clear();
-    installFetchMock();
+    ({ calledPaths } = installFetchMock());
   });
 
   afterEach(() => {
@@ -117,5 +149,45 @@ describe("Owner mode + settings providers smoke", () => {
     const ownerSettingsLink = document.querySelector('a.nav-link[href="/settings/providers"]');
     expect(ownerSettingsLink).not.toBeNull();
     expect(screen.getAllByText("Providers").length).toBeGreaterThan(0);
+  });
+
+  it("handles provider create as sync control action without job polling", async () => {
+    window.localStorage.setItem("cp_owner_mode", "1");
+    await act(async () => {
+      window.history.pushState({}, "", "/settings/providers");
+      await router.navigate({ to: "/settings/providers" });
+    });
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <RouterProvider router={router} />
+      </AppStoreProvider>
+    );
+
+    expect(await screen.findByRole("heading", { name: "Owner Provider Settings" })).toBeInTheDocument();
+    expect((await screen.findAllByText("openai")).length).toBeGreaterThan(0);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+
+    expect(await screen.findByText("Provider config created for openai.")).toBeInTheDocument();
+    expect(calledPaths.some((path) => path.startsWith("/jobs/"))).toBe(false);
+  });
+
+  it("derives system access from role without manual toggle", async () => {
+    window.history.pushState({}, "", "/");
+
+    const view = render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <RouterProvider router={router} />
+      </AppStoreProvider>
+    );
+
+    expect(screen.getByText("System Access: OWNER")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Enable owner" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Disable owner" })).toBeNull();
+    expect(calledPaths.some((path) => path.startsWith("/jobs/"))).toBe(false);
+    view.unmount();
   });
 });

@@ -1,6 +1,10 @@
-import type { FastifyPluginAsync } from "fastify";
-import { extractBearerToken, requireAuthenticated, requirePermission, requireRole } from "../auth/runtime.js";
+import { randomUUID } from "node:crypto";
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
+import type { TenantRole } from "@cp/domain";
+import { extractBearerToken, requireAuthenticated, requirePermission } from "../auth/runtime.js";
+import { apiStore } from "../services/api-store.js";
 import { auditLogService } from "../services/audit-log-service.js";
+import { requireTenantPermission } from "../tenant/rbac.js";
 
 interface LoginBody {
   email: string;
@@ -12,17 +16,52 @@ interface CreateUserBody {
   displayName: string;
   password: string;
   roles?: Array<"admin" | "editor" | "operator" | "viewer">;
+  tenantRole?: TenantRole;
 }
 
 interface AssignRolesBody {
   roles: Array<"admin" | "editor" | "operator" | "viewer">;
 }
 
+interface AssignTenantMembershipBody {
+  role: TenantRole;
+}
+
 interface RefreshBody {
   refreshToken: string;
 }
 
+const tenantRoles: TenantRole[] = ["owner", "admin", "manager", "user", "guest"];
+
+const isTenantRole = (value: unknown): value is TenantRole =>
+  typeof value === "string" && tenantRoles.includes(value as TenantRole);
+
+const canAssignTenantOwnerRole = (tenantRole: TenantRole | undefined, authBypass: boolean): boolean =>
+  authBypass || tenantRole === "owner";
+
+const resolveDefaultTenantContext = async (
+  userId: string
+): Promise<{ tenantId?: string; tenantRole?: string }> => {
+  const memberships = await apiStore.listUserTenants({ userId });
+  const primaryMembership = memberships[0];
+  if (!primaryMembership) {
+    return {};
+  }
+  return {
+    tenantId: primaryMembership.tenantId,
+    tenantRole: primaryMembership.role
+  };
+};
+
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
+  const requireUsersManagement = (request: FastifyRequest, reply: FastifyReply) => {
+    const principal = requireAuthenticated(request, reply);
+    if (!principal) return null;
+    if (principal.authBypass) return principal;
+    if (!requireTenantPermission(request, reply, "canManageUsers")) return null;
+    return principal;
+  };
+
   fastify.post<{ Body: LoginBody }>("/auth/login", {
     schema: { tags: ["auth"], summary: "Authenticate and create a session token" }
   }, async (request, reply) => {
@@ -65,6 +104,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       actor: result.user.id
     });
 
+    const tenantContext = await resolveDefaultTenantContext(result.user.id);
+
     return {
       item: {
         token: result.token,
@@ -79,7 +120,13 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           status: result.user.status
         },
         roles: result.roleNames,
-        permissions: result.permissions
+        permissions: result.permissions,
+        ...(tenantContext.tenantId
+          ? {
+              tenantId: tenantContext.tenantId,
+              tenantRole: tenantContext.tenantRole
+            }
+          : {})
       }
     };
   });
@@ -125,6 +172,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       actor: result.user.id
     });
 
+    const tenantContext = await resolveDefaultTenantContext(result.user.id);
+
     return {
       item: {
         token: result.token,
@@ -139,7 +188,13 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           status: result.user.status
         },
         roles: result.roleNames,
-        permissions: result.permissions
+        permissions: result.permissions,
+        ...(tenantContext.tenantId
+          ? {
+              tenantId: tenantContext.tenantId,
+              tenantRole: tenantContext.tenantRole
+            }
+          : {})
       }
     };
   });
@@ -270,6 +325,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         actor: result.user.id
       });
 
+      const tenantContext = await resolveDefaultTenantContext(result.user.id);
+
       return {
         item: {
           token: result.token,
@@ -284,7 +341,13 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
             status: result.user.status
           },
           roles: result.roleNames,
-          permissions: result.permissions
+          permissions: result.permissions,
+          ...(tenantContext.tenantId
+            ? {
+                tenantId: tenantContext.tenantId,
+                tenantRole: tenantContext.tenantRole
+              }
+            : {})
         }
       };
     } catch (error) {
@@ -317,33 +380,67 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         displayName: principal.displayName,
         roles: principal.roleNames,
         permissions: principal.permissions,
-        authBypass: principal.authBypass
+        authBypass: principal.authBypass,
+        ...(request.tenantId ? { tenantId: request.tenantId } : {}),
+        ...(request.tenantRole ? { tenantRole: request.tenantRole } : {})
       }
     };
   });
 
   fastify.get("/auth/users", {
-    schema: { tags: ["auth"], summary: "List users (admin role required)" }
+    schema: { tags: ["auth"], summary: "List tenant-scoped users with roles and tenant membership" }
   }, async (request, reply) => {
-    const principal = requireRole(request, reply, "admin");
+    const principal = requireUsersManagement(request, reply);
     if (!principal) return;
 
-    const users = await fastify.authRuntime.service.listUsers();
+    const tenantId = request.tenantId ?? "tenant_default";
+    const tenantMemberships = await apiStore.listUserTenants({ tenantId });
+    const userIds = new Set(tenantMemberships.map((entry) => entry.userId));
+    const users = (await fastify.authRuntime.service.listUsers()).filter((user) => userIds.has(user.id));
+    const userRoles = await apiStore.listUserRoles();
+    const roles = await fastify.authRuntime.service.listRoles();
+    const roleById = new Map(roles.map((role) => [role.id, role.name]));
+
+    const roleNamesByUser = new Map<string, string[]>();
+    for (const entry of userRoles) {
+      if (!userIds.has(entry.userId)) continue;
+      const roleName = roleById.get(entry.roleId);
+      if (!roleName) continue;
+      const existing = roleNamesByUser.get(entry.userId) ?? [];
+      if (!existing.includes(roleName)) {
+        existing.push(roleName);
+      }
+      roleNamesByUser.set(entry.userId, existing);
+    }
+
+    const tenantMembershipByUser = new Map(tenantMemberships.map((entry) => [entry.userId, entry]));
+
     return {
       items: users.map((user) => ({
         id: user.id,
         email: user.email,
         displayName: user.displayName,
         status: user.status,
-        lastLoginAt: user.lastLoginAt
+        lastLoginAt: user.lastLoginAt,
+        roles: (roleNamesByUser.get(user.id) ?? []).sort((left, right) => left.localeCompare(right)),
+        tenantMembership: (() => {
+          const membership = tenantMembershipByUser.get(user.id);
+          if (!membership) return null;
+          return {
+            id: membership.id,
+            tenantId: membership.tenantId,
+            role: membership.role
+          };
+        })(),
+        self: user.id === principal.userId
       }))
     };
   });
 
   fastify.post<{ Body: CreateUserBody }>("/auth/users", {
-    schema: { tags: ["auth"], summary: "Create user and assign roles (admin role required)" }
+    schema: { tags: ["auth"], summary: "Create user, assign roles, and attach tenant membership" }
   }, async (request, reply) => {
-    const principal = requireRole(request, reply, "admin");
+    const principal = requireUsersManagement(request, reply);
     if (!principal) return;
 
     const body = request.body;
@@ -351,6 +448,21 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(400).send({
         error: "invalid_request",
         message: "email, displayName and password are required"
+      });
+    }
+
+    const tenantId = request.tenantId ?? "tenant_default";
+    const tenantRole = body.tenantRole ?? "user";
+    if (!isTenantRole(tenantRole)) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        message: "tenantRole must be one of owner|admin|manager|user|guest"
+      });
+    }
+    if (tenantRole === "owner" && !canAssignTenantOwnerRole(request.tenantRole, principal.authBypass)) {
+      return reply.code(403).send({
+        error: "forbidden",
+        message: "Only tenant owners can assign owner membership."
       });
     }
 
@@ -364,13 +476,27 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         },
         principal.userId
       );
+
+      await apiStore.createUserTenant({
+        id: `user_tenant_${randomUUID()}`,
+        userId: created.id,
+        tenantId,
+        role: tenantRole,
+        createdAt: new Date().toISOString()
+      });
+
       await auditLogService.record({
         userId: principal.userId,
         action: "auth.user.create",
         resourceType: "user",
         resourceId: created.id,
         status: "success",
-        metadata: { email: created.email, roles: body.roles ?? ["viewer"] },
+        metadata: {
+          email: created.email,
+          roles: body.roles ?? ["viewer"],
+          tenantId,
+          tenantRole
+        },
         actor: principal.userId
       });
       return {
@@ -378,7 +504,12 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           id: created.id,
           email: created.email,
           displayName: created.displayName,
-          status: created.status
+          status: created.status,
+          roles: body.roles ?? ["viewer"],
+          tenantMembership: {
+            tenantId,
+            role: tenantRole
+          }
         }
       };
     } catch (error) {
@@ -390,10 +521,22 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.post<{ Params: { userId: string }; Body: AssignRolesBody }>("/auth/users/:userId/roles", {
-    schema: { tags: ["auth"], summary: "Assign roles to user (admin role required)" }
+    schema: { tags: ["auth"], summary: "Assign roles to a tenant-scoped user" }
   }, async (request, reply) => {
-    const principal = requireRole(request, reply, "admin");
+    const principal = requireUsersManagement(request, reply);
     if (!principal) return;
+
+    const tenantId = request.tenantId ?? "tenant_default";
+    const tenantMembership = (await apiStore.listUserTenants({
+      userId: request.params.userId,
+      tenantId
+    }))[0];
+    if (!tenantMembership) {
+      return reply.code(404).send({
+        error: "not_found",
+        message: "User is not a member of the current tenant."
+      });
+    }
 
     const roles = request.body?.roles ?? [];
     if (roles.length === 0) {
@@ -405,6 +548,12 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
     try {
       await fastify.authRuntime.service.assignRoles(request.params.userId, roles, principal.userId);
+      const allRoles = await fastify.authRuntime.service.listRoles();
+      const roleById = new Map(allRoles.map((role) => [role.id, role.name]));
+      const linkedRoles = await apiStore.listUserRoles(request.params.userId);
+      const effectiveRoles = [...new Set(linkedRoles.map((link) => roleById.get(link.roleId)).filter(Boolean) as string[])]
+        .sort((left, right) => left.localeCompare(right));
+
       await auditLogService.record({
         userId: principal.userId,
         action: "auth.user.roles.assign",
@@ -414,13 +563,92 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         metadata: { roles },
         actor: principal.userId
       });
-      return { ok: true, message: "Roles assigned" };
+      return {
+        ok: true,
+        message: "Roles assigned",
+        item: {
+          userId: request.params.userId,
+          roles: effectiveRoles,
+          tenantMembership: {
+            tenantId,
+            role: tenantMembership.role
+          }
+        }
+      };
     } catch (error) {
       return reply.code(400).send({
         error: "invalid_request",
         message: error instanceof Error ? error.message : "Unable to assign roles"
       });
     }
+  });
+
+  fastify.put<{ Params: { userId: string }; Body: AssignTenantMembershipBody }>("/auth/users/:userId/tenant-membership", {
+    schema: { tags: ["auth"], summary: "Set tenant membership role for a user in the current tenant" }
+  }, async (request, reply) => {
+    const principal = requireUsersManagement(request, reply);
+    if (!principal) return;
+
+    const tenantId = request.tenantId ?? "tenant_default";
+    const requestedRole = request.body?.role;
+    if (!isTenantRole(requestedRole)) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        message: "role must be one of owner|admin|manager|user|guest"
+      });
+    }
+    if (requestedRole === "owner" && !canAssignTenantOwnerRole(request.tenantRole, principal.authBypass)) {
+      return reply.code(403).send({
+        error: "forbidden",
+        message: "Only tenant owners can assign owner membership."
+      });
+    }
+
+    const targetUser = await apiStore.getUserById(request.params.userId);
+    if (!targetUser) {
+      return reply.code(404).send({
+        error: "not_found",
+        message: "User not found"
+      });
+    }
+
+    const existingMembership = (await apiStore.listUserTenants({
+      userId: request.params.userId,
+      tenantId
+    }))[0];
+
+    const nowIso = new Date().toISOString();
+    const membership = existingMembership
+      ? await apiStore.updateUserTenant(existingMembership.id, { role: requestedRole })
+      : await apiStore.createUserTenant({
+          id: `user_tenant_${randomUUID()}`,
+          userId: request.params.userId,
+          tenantId,
+          role: requestedRole,
+          createdAt: nowIso
+        });
+
+    await auditLogService.record({
+      userId: principal.userId,
+      action: "auth.user.tenant_membership.update",
+      resourceType: "user_tenant",
+      resourceId: membership.id,
+      status: "success",
+      metadata: {
+        userId: request.params.userId,
+        tenantId,
+        role: requestedRole
+      },
+      actor: principal.userId
+    });
+
+    return {
+      item: {
+        userId: request.params.userId,
+        tenantId,
+        role: membership.role
+      }
+    };
   });
 
   fastify.get("/admin/authz-check", {

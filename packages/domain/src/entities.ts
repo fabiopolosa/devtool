@@ -513,13 +513,22 @@ export type {
   SchemaDocTable
 } from "./entities/schema-doc.js";
 export type { Environment, EnvironmentStatus, Machine, MachineStatus } from "./entities/environment.js";
+export type { Workspace, WorkspaceMode, WorkspaceRuntimeStatus } from "./entities/workspace.js";
 export type { LocalRepository, LocalRepositoryStatus } from "./entities/local-repository.js";
 export type {
   VersionSnapshot,
   VersionSnapshotFile,
   VersionSnapshotTrigger
 } from "./entities/version-snapshot.js";
-export type { Skill } from "./entities/skill.js";
+export type {
+  Skill,
+  SkillExecutionConfig,
+  SkillSandboxProfile,
+  SkillScope,
+  SkillSourceType,
+  SkillValidationStatus,
+  SkillVersionRecord
+} from "./entities/skill.js";
 export type { ProviderDiscoveryLog, ProviderDiscoveryStatus } from "./entities/provider-discovery-log.js";
 export type { Subprompt, SubpromptCategory } from "./entities/subprompt.js";
 export type { Tenant, TenantPermissions, TenantRole, UserTenant } from "./entities/tenant.js";
