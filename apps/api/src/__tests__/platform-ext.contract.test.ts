@@ -157,6 +157,13 @@ describe("Platform extension API contract", () => {
     expect(history.statusCode).toBe(200);
     expect(Array.isArray((history.json() as { items: unknown[] }).items)).toBe(true);
 
+    const legacyScan = await app.inject({
+      method: "POST",
+      url: `/local-repos/${localRepositoryId}/scan`
+    });
+    expect(legacyScan.statusCode).toBe(409);
+    expect(legacyScan.json()).toMatchObject({ error: "legacy_scan_path_disabled" });
+
     const scheduled = await app.inject({
       method: "POST",
       url: `/local-repos/${localRepositoryId}/scan/schedule`

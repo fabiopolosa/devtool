@@ -195,16 +195,10 @@ export const localRepositoriesRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const principal = requireRole(request, reply, "admin");
       if (!principal) return;
-      try {
-        const item = await localRepositoriesService.scanRepository(
-          request.params.localRepositoryId,
-          request.authPrincipal?.userId ?? "system"
-        );
-        return { item };
-      } catch (error) {
-        if (handleLocalRepoPathValidationError(reply, error)) return;
-        throw error;
-      }
+      return reply.code(409).send({
+        error: "legacy_scan_path_disabled",
+        message: "Use /local-repos/:localRepositoryId/scan/schedule to queue scans through the worker job path."
+      });
     }
   );
 

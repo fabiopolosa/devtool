@@ -197,16 +197,16 @@ export function LocalReposPage() {
     }
   };
 
-  const triggerScan = async (scheduled: boolean): Promise<void> => {
+  const triggerScan = async (): Promise<void> => {
     if (!selectedRepoId) return;
     setError(undefined);
     try {
-      const endpoint = scheduled
-        ? `/local-repos/${selectedRepoId}/scan/schedule`
-        : `/local-repos/${selectedRepoId}/scan`;
-      const { response, body } = await authActions.apiFetchJson<{ message?: string }>(endpoint, {
-        method: 'POST'
-      });
+      const { response, body } = await authActions.apiFetchJson<{ message?: string }>(
+        `/local-repos/${selectedRepoId}/scan/schedule`,
+        {
+          method: 'POST'
+        }
+      );
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to trigger scan (HTTP ${response.status})`);
       }
@@ -337,8 +337,7 @@ export function LocalReposPage() {
 
           {selectedRepository && isAdmin ? (
             <div className="mb-3 flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => void triggerScan(false)}>Scan now</Button>
-              <Button onClick={() => void triggerScan(true)}>Schedule scan</Button>
+              <Button onClick={() => void triggerScan()}>Queue scan</Button>
             </div>
           ) : null}
 
