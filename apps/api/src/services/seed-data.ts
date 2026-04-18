@@ -1,6 +1,8 @@
 import {
   approvalStatuses,
   type AgentConfig,
+  buildAgentRuntimeProfile,
+  buildHeartbeatPolicy,
   type BrainstormPlan,
   type BrainstormSession,
   type AuditEvent,
@@ -1298,6 +1300,23 @@ const plannerAgent: AgentConfig = {
   runtimeConfig: {
     promptSource: "registry"
   },
+  runtimeProfile: buildAgentRuntimeProfile("mcp_runtime", {
+    runtimeKind: "mcp_bridge",
+    vendor: "openai_codex",
+    host: "local_worker",
+    launchMode: "queued",
+    command: "devtools-agent",
+    args: ["agent", "run", "--name", "planner"],
+    cwd: "/Users/andromeda/devtool",
+    mcpServerRef: "mcp_connection_001",
+    metadata: {
+      promptSource: "registry"
+    }
+  }),
+  heartbeatPolicy: buildHeartbeatPolicy({
+    interval: "5m",
+    triggers: ["manual", "on_startup"]
+  }),
   capabilities: ["chat_reasoning"],
   createdAt: now,
   updatedAt: now,
@@ -1316,6 +1335,22 @@ const coderAgent: AgentConfig = {
   runtimeConfig: {
     promptSource: "registry"
   },
+  runtimeProfile: buildAgentRuntimeProfile("mcp_runtime", {
+    runtimeKind: "custom_command",
+    vendor: "claude_code",
+    host: "local_worker",
+    launchMode: "interactive",
+    command: "claude-code",
+    args: ["agent", "run", "--name", "coder"],
+    cwd: "/Users/andromeda/devtool",
+    metadata: {
+      promptSource: "registry"
+    }
+  }),
+  heartbeatPolicy: buildHeartbeatPolicy({
+    interval: "1m",
+    triggers: ["manual", "after_failure"]
+  }),
   capabilities: ["coding"],
   createdAt: now,
   updatedAt: now,
@@ -1334,6 +1369,22 @@ const reviewerAgent: AgentConfig = {
   runtimeConfig: {
     promptSource: "registry"
   },
+  runtimeProfile: buildAgentRuntimeProfile("mcp_runtime", {
+    runtimeKind: "legacy_command",
+    vendor: "generic_cli",
+    host: "desktop_app",
+    launchMode: "headless",
+    command: "devtools-agent",
+    args: ["agent", "run", "--name", "reviewer"],
+    cwd: "/Users/andromeda/devtool",
+    metadata: {
+      promptSource: "registry"
+    }
+  }),
+  heartbeatPolicy: buildHeartbeatPolicy({
+    interval: "15m",
+    triggers: ["manual"]
+  }),
   capabilities: ["chat_reasoning", "coding"],
   createdAt: now,
   updatedAt: now,
@@ -1352,6 +1403,21 @@ const researcherAgent: AgentConfig = {
   runtimeConfig: {
     promptSource: "registry"
   },
+  runtimeProfile: buildAgentRuntimeProfile("mcp_runtime", {
+    runtimeKind: "server_api",
+    vendor: "gemini_api",
+    host: "api",
+    launchMode: "queued",
+    apiConfigRef: "provider_001",
+    workerPoolSize: 2,
+    metadata: {
+      promptSource: "registry"
+    }
+  }),
+  heartbeatPolicy: buildHeartbeatPolicy({
+    interval: "30m",
+    triggers: ["manual", "on_startup"]
+  }),
   capabilities: ["chat_reasoning"],
   createdAt: now,
   updatedAt: now,
@@ -1371,6 +1437,24 @@ const contentDirectorAgent: AgentConfig = {
     promptSource: "registry",
     workflow: "content_pipeline"
   },
+  runtimeProfile: buildAgentRuntimeProfile("mcp_runtime", {
+    runtimeKind: "mcp_bridge",
+    vendor: "openai_api",
+    host: "remote_worker",
+    launchMode: "queued",
+    command: "devtools-agent",
+    args: ["agent", "run", "--name", "content-director"],
+    cwd: "/Users/andromeda/devtool",
+    mcpServerRef: "mcp_connection_001",
+    metadata: {
+      promptSource: "registry",
+      workflow: "content_pipeline"
+    }
+  }),
+  heartbeatPolicy: buildHeartbeatPolicy({
+    interval: "5m",
+    triggers: ["manual", "after_deploy"]
+  }),
   capabilities: ["chat_reasoning"],
   createdAt: now,
   updatedAt: now,
@@ -1390,6 +1474,23 @@ const multimodalDesignerAgent: AgentConfig = {
     promptSource: "registry",
     workflow: "multimodal_pipeline"
   },
+  runtimeProfile: buildAgentRuntimeProfile("mcp_runtime", {
+    runtimeKind: "desktop_cli",
+    vendor: "gemini_cli",
+    host: "desktop_app",
+    launchMode: "interactive",
+    command: "gemini",
+    args: ["agent", "run", "--name", "multimodal-designer"],
+    cwd: "/Users/andromeda/devtool",
+    metadata: {
+      promptSource: "registry",
+      workflow: "multimodal_pipeline"
+    }
+  }),
+  heartbeatPolicy: buildHeartbeatPolicy({
+    interval: "manual",
+    triggers: ["manual"]
+  }),
   capabilities: ["chat_reasoning", "image_generation"],
   createdAt: now,
   updatedAt: now,

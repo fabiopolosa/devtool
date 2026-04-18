@@ -513,6 +513,26 @@ export type {
   SchemaDocTable
 } from "./entities/schema-doc.js";
 export type { Environment, EnvironmentStatus, Machine, MachineStatus } from "./entities/environment.js";
+export type {
+  HeartbeatIntervalPreset,
+  HeartbeatPolicy,
+  HeartbeatTriggerPreset
+} from "./entities/heartbeat-policy.js";
+export { buildHeartbeatPolicy } from "./entities/heartbeat-policy.js";
+export type {
+  AgentLaunchMode,
+  AgentRuntimeHost,
+  AgentRuntimeKind,
+  AgentRuntimeProfile,
+  AgentRuntimeVendor
+} from "./entities/runtime-profile.js";
+export {
+  agentRuntimeAdapterTypeToRuntimeKindMap,
+  buildAgentRuntimeProfile,
+  resolveAgentRuntimeKind
+} from "./entities/runtime-profile.js";
+export type { ProjectRuntimeProfile } from "./entities/project-runtime-profile.js";
+export { buildProjectRuntimeProfile } from "./entities/project-runtime-profile.js";
 export type { Workspace, WorkspaceMode, WorkspaceRuntimeStatus } from "./entities/workspace.js";
 export type { LocalRepository, LocalRepositoryStatus } from "./entities/local-repository.js";
 export type {

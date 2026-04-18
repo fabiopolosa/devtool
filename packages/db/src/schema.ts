@@ -27,6 +27,18 @@ export const projects = pgTable(
     description: text("description"),
     status: text("status").notNull(),
     policySetId: text("policy_set_id"),
+    runtimeProfile: jsonb("runtime_profile").$type<Record<string, unknown>>().notNull().default({
+      defaultHost: "local_worker",
+      defaultExecutionMode: "queued",
+      heartbeatPolicy: {
+        interval: "manual",
+        triggers: ["manual"],
+        enabled: true,
+        metadata: {}
+      },
+      agentSelectionPolicy: {},
+      metadata: {}
+    }),
     ...auditColumns
   },
   (table) => [index("idx_projects_status").on(table.status)]
@@ -876,6 +888,13 @@ export const agents = pgTable(
     desiredSkills: jsonb("desired_skills").$type<string[]>().notNull(),
     reportTo: text("report_to"),
     runtimeConfig: jsonb("runtime_config").$type<Record<string, unknown>>().notNull(),
+    runtimeProfile: jsonb("runtime_profile").$type<Record<string, unknown>>().notNull().default({}),
+    heartbeatPolicy: jsonb("heartbeat_policy").$type<Record<string, unknown>>().notNull().default({
+      interval: "manual",
+      triggers: ["manual"],
+      enabled: true,
+      metadata: {}
+    }),
     capabilities: jsonb("capabilities").$type<string[]>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull(),
