@@ -1,13 +1,23 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { capabilityClasses, type AgentConfig, type CapabilityClass, type Skill } from "@cp/domain";
+import { capabilityClasses, type AgentConfig, type AgentRuntimeProfile, type CapabilityClass, type HeartbeatPolicy, type Skill } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
+import { HeartbeatPolicyEditor } from "@/components/runtime-profile/HeartbeatPolicyEditor";
+import { RuntimeProfilePicker } from "@/components/runtime-profile/RuntimeProfilePicker";
+import { defaultRuntimeProfile, runtimeKindToCompatibilityAdapter } from "@/components/runtime-profile/runtime-profile-utils";
 import { useAppStore } from "@/store/app-store";
 
 const defaultRuntimeConfig = {
   commandPrefix: "devtools-agent",
   timeoutMs: 60000,
   maxRetries: 2
+};
+
+const defaultHeartbeatPolicy: HeartbeatPolicy = {
+  interval: "manual",
+  triggers: ["manual"],
+  enabled: true,
+  metadata: {}
 };
 
 const parseRuntimeConfig = (raw: string): Record<string, unknown> => {
@@ -40,7 +50,8 @@ export function AgentCreatePage() {
   const [role, setRole] = useState("codex_builder");
   const [icon, setIcon] = useState("tool");
   const [description, setDescription] = useState("");
-  const [adapterType, setAdapterType] = useState<"legacy_cli" | "custom_cli" | "mcp_runtime">("mcp_runtime");
+  const [runtimeProfile, setRuntimeProfile] = useState<AgentRuntimeProfile>(defaultRuntimeProfile("mcp_bridge"));
+  const [heartbeatPolicy, setHeartbeatPolicy] = useState<HeartbeatPolicy>(defaultHeartbeatPolicy);
   const [reportTo, setReportTo] = useState("");
   const [desiredSkills, setDesiredSkills] = useState<string[]>([]);
   const [skillScopeFilter, setSkillScopeFilter] = useState<"all" | SkillScope>("all");
@@ -140,10 +151,12 @@ export function AgentCreatePage() {
           role: role.trim(),
           icon: icon.trim(),
           description: description.trim(),
-          adapterType,
+          adapterType: runtimeKindToCompatibilityAdapter(runtimeProfile.runtimeKind),
           desiredSkills,
           reportTo: reportTo.trim() || undefined,
           runtimeConfig,
+          runtimeProfile,
+          heartbeatPolicy,
           capabilities: selectedCapabilities,
           status: "active"
         })
@@ -184,15 +197,6 @@ export function AgentCreatePage() {
           <Input value={name} onChange={setName} placeholder="Agent name (e.g. codex-builder-primary)" />
           <Input value={role} onChange={setRole} placeholder="Role (e.g. codex_builder)" />
           <Input value={icon} onChange={setIcon} placeholder="Icon label (e.g. tool, brain, search)" />
-          <select
-            value={adapterType}
-            onChange={(event) => setAdapterType(event.target.value as "legacy_cli" | "custom_cli" | "mcp_runtime")}
-            className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
-          >
-            <option value="mcp_runtime">mcp_runtime</option>
-            <option value="custom_cli">custom_cli</option>
-            <option value="legacy_cli">legacy_cli</option>
-          </select>
         </div>
         <div className="mt-2">
           <textarea
@@ -282,11 +286,30 @@ export function AgentCreatePage() {
             );
           })}
         </div>
-        <textarea
-          value={runtimeConfigRaw}
-          onChange={(event) => setRuntimeConfigRaw(event.target.value)}
-          className="mt-3 min-h-48 w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 font-mono text-xs text-white outline-none focus:border-cyan-400/40"
-        />
+        <div className="mt-4">
+          <RuntimeProfilePicker
+            value={runtimeProfile}
+            onChange={setRuntimeProfile}
+            title="Runtime profile"
+            subtitle="Select the runtime family, vendor implementation, host and launch mode"
+          />
+        </div>
+        <div className="mt-4">
+          <HeartbeatPolicyEditor
+            value={heartbeatPolicy}
+            onChange={setHeartbeatPolicy}
+            title="Agent heartbeat policy"
+            subtitle="Schedule and trigger policy for this agent"
+          />
+        </div>
+        <div className="mt-4">
+          <div className="label">Advanced runtime config</div>
+          <textarea
+            value={runtimeConfigRaw}
+            onChange={(event) => setRuntimeConfigRaw(event.target.value)}
+            className="mt-2 min-h-48 w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 font-mono text-xs text-white outline-none focus:border-cyan-400/40"
+          />
+        </div>
         <div className="mt-3 flex items-center gap-2">
           <Button variant="primary" onClick={() => void submit()}>
             {saving ? "Creating..." : "Create agent"}

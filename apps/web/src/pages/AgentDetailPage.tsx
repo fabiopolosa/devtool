@@ -1,7 +1,14 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { capabilityClasses, type AgentConfig, type CapabilityClass, type Skill } from "@cp/domain";
+import { capabilityClasses, type AgentConfig, type AgentRuntimeProfile, type CapabilityClass, type HeartbeatPolicy, type Skill } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
+import { HeartbeatPolicyEditor } from "@/components/runtime-profile/HeartbeatPolicyEditor";
+import { RuntimeProfilePicker } from "@/components/runtime-profile/RuntimeProfilePicker";
+import {
+  defaultRuntimeProfile,
+  runtimeKindFromAdapterType,
+  runtimeKindToCompatibilityAdapter
+} from "@/components/runtime-profile/runtime-profile-utils";
 import { useAppStore } from "@/store/app-store";
 import { usePathParam } from "./_utils";
 
@@ -24,6 +31,13 @@ const parseRuntimeConfig = (raw: string): Record<string, unknown> => {
     throw new Error("Runtime config must be a JSON object");
   }
   return parsed as Record<string, unknown>;
+};
+
+const defaultHeartbeatPolicy: HeartbeatPolicy = {
+  interval: "manual",
+  triggers: ["manual"],
+  enabled: true,
+  metadata: {}
 };
 
 type SkillScope = "system" | "tenant" | "user";
@@ -65,7 +79,8 @@ export function AgentDetailPage() {
   const [role, setRole] = useState("");
   const [icon, setIcon] = useState("");
   const [description, setDescription] = useState("");
-  const [adapterType, setAdapterType] = useState<"legacy_cli" | "custom_cli" | "mcp_runtime">("mcp_runtime");
+  const [runtimeProfile, setRuntimeProfile] = useState<AgentRuntimeProfile>(defaultRuntimeProfile("mcp_bridge"));
+  const [heartbeatPolicy, setHeartbeatPolicy] = useState<HeartbeatPolicy>(defaultHeartbeatPolicy);
   const [reportTo, setReportTo] = useState("");
   const [status, setStatus] = useState<"active" | "paused" | "degraded" | "error">("active");
   const [desiredSkills, setDesiredSkills] = useState<string[]>([]);
@@ -111,7 +126,10 @@ export function AgentDetailPage() {
       setRole(loadedAgent.role);
       setIcon(loadedAgent.icon);
       setDescription(loadedAgent.description);
-      setAdapterType(loadedAgent.adapterType);
+      setRuntimeProfile(
+        loadedAgent.runtimeProfile ?? defaultRuntimeProfile(runtimeKindFromAdapterType(loadedAgent.adapterType))
+      );
+      setHeartbeatPolicy(loadedAgent.heartbeatPolicy ?? defaultHeartbeatPolicy);
       setReportTo(loadedAgent.reportTo ?? "");
       setStatus(loadedAgent.status);
       setDesiredSkills(loadedAgent.desiredSkills);
@@ -226,10 +244,12 @@ export function AgentDetailPage() {
           role: role.trim(),
           icon: icon.trim(),
           description: description.trim(),
-          adapterType,
+          adapterType: runtimeKindToCompatibilityAdapter(runtimeProfile.runtimeKind),
           reportTo: reportTo.trim() || undefined,
           desiredSkills,
           runtimeConfig,
+          runtimeProfile,
+          heartbeatPolicy,
           capabilities: selectedCapabilities,
           status
         })
@@ -314,15 +334,6 @@ export function AgentDetailPage() {
           <Input value={role} onChange={setRole} placeholder="Role" />
           <Input value={icon} onChange={setIcon} placeholder="Icon label" />
           <select
-            value={adapterType}
-            onChange={(event) => setAdapterType(event.target.value as "legacy_cli" | "custom_cli" | "mcp_runtime")}
-            className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
-          >
-            <option value="mcp_runtime">mcp_runtime</option>
-            <option value="custom_cli">custom_cli</option>
-            <option value="legacy_cli">legacy_cli</option>
-          </select>
-          <select
             value={status}
             onChange={(event) => setStatus(event.target.value as "active" | "paused" | "degraded" | "error")}
             className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400/40"
@@ -351,11 +362,30 @@ export function AgentDetailPage() {
           className="mt-2 min-h-20 w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-400/40"
           placeholder="Describe the agent responsibilities."
         />
-        <textarea
-          value={runtimeConfigRaw}
-          onChange={(event) => setRuntimeConfigRaw(event.target.value)}
-          className="mt-2 min-h-40 w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 font-mono text-xs text-white outline-none focus:border-cyan-400/40"
-        />
+        <div className="mt-4">
+          <RuntimeProfilePicker
+            value={runtimeProfile}
+            onChange={setRuntimeProfile}
+            title="Runtime profile"
+            subtitle="Family, vendor, host and launch mode"
+          />
+        </div>
+        <div className="mt-4">
+          <HeartbeatPolicyEditor
+            value={heartbeatPolicy}
+            onChange={setHeartbeatPolicy}
+            title="Agent heartbeat policy"
+            subtitle="Schedule and trigger policy for this agent"
+          />
+        </div>
+        <div className="mt-4">
+          <div className="label">Advanced runtime config</div>
+          <textarea
+            value={runtimeConfigRaw}
+            onChange={(event) => setRuntimeConfigRaw(event.target.value)}
+            className="mt-2 min-h-40 w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 font-mono text-xs text-white outline-none focus:border-cyan-400/40"
+          />
+        </div>
       </Panel>
 
       <Panel>

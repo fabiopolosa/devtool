@@ -2,6 +2,15 @@ import { Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentConfig } from "@cp/domain";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
+import {
+  describeHeartbeatPolicy,
+  describeRuntimeProfile,
+  resolveRuntimeProfileForAgent,
+  runtimeHostLabels,
+  runtimeKindLabels,
+  runtimeVendorLabels,
+  launchModeLabels
+} from "@/components/runtime-profile/runtime-profile-utils";
 import { useAppStore } from "@/store/app-store";
 
 type AgentRuntimeJobReference = {
@@ -181,6 +190,7 @@ export function AgentsListPage() {
         {filteredItems.map((agent) => {
           const jobRef = jobRefs[agent.id];
           const snapshot = jobRef ? jobSnapshots[jobRef.jobId] : undefined;
+          const runtimeProfile = resolveRuntimeProfileForAgent(agent);
           return (
             <Panel key={agent.id}>
               <div className="flex items-start justify-between gap-3">
@@ -200,6 +210,16 @@ export function AgentsListPage() {
                   </Pill>
                 ))}
               </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Pill tone="default">family {runtimeKindLabels[runtimeProfile.runtimeKind]}</Pill>
+                <Pill tone="default">vendor {runtimeVendorLabels[runtimeProfile.vendor]}</Pill>
+                <Pill tone="default">host {runtimeHostLabels[runtimeProfile.host]}</Pill>
+                <Pill tone="default">mode {launchModeLabels[runtimeProfile.launchMode]}</Pill>
+              </div>
+              <p className="mt-3 text-xs text-slate-400">{describeRuntimeProfile(runtimeProfile)}</p>
+              <p className="mt-1 text-xs text-cyan-100/80">
+                Heartbeat {describeHeartbeatPolicy(agent.heartbeatPolicy)}
+              </p>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Link
                   to="/settings/agents/$agentId"

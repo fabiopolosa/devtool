@@ -4,6 +4,7 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { ActivityPage } from '@/pages/ActivityPage';
 import { ProjectsPage } from '@/pages/ProjectsPage';
 import { ProjectDetailPage } from '@/pages/ProjectDetailPage';
+import { ProjectOnboardingPage } from '@/pages/ProjectOnboardingPage';
 import { ProjectTasksPage } from '@/pages/ProjectTasksPage';
 import { ProjectPipelinesPage } from '@/pages/ProjectPipelinesPage';
 import { RepositoriesPage } from '@/pages/RepositoriesPage';
@@ -69,6 +70,12 @@ const projectWorkspaceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'project/$projectId',
   component: ProjectDetailPage
+});
+
+const projectOnboardingRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'project/$projectId/onboarding',
+  component: ProjectOnboardingPage
 });
 
 const projectTasksListRoute = createRoute({
@@ -376,6 +383,7 @@ const routeTree = rootRoute.addChildren([
   activityRoute,
   projectsRoute,
   projectWorkspaceRoute,
+  projectOnboardingRoute,
   projectTasksListRoute,
   projectPipelinesRoute,
   projectAgentsRoute,

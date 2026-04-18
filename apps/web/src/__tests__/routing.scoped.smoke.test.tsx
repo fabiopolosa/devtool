@@ -117,4 +117,23 @@ describe("Scoped routing smoke", () => {
       expect(router.state.location.pathname).toBe("/project/proj-control-plane/brainstorming");
     });
   });
+
+  it("supports project onboarding route", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ items: [] })));
+    window.history.pushState({}, "", "/project/proj-control-plane/onboarding");
+    await router.navigate({
+      to: "/project/$projectId/onboarding",
+      params: { projectId: "proj-control-plane" }
+    });
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <RouterProvider router={router} />
+      </AppStoreProvider>
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/project/proj-control-plane/onboarding");
+    });
+  });
 });

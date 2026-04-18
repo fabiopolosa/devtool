@@ -1,8 +1,10 @@
 import { Link } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Job } from '@cp/domain';
+import type { Job, ProjectRuntimeProfile } from '@cp/domain';
 import { Button, Panel, Pill, SectionHeading } from '@/components/common';
 import { ApprovalBar, PlannerOutputCard, TaskTimeline } from '@/components/panels';
+import { WorkspaceBrowserPicker } from '@/components/project-onboarding/WorkspaceBrowserPicker';
+import { describeHeartbeatPolicy, launchModeLabels, runtimeHostLabels } from '@/components/runtime-profile/runtime-profile-utils';
 import { usePathParam } from './_utils';
 import { useAppStore } from '@/store/app-store';
 
@@ -41,6 +43,23 @@ type WorkspacePathValidation = {
 
 type WorkspaceAction = 'start' | 'stop' | 'deploy' | 'restart';
 
+type ProjectHeartbeatStatus = {
+  projectId: string;
+  projectName: string;
+  runtimeProfile: ProjectRuntimeProfile;
+  lastTriggeredAt?: string;
+  lastTrigger?: string;
+  lastTriggeredBy?: string;
+  lastReason?: string;
+  lastJobIds: string[];
+  overallStatus: 'idle' | 'queued' | 'running' | 'done' | 'error' | 'disabled';
+  due: boolean;
+  completedCount: number;
+  failedCount: number;
+  runningCount: number;
+  queuedCount: number;
+};
+
 const resolveWorkspaceExecutionMode = (workspaceMode: WorkspaceItem['mode']): 'local' | 'remote' =>
   workspaceMode === 'local' ? 'local' : 'remote';
 
@@ -51,6 +70,14 @@ const resolveWorkspaceStatusTone = (
   if (status === 'starting' || status === 'deploying') return 'accent';
   if (status === 'error') return 'bad';
   if (status === 'unknown') return 'warn';
+  return 'default';
+};
+
+const heartbeatTone = (status: ProjectHeartbeatStatus['overallStatus']): 'default' | 'good' | 'warn' | 'bad' | 'accent' => {
+  if (status === 'done') return 'good';
+  if (status === 'running' || status === 'queued') return 'accent';
+  if (status === 'error') return 'bad';
+  if (status === 'disabled') return 'warn';
   return 'default';
 };
 
@@ -89,6 +116,10 @@ export function ProjectDetailPage() {
   const [workspaceNotice, setWorkspaceNotice] = useState<string | undefined>();
   const [workspaceModeDraft, setWorkspaceModeDraft] = useState<'local' | 'remote'>('local');
   const [workspacePathDraft, setWorkspacePathDraft] = useState('');
+  const [projectRuntime, setProjectRuntime] = useState<ProjectRuntimeProfile | undefined>();
+  const [heartbeatStatus, setHeartbeatStatus] = useState<ProjectHeartbeatStatus | undefined>();
+  const [heartbeatRunning, setHeartbeatRunning] = useState<'manual' | 'tick' | undefined>();
+  const [projectRuntimeError, setProjectRuntimeError] = useState<string | undefined>();
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -165,6 +196,41 @@ export function ProjectDetailPage() {
     } finally {
       if (!isMountedRef.current) return;
       setWorkspaceLoading(false);
+    }
+  }, [authActions, scopedProjectId]);
+
+  const loadProjectRuntime = useCallback(async (): Promise<void> => {
+    if (!scopedProjectId) {
+      if (!isMountedRef.current) return;
+      setProjectRuntime(undefined);
+      setHeartbeatStatus(undefined);
+      return;
+    }
+    if (!isMountedRef.current) return;
+    setProjectRuntimeError(undefined);
+    try {
+      const [runtimeResponse, heartbeatResponse] = await Promise.all([
+        authActions.apiFetchJson<{ item?: { runtimeProfile?: ProjectRuntimeProfile }; message?: string }>(
+          `/projects/${scopedProjectId}/runtime`
+        ),
+        authActions.apiFetchJson<{ item?: ProjectHeartbeatStatus; message?: string }>(
+          `/projects/${scopedProjectId}/runtime/heartbeat/status`
+        )
+      ]);
+
+      if (!runtimeResponse.response.ok || !runtimeResponse.body.item) {
+        throw new Error(runtimeResponse.body.message ?? `Unable to load project runtime (HTTP ${runtimeResponse.response.status})`);
+      }
+      if (!heartbeatResponse.response.ok || !heartbeatResponse.body.item) {
+        throw new Error(heartbeatResponse.body.message ?? `Unable to load project heartbeat status (HTTP ${heartbeatResponse.response.status})`);
+      }
+
+      if (!isMountedRef.current) return;
+      setProjectRuntime(runtimeResponse.body.item.runtimeProfile ? runtimeResponse.body.item.runtimeProfile : undefined);
+      setHeartbeatStatus(heartbeatResponse.body.item);
+    } catch (error) {
+      if (!isMountedRef.current) return;
+      setProjectRuntimeError(error instanceof Error ? error.message : 'Unable to load project runtime');
     }
   }, [authActions, scopedProjectId]);
 
@@ -250,6 +316,17 @@ export function ProjectDetailPage() {
       setWorkspace(item);
       setWorkspaceModeDraft(item.mode);
       setWorkspacePathDraft(item.localPath ?? '');
+      const runtimeResponse = await authActions.apiFetchJson<{ item?: { runtimeProfile?: ProjectRuntimeProfile }; message?: string }>(
+        `/projects/${scopedProjectId}/runtime`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ workspaceId: item.id })
+        }
+      );
+      if (!runtimeResponse.response.ok || !runtimeResponse.body.item) {
+        throw new Error(runtimeResponse.body.message ?? `Unable to update project runtime workspace (HTTP ${runtimeResponse.response.status})`);
+      }
+      setProjectRuntime(runtimeResponse.body.item.runtimeProfile ?? undefined);
       setWorkspaceNotice('Workspace configuration saved.');
     } catch (error) {
       if (!isMountedRef.current) return;
@@ -303,12 +380,48 @@ export function ProjectDetailPage() {
     [authActions, loadJobs, loadWorkspace, scopedProjectId, upsertWorkspaceConfig, waitForJobCompletion, workspace]
   );
 
+  const runProjectHeartbeat = useCallback(
+    async (mode: 'manual' | 'tick'): Promise<void> => {
+      if (!scopedProjectId) return;
+      setHeartbeatRunning(mode);
+      setProjectRuntimeError(undefined);
+      try {
+        const endpoint =
+          mode === 'manual'
+            ? `/projects/${scopedProjectId}/runtime/heartbeat`
+            : `/projects/${scopedProjectId}/runtime/heartbeat/tick`;
+        const { response, body } = await authActions.apiFetchJson<{
+          item?: { jobs?: Array<{ jobId: string }>; targets?: Array<{ agentName: string }> };
+          message?: string;
+        }>(endpoint, {
+          method: 'POST',
+          body: JSON.stringify(mode === 'manual' ? { trigger: 'manual', reason: 'project_detail_ui' } : { reason: 'project_detail_ui' })
+        });
+        if (!response.ok || !body.item) {
+          throw new Error(body.message ?? `Unable to ${mode} project heartbeat (HTTP ${response.status})`);
+        }
+        setWorkspaceNotice(
+          mode === 'manual'
+            ? `Heartbeat dispatched to ${body.item.targets?.length ?? 0} agent(s).`
+            : `Scheduler tick completed with ${body.item.jobs?.length ?? 0} job(s).`
+        );
+        await loadProjectRuntime();
+      } catch (error) {
+        setProjectRuntimeError(error instanceof Error ? error.message : `Unable to ${mode} project heartbeat`);
+      } finally {
+        setHeartbeatRunning(undefined);
+      }
+    },
+    [authActions, loadProjectRuntime, scopedProjectId]
+  );
+
   useEffect(() => {
     if (auth.enabled && auth.required) return;
     if (!scopedProjectId) return;
     void loadJobs();
     void loadWorkspace();
-  }, [auth.enabled, auth.required, loadJobs, loadWorkspace, scopedProjectId]);
+    void loadProjectRuntime();
+  }, [auth.enabled, auth.required, loadJobs, loadProjectRuntime, loadWorkspace, scopedProjectId]);
 
   if (!project) return <Panel>No project found.</Panel>;
 
@@ -349,13 +462,53 @@ export function ProjectDetailPage() {
         <div className="mt-3 flex gap-2">
           <Link to="/project/$projectId/repositories" params={{ projectId: project.id }} className="btn btn-ghost">Repositories</Link>
           <Link to="/project/$projectId/roadmap" params={{ projectId: project.id }} className="btn btn-ghost">Roadmap</Link>
+          <Link to="/project/$projectId/onboarding" params={{ projectId: project.id }} className="btn btn-ghost">
+            Onboarding
+          </Link>
+        </div>
+      </Panel>
+
+      <Panel>
+        <SectionHeading
+          title="Project Runtime"
+          subtitle="Primary agent, default host and heartbeat policy"
+          action={
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => void loadProjectRuntime()}>
+                Refresh runtime
+              </Button>
+              <Button variant="secondary" onClick={() => void runProjectHeartbeat('manual')} disabled={Boolean(heartbeatRunning)}>
+                {heartbeatRunning === 'manual' ? 'Triggering...' : 'Run heartbeat'}
+              </Button>
+              <Button variant="secondary" onClick={() => void runProjectHeartbeat('tick')} disabled={Boolean(heartbeatRunning)}>
+                {heartbeatRunning === 'tick' ? 'Ticking...' : 'Scheduler tick'}
+              </Button>
+            </div>
+          }
+        />
+        {projectRuntimeError ? <p className="text-sm text-[color:var(--bad)]">{projectRuntimeError}</p> : null}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Pill tone="default">host {runtimeHostLabels[projectRuntime?.defaultHost ?? 'local_worker']}</Pill>
+          <Pill tone="default">mode {launchModeLabels[projectRuntime?.defaultExecutionMode ?? 'queued']}</Pill>
+          <Pill tone={heartbeatTone(heartbeatStatus?.overallStatus ?? 'idle')}>status {heartbeatStatus?.overallStatus ?? 'idle'}</Pill>
+          <Pill tone={heartbeatStatus?.due ? 'warn' : 'default'}>{heartbeatStatus?.due ? 'due' : 'not due'}</Pill>
+          {projectRuntime?.primaryAgentId ? <Pill tone="good">primary agent {projectRuntime.primaryAgentId}</Pill> : <Pill tone="warn">primary agent not set</Pill>}
+        </div>
+        <p className="mt-3 text-sm text-slate-300">
+          {describeHeartbeatPolicy(projectRuntime?.heartbeatPolicy ?? undefined)}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--muted)]">
+          <Pill tone="default">jobs {heartbeatStatus?.lastJobIds.length ?? 0}</Pill>
+          <Pill tone="default">completed {heartbeatStatus?.completedCount ?? 0}</Pill>
+          <Pill tone="default">running {heartbeatStatus?.runningCount ?? 0}</Pill>
+          <Pill tone="default">failed {heartbeatStatus?.failedCount ?? 0}</Pill>
         </div>
       </Panel>
 
       <Panel>
         <SectionHeading
           title="Workspace Runtime"
-          subtitle="Project execution workspace (not a folder abstraction)"
+          subtitle="Project execution workspace (server-side folder browser)"
           action={
             <Button variant="secondary" onClick={() => void loadWorkspace()}>
               {workspaceLoading ? 'Refreshing...' : 'Refresh'}
@@ -377,17 +530,14 @@ export function ProjectDetailPage() {
               <option value="remote">remote</option>
             </select>
           </div>
-          <div className="md:col-span-2">
-            <div className="label">Local path (optional)</div>
-            <input
-              className="cp-input mt-1"
-              type="text"
-              value={workspacePathDraft}
-              onChange={(event) => setWorkspacePathDraft(event.target.value)}
-              placeholder="/Users/andromeda/devtool"
-              disabled={workspaceSaving || Boolean(workspaceRunningAction)}
-            />
-          </div>
+        </div>
+        <div className="mt-3">
+          <WorkspaceBrowserPicker
+            value={workspacePathDraft || undefined}
+            onChange={(path) => setWorkspacePathDraft(path ?? '')}
+            title="Browse workspace folders"
+            subtitle="Select a folder from allowed roots"
+          />
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={() => void saveWorkspaceConfig()} disabled={Boolean(workspaceRunningAction)}>

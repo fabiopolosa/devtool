@@ -29,6 +29,20 @@ const installApiFetchMock = () => {
               description: "Primary builder",
               adapterType: "legacy_cli",
               desiredSkills: ["checks"],
+              runtimeProfile: {
+                runtimeKind: "desktop_cli",
+                vendor: "openai_codex",
+                host: "desktop_app",
+                launchMode: "interactive",
+                args: [],
+                metadata: {}
+              },
+              heartbeatPolicy: {
+                interval: "5m",
+                triggers: ["manual", "on_startup"],
+                enabled: true,
+                metadata: {}
+              },
               runtimeConfig: { commandPrefix: "devtools-agent" },
               capabilities: ["coding"],
               createdAt: "2026-04-14T10:00:00.000Z",
@@ -101,6 +115,8 @@ describe("Agents pages smoke", () => {
 
     expect(await screen.findByRole("heading", { name: "Agents" })).toBeInTheDocument();
     expect(await screen.findByText(/codex-builder-primary/i)).toBeInTheDocument();
+    expect(screen.getByText(/family Desktop CLI/i)).toBeInTheDocument();
+    expect(screen.getByText(/vendor OpenAI Codex CLI/i)).toBeInTheDocument();
   });
 
   it("renders agent create page", async () => {
@@ -117,6 +133,8 @@ describe("Agents pages smoke", () => {
 
     expect(await screen.findByText("Create Agent")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Agent name (e.g. codex-builder-primary)")).toBeInTheDocument();
+    expect(screen.getByText("Runtime profile")).toBeInTheDocument();
+    expect(screen.getByText("Agent heartbeat policy")).toBeInTheDocument();
   });
 
   it("renders runtime diagnostics page", async () => {
