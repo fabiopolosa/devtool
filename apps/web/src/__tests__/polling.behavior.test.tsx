@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppStoreProvider, useAppStore } from "../store/app-store";
+import { DashboardPage } from "../pages/DashboardPage";
+
+vi.mock("@tanstack/react-router", async () => {
+  const actual = await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
+  return {
+    ...actual,
+    useNavigate: () => vi.fn()
+  };
+});
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -48,6 +57,7 @@ function ConcurrentFetchProbe() {
 
 describe("Polling behavior", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -83,5 +93,64 @@ describe("Polling behavior", () => {
 
     expect(await screen.findByText("done")).toBeInTheDocument();
     expect(agentCalls).toBe(1);
+  });
+
+  it("refreshes the dashboard on a relaxed 12 second cadence", async () => {
+    vi.useFakeTimers();
+    let dashboardJobsCalls = 0;
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible"
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const raw = typeof input === "string" ? input : input.toString();
+        const url = raw.includes("://") ? new URL(raw) : new URL(raw, "http://localhost");
+        const path = `${url.pathname}${url.search}`;
+
+        if (path === "/jobs") {
+          dashboardJobsCalls += 1;
+          return jsonResponse({ items: [] });
+        }
+
+        if (path === "/models") {
+          return jsonResponse({ source: "mock" });
+        }
+
+        return jsonResponse({ items: [] });
+      })
+    );
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <DashboardPage />
+      </AppStoreProvider>
+    );
+
+    expect(screen.getByText("Situation Awareness")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const initialCalls = dashboardJobsCalls;
+    expect(initialCalls).toBeGreaterThan(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(11_000);
+    });
+    expect(dashboardJobsCalls).toBe(initialCalls);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(dashboardJobsCalls).toBe(initialCalls + 1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    expect(dashboardJobsCalls).toBe(initialCalls + 2);
   });
 });

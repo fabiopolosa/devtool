@@ -1,6 +1,7 @@
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentConfig, Job, Machine } from "@cp/domain";
-import { Panel, Pill, SectionHeading, StatCard } from "@/components/common";
+import { Button, Panel, Pill, SectionHeading, StatCard } from "@/components/common";
 import { useAppStore } from "@/store/app-store";
 
 type ProviderHealth = {
@@ -29,9 +30,13 @@ const sumCost = (items: UsageItem[], threshold: number): number =>
     .filter((item) => Date.parse(item.createdAt) >= threshold)
     .reduce((acc, item) => acc + item.cost, 0);
 
+const DASHBOARD_POLL_MS = 12000;
+
 export function DashboardPage() {
   const { authActions } = useAppStore();
+  const navigate = useNavigate();
   const mountedRef = useRef(false);
+  const pollInFlightRef = useRef(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
@@ -41,10 +46,13 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (input?: { silent?: boolean }) => {
+    const silent = input?.silent ?? false;
     if (!mountedRef.current) return;
-    setLoading(true);
-    setError(undefined);
+    if (!silent) {
+      setLoading(true);
+      setError(undefined);
+    }
     try {
       const [jobsData, agentsData, healthData, modelsData, usageData, machinesData] = await Promise.all([
         authActions.apiFetchJson<{ items?: Job[]; message?: string }>("/jobs"),
@@ -69,22 +77,65 @@ export function DashboardPage() {
       setModelSource(modelsData.body.source === "live" ? "live" : "mock");
       setUsage(usageData.body.items ?? []);
       setMachines(machinesData.body.items ?? []);
+      setError(undefined);
     } catch (loadError) {
       if (!mountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load dashboard");
     } finally {
       if (!mountedRef.current) return;
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [authActions]);
 
   useEffect(() => {
     mountedRef.current = true;
     void load();
-    const timer = window.setInterval(() => void load(), 3500);
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const schedule = (delay = DASHBOARD_POLL_MS): void => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void tick();
+      }, delay);
+    };
+
+    const tick = async (): Promise<void> => {
+      if (cancelled) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        schedule(30000);
+        return;
+      }
+      if (pollInFlightRef.current) {
+        schedule();
+        return;
+      }
+      pollInFlightRef.current = true;
+      try {
+        await load({ silent: true });
+      } finally {
+        pollInFlightRef.current = false;
+      }
+      schedule();
+    };
+
+    const onVisibilityChange = (): void => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        void load({ silent: true });
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    schedule();
     return () => {
+      cancelled = true;
       mountedRef.current = false;
-      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
     };
   }, [load]);
 
@@ -128,8 +179,18 @@ export function DashboardPage() {
         <SectionHeading
           title="Situation Awareness"
           subtitle="Runtime-first landing: queue pressure, failures, providers, agents, usage and worker health"
+          action={
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => void load()}>
+                {loading ? "Refreshing..." : "Refresh"}
+              </Button>
+              <Button variant="primary" onClick={() => void navigate({ to: "/projects" })}>
+                New Project
+              </Button>
+            </div>
+          }
         />
-        {loading ? <p className="text-xs text-[color:var(--muted)]">Refreshing...</p> : null}
+        {loading ? <p className="text-xs text-[color:var(--muted)]">Loading dashboard...</p> : null}
         {error ? <p className="text-sm text-[color:var(--bad)]">{error}</p> : null}
       </Panel>
 

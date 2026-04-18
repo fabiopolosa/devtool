@@ -31,6 +31,8 @@ describe("Web smoke", () => {
     expect(screen.getAllByRole("link", { name: "Activity" }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Platform" })).toBeInTheDocument();
     expect(screen.getByText("Launcher")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /\+ New Project/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New Project" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /agent chat/i })).toBeInTheDocument();
   });
 });

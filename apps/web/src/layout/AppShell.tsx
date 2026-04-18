@@ -80,7 +80,7 @@ const resolveProjectJobsPollDelay = (input: {
   runnerLikelyActive: boolean;
   consecutiveFailures: number;
 }): number => {
-  const baseDelay = input.runnerLikelyActive ? 1500 : 5000;
+  const baseDelay = input.runnerLikelyActive ? 4000 : 12000;
   return Math.min(baseDelay * 2 ** input.consecutiveFailures, 30000);
 };
 
@@ -502,7 +502,8 @@ export function AppShell() {
     defaultThreadId
   ]);
 
-  const loadProjectJobs = useCallback(async (): Promise<void> => {
+  const loadProjectJobs = useCallback(async (input?: { silent?: boolean }): Promise<void> => {
+    const silent = input?.silent ?? false;
     if (context.mode !== 'project' || !selectedProject?.id || (auth.enabled && auth.required)) {
       if (isMountedRef.current) {
         setJobs([]);
@@ -511,7 +512,7 @@ export function AppShell() {
       projectJobsPollFailuresRef.current = 0;
       return;
     }
-    if (isMountedRef.current) {
+    if (!silent && isMountedRef.current) {
       setJobsLoading(true);
       setJobsError(undefined);
     }
@@ -524,6 +525,7 @@ export function AppShell() {
       }
       if (isMountedRef.current) {
         setJobs(body.items ?? []);
+        setJobsError(undefined);
       }
       projectJobsPollFailuresRef.current = 0;
     } catch (error) {
@@ -532,7 +534,7 @@ export function AppShell() {
         setJobsError(error instanceof Error ? error.message : 'Unable to load project jobs');
       }
     } finally {
-      if (isMountedRef.current) {
+      if (!silent && isMountedRef.current) {
         setJobsLoading(false);
       }
     }
@@ -565,7 +567,11 @@ export function AppShell() {
       }
       inFlight = true;
       try {
-        await loadProjectJobs();
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+          schedule(30000);
+          return;
+        }
+        await loadProjectJobs({ silent: true });
       } finally {
         inFlight = false;
       }
@@ -812,6 +818,11 @@ export function AppShell() {
                 })
               )}
             </div>
+            <div className="platform-launcher-actions">
+              <Link to="/projects" className="platform-launcher-cta">
+                + New Project
+              </Link>
+            </div>
           </section>
         </aside>
 
@@ -823,7 +834,7 @@ export function AppShell() {
                 <div className="platform-title-sm">{selectedProject?.name ?? 'No project selected'}</div>
               </div>
               {selectedProject?.id ? (
-                <Button variant="secondary" onClick={() => void loadProjectJobs()}>
+                <Button variant="secondary" onClick={() => void loadProjectJobs({ silent: false })}>
                   Refresh
                 </Button>
               ) : null}
