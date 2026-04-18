@@ -46,8 +46,13 @@ const runnerExecutionHost = process.env.RUNNER_EXECUTION_WORKER_HOST?.trim() || 
 const runnerExecutionCapabilities = ["internal_runner", "remote_worker"];
 const runnerExecutionToken = process.env.RUNNER_EXECUTION_TOKEN?.trim();
 const defaultTenantId = process.env.DEFAULT_TENANT_ID?.trim() || "tenant_default";
+const startupRetryMs = Math.max(
+  1_000,
+  Number.parseInt(process.env.WORKER_STARTUP_RETRY_MS ?? "", 10) || 5_000
+);
 let runnerExecutionMachineId: string | null = null;
 let runnerExecutionHeartbeatTimer: NodeJS.Timeout | null = null;
+let startupRetryTimer: NodeJS.Timeout | null = null;
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -656,6 +661,11 @@ const startDagRunners = async (): Promise<void> => {
 };
 
 const stopDagRunners = async (): Promise<void> => {
+  if (startupRetryTimer) {
+    clearTimeout(startupRetryTimer);
+    startupRetryTimer = null;
+  }
+
   if (runnerExecutionHeartbeatTimer) {
     clearInterval(runnerExecutionHeartbeatTimer);
     runnerExecutionHeartbeatTimer = null;
@@ -695,11 +705,23 @@ process.on("SIGTERM", () => {
   void shutdown();
 });
 
-void startDagRunners()
-  .then(() => {
+const scheduleStartupRetry = (error: unknown): void => {
+  console.error("[worker] startup failed", error);
+  if (startupRetryTimer) return;
+  startupRetryTimer = setTimeout(() => {
+    startupRetryTimer = null;
+    void bootWorker();
+  }, startupRetryMs);
+  console.warn("[worker] retrying startup", { retryInMs: startupRetryMs });
+};
+
+const bootWorker = async (): Promise<void> => {
+  try {
+    await startDagRunners();
     console.log("[worker] started");
-  })
-  .catch((error) => {
-    console.error("[worker] startup failed", error);
-    process.exitCode = 1;
-  });
+  } catch (error) {
+    scheduleStartupRetry(error);
+  }
+};
+
+void bootWorker();
