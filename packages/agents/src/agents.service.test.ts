@@ -1,6 +1,7 @@
 import type { AgentConfig } from "@cp/domain";
 import {
   AgentService,
+  AgentRuntimeProfileValidationError,
   InMemoryAgentRuntimeScheduler,
   UnavailableAgentRuntimeScheduler,
   type AgentConfigStore
@@ -89,6 +90,87 @@ describe("@cp/agents AgentService", () => {
 
     await service.deleteAgent(created.id);
     expect((await service.listAgents()).length).toBe(0);
+  });
+
+  it("normalizes runtime profiles and heartbeat policies on create and read", async () => {
+    const store = new InMemoryAgentStore([baseAgent()]);
+    const service = new AgentService({
+      store,
+      runtimeScheduler: new InMemoryAgentRuntimeScheduler()
+    });
+
+    const listed = await service.listAgents();
+    expect(listed[0]?.runtimeProfile?.runtimeKind).toBe("legacy_command");
+    expect(listed[0]?.heartbeatPolicy?.interval).toBe("manual");
+
+    const created = await service.createAgent({
+      name: "runtime-agent",
+      role: "codex_builder",
+      icon: "⚙️",
+      description: "Runtime managed agent",
+      adapterType: "mcp_runtime",
+      desiredSkills: ["checks"],
+      runtimeConfig: {
+        commandPrefix: "devtools-agent",
+        cwd: "/Users/andromeda/devtool"
+      },
+      runtimeProfile: {
+        runtimeKind: "mcp_bridge",
+        vendor: "openai_codex",
+        host: "local_worker",
+        launchMode: "queued",
+        args: ["--workspace", "/Users/andromeda/devtool"],
+        mcpServerRef: "mcp_connection_001",
+        metadata: {
+          promptSource: "registry"
+        }
+      },
+      heartbeatPolicy: {
+        interval: "5m",
+        triggers: ["manual", "after_failure"],
+        enabled: true,
+        metadata: {
+          lastHeartbeatAt: "2026-04-14T12:00:00.000Z"
+        }
+      },
+      capabilities: ["coding"],
+      status: "active"
+    });
+
+    expect(created.runtimeProfile?.runtimeKind).toBe("mcp_bridge");
+    expect(created.runtimeProfile?.vendor).toBe("openai_codex");
+    expect(created.heartbeatPolicy?.interval).toBe("5m");
+    expect(created.heartbeatPolicy?.triggers).toContain("after_failure");
+  });
+
+  it("rejects invalid runtime profile combinations", async () => {
+    const service = new AgentService({
+      store: new InMemoryAgentStore(),
+      runtimeScheduler: new InMemoryAgentRuntimeScheduler()
+    });
+
+    await expect(
+      service.createAgent({
+        name: "bad-runtime",
+        role: "codex_builder",
+        icon: "⚙️",
+        description: "Bad runtime profile",
+        adapterType: "legacy_cli",
+        desiredSkills: [],
+        runtimeConfig: {},
+        runtimeProfile: {
+          runtimeKind: "server_api",
+          vendor: "generic_api",
+          host: "local_worker",
+          launchMode: "queued",
+          args: [],
+          apiConfigRef: "provider_001",
+          metadata: {}
+        },
+        capabilities: ["coding"],
+        status: "active"
+      })
+    ).rejects.toBeInstanceOf(AgentRuntimeProfileValidationError);
   });
 
   it("queues heartbeat and diagnose jobs", async () => {

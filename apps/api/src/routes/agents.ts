@@ -2,10 +2,15 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import type { AgentConfig } from "@cp/domain";
 import { agentConfigSchema } from "@cp/domain";
-import { AgentRuntimeSchedulerUnavailableError } from "@cp/agents";
+import { AgentRuntimeProfileValidationError, AgentRuntimeSchedulerUnavailableError } from "@cp/agents";
 import type { AgentCreateInput, AgentRuntimeInvocationOptions } from "@cp/agents";
 import { resolveSkillTenantId } from "@cp/skills";
 import { agentsService, listWorkflowRuntimeDefinitions } from "../services/agents-service.js";
+import {
+  dispatchAgentHeartbeat,
+  dispatchDueAgentHeartbeats,
+  type AgentHeartbeatTriggerPreset
+} from "../services/agent-heartbeat-service.js";
 import {
   dispatchAndAwaitRunnerJob,
   getRunnerJobOutput
@@ -36,19 +41,28 @@ const operationBodySchema = z
   })
   .optional();
 
-const toCreateInput = (data: z.infer<typeof createAgentBodySchema>): AgentCreateInput => ({
-  ...(data.id !== undefined ? { id: data.id } : {}),
-  name: data.name,
-  role: data.role,
-  icon: data.icon,
-  description: data.description,
-  adapterType: data.adapterType,
-  desiredSkills: [...data.desiredSkills],
-  ...(data.reportTo !== undefined ? { reportTo: data.reportTo } : {}),
-  runtimeConfig: { ...data.runtimeConfig },
-  capabilities: [...data.capabilities],
-  status: data.status
-});
+const toCreateInput = (data: z.infer<typeof createAgentBodySchema>): AgentCreateInput => {
+  const input: AgentCreateInput = {
+    name: data.name,
+    role: data.role,
+    icon: data.icon,
+    description: data.description,
+    adapterType: data.adapterType,
+    desiredSkills: [...data.desiredSkills],
+    runtimeConfig: { ...data.runtimeConfig },
+    capabilities: [...data.capabilities],
+    status: data.status
+  };
+  if (data.id !== undefined) input.id = data.id;
+  if (data.reportTo !== undefined) input.reportTo = data.reportTo;
+  if (data.runtimeProfile !== undefined) {
+    input.runtimeProfile = { ...data.runtimeProfile } as NonNullable<AgentCreateInput["runtimeProfile"]>;
+  }
+  if (data.heartbeatPolicy !== undefined) {
+    input.heartbeatPolicy = { ...data.heartbeatPolicy } as NonNullable<AgentCreateInput["heartbeatPolicy"]>;
+  }
+  return input;
+};
 
 const toUpdatePatch = (data: z.infer<typeof updateAgentBodySchema>): Partial<AgentConfig> => {
   const patch: Partial<AgentConfig> = {};
@@ -60,6 +74,12 @@ const toUpdatePatch = (data: z.infer<typeof updateAgentBodySchema>): Partial<Age
   if (data.desiredSkills !== undefined) patch.desiredSkills = [...data.desiredSkills];
   if (data.reportTo !== undefined) patch.reportTo = data.reportTo;
   if (data.runtimeConfig !== undefined) patch.runtimeConfig = { ...data.runtimeConfig };
+  if (data.runtimeProfile !== undefined) {
+    patch.runtimeProfile = { ...data.runtimeProfile } as NonNullable<AgentConfig["runtimeProfile"]>;
+  }
+  if (data.heartbeatPolicy !== undefined) {
+    patch.heartbeatPolicy = { ...data.heartbeatPolicy } as NonNullable<AgentConfig["heartbeatPolicy"]>;
+  }
   if (data.capabilities !== undefined) patch.capabilities = [...data.capabilities];
   if (data.status !== undefined) patch.status = data.status;
   return patch;
@@ -78,6 +98,9 @@ const toOperationOptions = (
 
 const isSchedulerUnavailableMessage = (error: unknown): boolean =>
   error instanceof Error && error.message.includes("REDIS_URL");
+
+const isRuntimeProfileValidationError = (error: unknown): error is AgentRuntimeProfileValidationError =>
+  error instanceof AgentRuntimeProfileValidationError;
 
 const buildAgentRuntimeContextMetadata = async (input: {
   tenantId: string;
@@ -203,8 +226,80 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
           message: parse.error.issues.map((issue) => issue.message).join("; ")
         });
       }
-      const item = await agentsService.createAgent(toCreateInput(parse.data));
-      return { item };
+      try {
+        const item = await agentsService.createAgent(toCreateInput(parse.data));
+        return { item };
+      } catch (error) {
+        if (isRuntimeProfileValidationError(error)) {
+          return reply.code(400).send({
+            error: "invalid_request",
+            message: error.message,
+            issues: error.issues
+          });
+        }
+        throw error;
+      }
+    }
+  );
+
+  fastify.post<{
+    Body?: {
+      trigger?: AgentHeartbeatTriggerPreset;
+      reason?: string;
+      projectId?: string;
+      limit?: number;
+      timeoutMs?: number;
+    };
+  }>(
+    "/agents/heartbeat/tick",
+    {
+      schema: {
+        tags: ["agents"],
+        summary: "Dispatch scheduled heartbeats for due agents"
+      }
+    },
+    async (request, reply) => {
+      if (!requireTenantPermission(request, reply, "canRunAgent")) return;
+      const trigger = request.body?.trigger;
+      if (
+        trigger !== undefined &&
+        trigger !== "manual" &&
+        trigger !== "on_startup" &&
+        trigger !== "after_deploy" &&
+        trigger !== "after_failure"
+      ) {
+        return reply.code(400).send({
+          error: "invalid_request",
+          message: "trigger must be one of: manual, on_startup, after_deploy, after_failure"
+        });
+      }
+
+      try {
+        const sweepInput: Parameters<typeof dispatchDueAgentHeartbeats>[0] = {
+          tenantId: request.tenantId ?? "tenant_default",
+          actor: request.authPrincipal?.userId ?? "agent_runtime"
+        };
+        if (request.body?.reason !== undefined) sweepInput.reason = request.body.reason;
+        if (request.body?.projectId !== undefined) sweepInput.projectId = request.body.projectId;
+        if (trigger !== undefined) sweepInput.trigger = trigger;
+        if (typeof request.body?.limit === "number") sweepInput.limit = request.body.limit;
+        if (typeof request.body?.timeoutMs === "number") sweepInput.timeoutMs = request.body.timeoutMs;
+        const summary = await dispatchDueAgentHeartbeats({
+          ...sweepInput
+        });
+        return { item: summary };
+      } catch (error) {
+        if (isSchedulerUnavailableMessage(error)) {
+          return reply.code(503).send({
+            error: "scheduler_unavailable",
+            message: error instanceof Error ? error.message : "Agent runtime scheduler unavailable"
+          });
+        }
+        return reply.code(400).send({
+          error: "heartbeat_tick_failed",
+          message: error instanceof Error ? error.message : "Unable to dispatch scheduled heartbeats"
+        });
+      }
     }
   );
 
@@ -239,6 +334,13 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
         );
         return { item };
       } catch (error) {
+        if (isRuntimeProfileValidationError(error)) {
+          return reply.code(400).send({
+            error: "invalid_request",
+            message: error.message,
+            issues: error.issues
+          });
+        }
         if (isSchedulerUnavailableMessage(error)) {
           return reply.code(503).send({
             error: "scheduler_unavailable",
@@ -307,27 +409,23 @@ export const agentsRoutes: FastifyPluginAsync = async (fastify) => {
             }
           };
         }
-        const job = await dispatchAndAwaitRunnerJob(
-          {
-            tenantId,
-            type: "system",
-            title: `Agent heartbeat ${request.params.agentId}`,
-            createdBy: actor,
-            payload: {
-              internalAction: "agent.runtime.heartbeat",
-              agentId: request.params.agentId,
-              ...(options?.reason ? { reason: options.reason } : {}),
-              ...(typeof options?.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
-              ...(options?.metadata ? { metadata: options.metadata } : {})
-            },
-            resourceType: "agent",
-            resourceId: request.params.agentId
-          },
-          { timeoutMs: 90_000 }
-        );
-        const output = getRunnerJobOutput<{ result?: unknown }>(job);
-        return { item: output?.result ?? null };
+        const dispatched = await dispatchAgentHeartbeat({
+          tenantId,
+          actor,
+          agentId: request.params.agentId,
+          ...(projectId ? { projectId } : {}),
+          ...(options?.reason ? { reason: options.reason } : {}),
+          ...(typeof options?.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
+          ...(options?.metadata ? { metadata: options.metadata } : {})
+        });
+        return { item: dispatched.result };
       } catch (error) {
+        if (isSchedulerUnavailableMessage(error)) {
+          return reply.code(503).send({
+            error: "scheduler_unavailable",
+            message: error instanceof Error ? error.message : "Agent runtime scheduler unavailable"
+          });
+        }
         return reply.code(404).send({
           error: "not_found",
           message: error instanceof Error ? error.message : "Agent not found"

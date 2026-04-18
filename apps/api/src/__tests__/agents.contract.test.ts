@@ -150,6 +150,87 @@ describe("Agents API contract", () => {
     expect(deleteResponse.statusCode).toBe(200);
   });
 
+  it("accepts runtime profiles and dispatches manual and scheduled heartbeats", async () => {
+    const createResponse = await inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        name: "heartbeat-managed-agent",
+        role: "worker",
+        icon: "heart",
+        description: "Managed through runtime profiles and heartbeat policies",
+        adapterType: "mcp_runtime",
+        desiredSkills: ["checks"],
+        runtimeConfig: {
+          commandPrefix: "devtools-agent"
+        },
+        runtimeProfile: {
+          runtimeKind: "mcp_bridge",
+          vendor: "openai_codex",
+          host: "local_worker",
+          launchMode: "queued",
+          args: ["--workspace", "/Users/andromeda/devtool"],
+          mcpServerRef: "mcp_connection_001",
+          metadata: {
+            source: "contract-test"
+          }
+        },
+        heartbeatPolicy: {
+          interval: "1m",
+          triggers: ["manual", "on_startup"],
+          enabled: true,
+          metadata: {}
+        },
+        capabilities: ["coding"],
+        status: "active"
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const created = createResponse.json() as {
+      item: {
+        id: string;
+        runtimeProfile?: { runtimeKind?: string; vendor?: string };
+      };
+    };
+    expect(created.item.runtimeProfile?.runtimeKind).toBe("mcp_bridge");
+    expect(created.item.runtimeProfile?.vendor).toBe("openai_codex");
+
+    const manualHeartbeat = await inject({
+      method: "POST",
+      url: `/agents/${created.item.id}/heartbeat`,
+      payload: {
+        reason: "manual_check"
+      }
+    });
+    expect(manualHeartbeat.statusCode).toBe(503);
+    const manualHeartbeatBody = manualHeartbeat.json() as {
+      error?: string;
+      message?: string;
+    };
+    expect(manualHeartbeatBody.error).toBe("scheduler_unavailable");
+    expect(manualHeartbeatBody.message).toContain("REDIS_URL");
+
+    const scheduledTick = await inject({
+      method: "POST",
+      url: "/agents/heartbeat/tick",
+      payload: {
+        trigger: "on_startup",
+        reason: "scheduled_tick"
+      }
+    });
+    expect(scheduledTick.statusCode).toBe(200);
+    const scheduledTickBody = scheduledTick.json() as {
+      item?: {
+        items?: Array<{ agentId: string; status: string; reason?: string }>;
+      };
+    };
+    expect(
+      scheduledTickBody.item?.items?.some(
+        (entry) => entry.agentId === created.item.id && entry.status === "error"
+      )
+    ).toBe(true);
+  });
+
   it("executes assigned skill via agent runtime", async () => {
     const skillsResponse = await inject({ method: "GET", url: "/skills/installed" });
     expect(skillsResponse.statusCode).toBe(200);

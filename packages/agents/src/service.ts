@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { AgentConfig } from "@cp/domain";
+import type {
+  AgentConfig,
+  AgentLaunchMode,
+  AgentRuntimeHost,
+  AgentRuntimeKind,
+  AgentRuntimeProfile,
+  AgentRuntimeVendor,
+  AgentRuntimeAdapterType,
+  HeartbeatPolicy
+} from "@cp/domain";
+import { buildHeartbeatPolicy } from "@cp/domain";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 
@@ -7,6 +17,11 @@ export interface AgentRuntimeInvocationOptions {
   reason?: string;
   timeoutMs?: number;
   metadata?: Record<string, unknown>;
+}
+
+export interface AgentRuntimeProfileValidationIssue {
+  field: string;
+  message: string;
 }
 
 export interface AgentRuntimeJobReference {
@@ -60,6 +75,20 @@ export class AgentRuntimeSchedulerUnavailableError extends Error {
   }
 }
 
+export class AgentRuntimeProfileValidationError extends Error {
+  readonly issues: AgentRuntimeProfileValidationIssue[];
+
+  constructor(issues: AgentRuntimeProfileValidationIssue[]) {
+    super(
+      issues.length > 0
+        ? `Invalid agent runtime profile: ${issues.map((issue) => issue.message).join("; ")}`
+        : "Invalid agent runtime profile"
+    );
+    this.name = "AgentRuntimeProfileValidationError";
+    this.issues = issues;
+  }
+}
+
 export interface AgentRuntimeJobData {
   agentId: string;
   operation: "heartbeat" | "diagnose";
@@ -70,20 +99,314 @@ export interface AgentRuntimeJobData {
   metadata: Record<string, unknown>;
 }
 
-const resolveCliCommand = (agent: AgentConfig): string => {
-  const runtimeCommand = agent.runtimeConfig.commandPrefix;
-  if (typeof runtimeCommand === "string" && runtimeCommand.trim().length > 0) {
-    return runtimeCommand.trim();
+const agentRuntimeAdapterTypeToRuntimeKindMap = {
+  mcp_runtime: "mcp_bridge",
+  custom_cli: "custom_command",
+  legacy_cli: "legacy_command"
+} as const satisfies Record<AgentRuntimeAdapterType, AgentRuntimeKind>;
+
+const agentRuntimeKindDefaults: Record<
+  AgentRuntimeKind,
+  {
+    vendor: AgentRuntimeVendor;
+    host: AgentRuntimeHost;
+    launchMode: AgentLaunchMode;
   }
+> = {
+  desktop_cli: {
+    vendor: "generic_cli",
+    host: "desktop_app",
+    launchMode: "interactive"
+  },
+  server_api: {
+    vendor: "generic_api",
+    host: "api",
+    launchMode: "queued"
+  },
+  mcp_bridge: {
+    vendor: "generic_cli",
+    host: "local_worker",
+    launchMode: "queued"
+  },
+  custom_command: {
+    vendor: "generic_cli",
+    host: "local_worker",
+    launchMode: "headless"
+  },
+  legacy_command: {
+    vendor: "generic_cli",
+    host: "local_worker",
+    launchMode: "headless"
+  }
+};
+
+const cliRuntimeVendors = new Set<AgentRuntimeVendor>([
+  "openai_codex",
+  "claude_code",
+  "gemini_cli",
+  "generic_cli"
+]);
+const apiRuntimeVendors = new Set<AgentRuntimeVendor>([
+  "openai_api",
+  "anthropic_api",
+  "gemini_api",
+  "generic_api"
+]);
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+const asString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+
+const asStringArray = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0);
+  return items.length > 0 ? items : [];
+};
+
+const resolveRuntimeKind = (
+  adapterType: AgentRuntimeAdapterType,
+  runtimeKind?: AgentRuntimeProfile["runtimeKind"]
+): AgentRuntimeKind => runtimeKind ?? agentRuntimeAdapterTypeToRuntimeKindMap[adapterType];
+
+const resolveRuntimeDefaults = (runtimeKind: AgentRuntimeKind): {
+  vendor: AgentRuntimeVendor;
+  host: AgentRuntimeHost;
+  launchMode: AgentLaunchMode;
+} => agentRuntimeKindDefaults[runtimeKind];
+
+const resolveRuntimeCommand = (
+  runtimeKind: AgentRuntimeKind,
+  vendor: AgentRuntimeVendor,
+  runtimeConfig: Record<string, unknown>,
+  runtimeProfile?: Partial<AgentRuntimeProfile>
+): string | undefined => {
+  const profileCommand = asString(runtimeProfile?.command);
+  if (profileCommand) return profileCommand;
+
+  const runtimeCommand = asString(runtimeConfig.commandPrefix);
+  if (runtimeCommand) return runtimeCommand;
+
+  if (!cliRuntimeVendors.has(vendor) && !apiRuntimeVendors.has(vendor)) {
+    return undefined;
+  }
+  if (runtimeKind === "server_api") {
+    return undefined;
+  }
+  if (vendor === "openai_codex") return "codex";
+  if (vendor === "claude_code") return "claude";
+  if (vendor === "gemini_cli") return "gemini";
   return "devtools-agent";
 };
 
-const resolveCliCwd = (agent: AgentConfig): string | undefined => {
-  const runtimeCwd = agent.runtimeConfig.cwd;
-  if (typeof runtimeCwd === "string" && runtimeCwd.trim().length > 0) {
-    return runtimeCwd.trim();
+const normalizeRuntimeProfileMetadata = (
+  runtimeConfig: Record<string, unknown>,
+  runtimeProfile?: Partial<AgentRuntimeProfile>
+): Record<string, unknown> => ({
+  ...(asRecord(runtimeConfig.metadata) ?? {}),
+  ...(runtimeProfile?.metadata ?? {})
+});
+
+const normalizeRuntimeProfileArgs = (
+  runtimeConfig: Record<string, unknown>,
+  runtimeProfile?: Partial<AgentRuntimeProfile>
+): string[] => {
+  const profileArgs = asStringArray(runtimeProfile?.args);
+  if (profileArgs !== undefined) return profileArgs;
+  const configArgs = asStringArray(runtimeConfig.args);
+  return configArgs ?? [];
+};
+
+const normalizeRuntimeProfileCwd = (
+  runtimeConfig: Record<string, unknown>,
+  runtimeProfile?: Partial<AgentRuntimeProfile>
+): string | undefined => asString(runtimeProfile?.cwd) ?? asString(runtimeConfig.cwd);
+
+const validateRuntimeProfileHost = (
+  runtimeKind: AgentRuntimeKind,
+  host: AgentRuntimeHost,
+  issues: AgentRuntimeProfileValidationIssue[]
+): void => {
+  const allowedHostsByKind: Record<AgentRuntimeKind, AgentRuntimeHost[]> = {
+    desktop_cli: ["desktop_app", "local_worker"],
+    server_api: ["api"],
+    mcp_bridge: ["desktop_app", "local_worker", "remote_worker"],
+    custom_command: ["desktop_app", "local_worker", "remote_worker"],
+    legacy_command: ["desktop_app", "local_worker", "remote_worker"]
+  };
+
+  if (!allowedHostsByKind[runtimeKind].includes(host)) {
+    issues.push({
+      field: "host",
+      message: `${runtimeKind} runtimes do not support host '${host}'`
+    });
   }
-  return undefined;
+};
+
+const validateRuntimeProfileVendor = (
+  runtimeKind: AgentRuntimeKind,
+  vendor: AgentRuntimeVendor,
+  issues: AgentRuntimeProfileValidationIssue[]
+): void => {
+  if (runtimeKind === "server_api" && !apiRuntimeVendors.has(vendor)) {
+    issues.push({
+      field: "vendor",
+      message: `server_api runtimes require an API-backed vendor, received '${vendor}'`
+    });
+    return;
+  }
+
+  if (runtimeKind !== "server_api" && !cliRuntimeVendors.has(vendor)) {
+    issues.push({
+      field: "vendor",
+      message: `${runtimeKind} runtimes require a CLI vendor, received '${vendor}'`
+    });
+  }
+};
+
+const validateRuntimeProfileLaunchMode = (
+  runtimeKind: AgentRuntimeKind,
+  launchMode: AgentLaunchMode,
+  issues: AgentRuntimeProfileValidationIssue[]
+): void => {
+  const allowedLaunchModesByKind: Record<AgentRuntimeKind, AgentLaunchMode[]> = {
+    desktop_cli: ["interactive", "headless"],
+    server_api: ["queued"],
+    mcp_bridge: ["headless", "queued"],
+    custom_command: ["interactive", "headless", "queued"],
+    legacy_command: ["headless", "queued"]
+  };
+
+  if (!allowedLaunchModesByKind[runtimeKind].includes(launchMode)) {
+    issues.push({
+      field: "launchMode",
+      message: `${runtimeKind} runtimes do not support launch mode '${launchMode}'`
+    });
+  }
+};
+
+const validateRuntimeProfileRefs = (
+  runtimeKind: AgentRuntimeKind,
+  profile: AgentRuntimeProfile,
+  issues: AgentRuntimeProfileValidationIssue[]
+): void => {
+  if (runtimeKind === "server_api" && !asString(profile.apiConfigRef)) {
+    issues.push({
+      field: "apiConfigRef",
+      message: "server_api runtimes require apiConfigRef"
+    });
+  }
+  if (runtimeKind === "mcp_bridge" && !asString(profile.mcpServerRef)) {
+    issues.push({
+      field: "mcpServerRef",
+      message: "mcp_bridge runtimes require mcpServerRef"
+    });
+  }
+};
+
+export const validateAgentRuntimeProfile = (
+  profile: AgentRuntimeProfile
+): AgentRuntimeProfileValidationIssue[] => {
+  const issues: AgentRuntimeProfileValidationIssue[] = [];
+  validateRuntimeProfileVendor(profile.runtimeKind, profile.vendor, issues);
+  validateRuntimeProfileHost(profile.runtimeKind, profile.host, issues);
+  validateRuntimeProfileLaunchMode(profile.runtimeKind, profile.launchMode, issues);
+  validateRuntimeProfileRefs(profile.runtimeKind, profile, issues);
+  if (profile.workerPoolSize !== undefined && profile.workerPoolSize <= 0) {
+    issues.push({
+      field: "workerPoolSize",
+      message: "workerPoolSize must be a positive integer when provided"
+    });
+  }
+  return issues;
+};
+
+export const normalizeAgentRuntimeProfile = (input: {
+  adapterType: AgentRuntimeAdapterType;
+  runtimeConfig?: Record<string, unknown>;
+  runtimeProfile?: Partial<AgentRuntimeProfile>;
+}): AgentRuntimeProfile => {
+  const runtimeConfig = input.runtimeConfig ?? {};
+  const runtimeProfile = input.runtimeProfile;
+  const runtimeKind = resolveRuntimeKind(input.adapterType, runtimeProfile?.runtimeKind);
+  const defaults = resolveRuntimeDefaults(runtimeKind);
+  const vendor = runtimeProfile?.vendor ?? defaults.vendor;
+  const host = runtimeProfile?.host ?? defaults.host;
+  const launchMode = runtimeProfile?.launchMode ?? defaults.launchMode;
+  const command = resolveRuntimeCommand(
+    runtimeKind,
+    vendor,
+    runtimeConfig,
+    runtimeProfile
+  );
+  const cwd = normalizeRuntimeProfileCwd(runtimeConfig, runtimeProfile);
+  const mcpServerRef = asString(runtimeProfile?.mcpServerRef);
+  const apiConfigRef = asString(runtimeProfile?.apiConfigRef);
+  const workerPoolSize = runtimeProfile?.workerPoolSize;
+  const next: AgentRuntimeProfile = {
+    runtimeKind,
+    vendor,
+    host,
+    launchMode,
+    ...(command ? { command } : {}),
+    args: normalizeRuntimeProfileArgs(runtimeConfig, runtimeProfile),
+    ...(cwd ? { cwd } : {}),
+    ...(mcpServerRef ? { mcpServerRef } : {}),
+    ...(apiConfigRef ? { apiConfigRef } : {}),
+    ...(typeof workerPoolSize === "number" ? { workerPoolSize } : {}),
+    metadata: normalizeRuntimeProfileMetadata(runtimeConfig, runtimeProfile)
+  };
+
+  const issues = validateAgentRuntimeProfile(next);
+  if (issues.length > 0) {
+    throw new AgentRuntimeProfileValidationError(issues);
+  }
+  return next;
+};
+
+export const normalizeHeartbeatPolicy = (
+  heartbeatPolicy?: Partial<HeartbeatPolicy>
+): HeartbeatPolicy =>
+  buildHeartbeatPolicy({
+    ...(heartbeatPolicy?.interval ? { interval: heartbeatPolicy.interval } : {}),
+    ...(heartbeatPolicy?.triggers ? { triggers: heartbeatPolicy.triggers } : {}),
+    ...(typeof heartbeatPolicy?.enabled === "boolean" ? { enabled: heartbeatPolicy.enabled } : {}),
+    ...(heartbeatPolicy?.metadata ? { metadata: heartbeatPolicy.metadata } : {})
+  });
+
+const normalizeAgentRecord = (agent: AgentConfig): AgentConfig => {
+  const runtimeConfig = asRecord(agent.runtimeConfig) ?? {};
+  try {
+    return {
+      ...agent,
+      runtimeConfig,
+      runtimeProfile: agent.runtimeProfile
+        ? normalizeAgentRuntimeProfile({
+            adapterType: agent.adapterType,
+            runtimeConfig,
+            runtimeProfile: agent.runtimeProfile
+          })
+        : normalizeAgentRuntimeProfile({
+            adapterType: agent.adapterType,
+            runtimeConfig
+          }),
+      heartbeatPolicy: normalizeHeartbeatPolicy(agent.heartbeatPolicy)
+    };
+  } catch (error) {
+    if (!(error instanceof AgentRuntimeProfileValidationError)) {
+      throw error;
+    }
+    return {
+      ...agent,
+      runtimeConfig,
+      heartbeatPolicy: normalizeHeartbeatPolicy(agent.heartbeatPolicy)
+    };
+  }
 };
 
 const toJobData = (
@@ -91,7 +414,7 @@ const toJobData = (
   agent: AgentConfig,
   options?: AgentRuntimeInvocationOptions
 ): AgentRuntimeJobData => {
-  const command = resolveCliCommand(agent);
+  const command = asString(agent.runtimeConfig.commandPrefix) ?? "devtools-agent";
   const args =
     operation === "heartbeat"
       ? ["heartbeat", "run", "--agent", agent.name]
@@ -109,10 +432,12 @@ const toJobData = (
     operation,
     command,
     args,
-    ...(resolveCliCwd(agent) ? { cwd: resolveCliCwd(agent) } : {}),
+    ...(asString(agent.runtimeConfig.cwd) ? { cwd: asString(agent.runtimeConfig.cwd) } : {}),
     timeoutMs,
     metadata: {
       role: agent.role,
+      runtimeProfile: agent.runtimeProfile ?? null,
+      heartbeatPolicy: agent.heartbeatPolicy ?? null,
       reason: options?.reason ?? "manual",
       ...(options?.metadata ?? {})
     }
@@ -280,15 +605,28 @@ export class AgentService {
   }
 
   async listAgents(): Promise<AgentConfig[]> {
-    return this.options.store.listAgents();
+    return (await this.options.store.listAgents()).map((agent) => normalizeAgentRecord(agent));
   }
 
   async getAgent(agentId: string): Promise<AgentConfig | null> {
-    return this.options.store.getAgent(agentId);
+    const agent = await this.options.store.getAgent(agentId);
+    return agent ? normalizeAgentRecord(agent) : null;
   }
 
   async createAgent(input: AgentCreateInput): Promise<AgentConfig> {
     const nowIso = this.now().toISOString();
+    const runtimeConfig = asRecord(input.runtimeConfig) ?? {};
+    const runtimeProfile = input.runtimeProfile
+      ? normalizeAgentRuntimeProfile({
+          adapterType: input.adapterType,
+          runtimeConfig,
+          runtimeProfile: input.runtimeProfile
+        })
+      : normalizeAgentRuntimeProfile({
+          adapterType: input.adapterType,
+          runtimeConfig
+        });
+    const heartbeatPolicy = normalizeHeartbeatPolicy(input.heartbeatPolicy);
     const next: AgentConfig = {
       id: input.id ?? this.idGenerator(),
       name: input.name,
@@ -298,7 +636,9 @@ export class AgentService {
       adapterType: input.adapterType,
       desiredSkills: [...input.desiredSkills],
       ...(input.reportTo ? { reportTo: input.reportTo } : {}),
-      runtimeConfig: { ...input.runtimeConfig },
+      runtimeConfig,
+      runtimeProfile,
+      heartbeatPolicy,
       capabilities: [...input.capabilities],
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -308,8 +648,31 @@ export class AgentService {
   }
 
   async updateAgent(agentId: string, patch: Partial<AgentConfig>): Promise<AgentConfig> {
+    const existing = await this.getAgent(agentId);
+    if (!existing) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+
+    const runtimeConfig = patch.runtimeConfig ? (asRecord(patch.runtimeConfig) ?? {}) : existing.runtimeConfig;
+    const mergedRuntimeProfile = patch.runtimeProfile ?? existing.runtimeProfile;
+    const runtimeProfile = mergedRuntimeProfile
+      ? normalizeAgentRuntimeProfile({
+          adapterType: patch.adapterType ?? existing.adapterType,
+          runtimeConfig,
+          runtimeProfile: mergedRuntimeProfile
+        })
+      : normalizeAgentRuntimeProfile({
+          adapterType: patch.adapterType ?? existing.adapterType,
+          runtimeConfig
+        });
+    const heartbeatPolicy = normalizeHeartbeatPolicy(patch.heartbeatPolicy ?? existing.heartbeatPolicy);
+
     return this.options.store.updateAgent(agentId, {
+      ...existing,
       ...patch,
+      runtimeConfig,
+      runtimeProfile,
+      heartbeatPolicy,
       updatedAt: this.now().toISOString()
     });
   }
