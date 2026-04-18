@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Workspace, WorkspaceMode, WorkspaceRuntimeStatus } from "@cp/domain";
 import { runWithTenantContext } from "@cp/db";
 import { apiStore } from "./api-store.js";
+import { getWorkspaceAllowedRoots, isPathWithinRoot } from "./workspace-browser-service.js";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -73,18 +74,6 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined;
 
-const workspaceAllowedRoots = ((): string[] => {
-  const raw =
-    process.env.WORKSPACE_ALLOWED_ROOTS ??
-    process.env.WORKSPACE_ALLOWED_ROOT ??
-    "";
-  return raw
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-    .map((entry) => path.resolve(entry));
-})();
-
 const checkPathAccess = async (targetPath: string, mode: number): Promise<boolean> => {
   try {
     await access(targetPath, mode);
@@ -99,17 +88,6 @@ const pathHasTraversalSegments = (value: string): boolean =>
     .split(/[\\/]+/)
     .map((segment) => segment.trim())
     .some((segment) => segment === "..");
-
-const normalizeForPrefix = (value: string): string => {
-  const resolved = path.resolve(value);
-  return resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
-};
-
-const pathWithinRoot = (candidatePath: string, rootPath: string): boolean => {
-  const normalizedCandidate = normalizeForPrefix(candidatePath);
-  const normalizedRoot = normalizeForPrefix(rootPath);
-  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(normalizedRoot);
-};
 
 interface DirectoryFootprint {
   bytes: number;
@@ -242,8 +220,11 @@ const validateWorkspaceLocalPath = async (
       };
     }
     const resolvedPath = await realpath(normalizedPath);
-    if (workspaceAllowedRoots.length > 0) {
-      const matchedRoot = workspaceAllowedRoots.find((root) => pathWithinRoot(resolvedPath, root));
+    const workspaceAllowedRootsInitial = getWorkspaceAllowedRoots();
+    if (workspaceAllowedRootsInitial.length > 0) {
+      const matchedRoot = workspaceAllowedRootsInitial.find((root) =>
+        isPathWithinRoot(resolvedPath, root)
+      );
       if (!matchedRoot) {
         return {
           checkedAt,
@@ -317,7 +298,10 @@ const validateWorkspaceLocalPath = async (
       footprint = null;
     }
 
-    const matchedRoot = workspaceAllowedRoots.find((root) => pathWithinRoot(resolvedPath, root));
+    const workspaceAllowedRootsAfterFootprint = getWorkspaceAllowedRoots();
+    const matchedRoot = workspaceAllowedRootsAfterFootprint.find((root) =>
+      isPathWithinRoot(resolvedPath, root)
+    );
     return {
       checkedAt,
       mode,

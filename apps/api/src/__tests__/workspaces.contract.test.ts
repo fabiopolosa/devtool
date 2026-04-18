@@ -15,6 +15,7 @@ describe("Workspaces API contract", () => {
   let app: FastifyInstance;
   let projectId: string;
   let workspaceId: string;
+  let primaryAgentId: string;
   let workerHarness: TestExecutionWorkerHarness;
   let adminHeaders: Record<string, string>;
   const temporaryPaths: string[] = [];
@@ -52,6 +53,7 @@ describe("Workspaces API contract", () => {
     process.env.API_STORE_MODE = "in_memory";
     process.env.REDIS_URL = "";
     process.env.AUTH_ENABLED = "1";
+    process.env.WORKSPACE_ALLOWED_ROOTS = `${process.cwd()},${tmpdir()}`;
 
     const { buildApp } = await import("../app.js");
     app = await buildApp();
@@ -69,6 +71,8 @@ describe("Workspaces API contract", () => {
     const projects = await app.inject({ method: "GET", url: "/projects", headers: adminHeaders });
     const projectsBody = projects.json() as { items?: Array<{ id: string }> };
     projectId = projectsBody.items?.[0]?.id ?? "proj_001";
+
+    primaryAgentId = "agent_001";
   });
 
   afterAll(async () => {
@@ -167,6 +171,230 @@ describe("Workspaces API contract", () => {
     expect(patchedBody.item?.id).toBe(workspaceId);
     expect(patchedBody.item?.mode).toBe("remote");
     expect(patchedBody.item?.localPath).toBe(process.cwd());
+  });
+
+  it("reads and updates project runtime profile state", async () => {
+    const getResponse = await inject({
+      method: "GET",
+      url: `/projects/${projectId}/runtime`
+    });
+    expect(getResponse.statusCode).toBe(200);
+    const getBody = getResponse.json() as {
+      item?: {
+        id: string;
+        runtimeProfile?: {
+          defaultHost?: string;
+          defaultExecutionMode?: string;
+          heartbeatPolicy?: { interval?: string; triggers?: string[] };
+        };
+      };
+    };
+    expect(getBody.item?.id).toBe(projectId);
+    expect(getBody.item?.runtimeProfile?.heartbeatPolicy?.interval).toBeDefined();
+
+    const updateResponse = await inject({
+      method: "PUT",
+      url: `/projects/${projectId}/runtime`,
+      payload: {
+        primaryAgentId,
+        workspaceId: workspaceId || undefined,
+        defaultHost: "local_worker",
+        defaultExecutionMode: "queued",
+        heartbeatPolicy: {
+          interval: "1m",
+          triggers: ["manual", "on_startup"],
+          enabled: true,
+          metadata: { source: "test" }
+        },
+        agentSelectionPolicy: {
+          mode: "primary"
+        },
+        metadata: {
+          onboarding: true
+        }
+      }
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    const updateBody = updateResponse.json() as {
+      item?: {
+        runtimeProfile?: {
+          primaryAgentId?: string;
+          workspaceId?: string;
+          defaultHost?: string;
+          defaultExecutionMode?: string;
+          heartbeatPolicy?: { interval?: string; triggers?: string[]; enabled?: boolean };
+          metadata?: Record<string, unknown>;
+        };
+      };
+    };
+    expect(updateBody.item?.runtimeProfile?.primaryAgentId).toBe(primaryAgentId);
+    expect(updateBody.item?.runtimeProfile?.heartbeatPolicy?.interval).toBe("1m");
+
+    const roundTrip = await inject({
+      method: "GET",
+      url: `/projects/${projectId}/runtime`
+    });
+    expect(roundTrip.statusCode).toBe(200);
+    const roundTripBody = roundTrip.json() as {
+      item?: { runtimeProfile?: { primaryAgentId?: string; heartbeatPolicy?: { interval?: string } } };
+    };
+    expect(roundTripBody.item?.runtimeProfile?.primaryAgentId).toBe(primaryAgentId);
+    expect(roundTripBody.item?.runtimeProfile?.heartbeatPolicy?.interval).toBe("1m");
+  });
+
+  it("triggers project heartbeat jobs and reports aggregate status", async () => {
+    const configuredRuntime = await inject({
+      method: "PUT",
+      url: `/projects/${projectId}/runtime`,
+      payload: {
+        primaryAgentId,
+        heartbeatPolicy: {
+          interval: "manual",
+          triggers: ["manual", "on_startup"],
+          enabled: true,
+          metadata: {}
+        },
+        metadata: {
+          heartbeat: {
+            lastHeartbeatAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+            lastHeartbeatTrigger: "manual",
+            lastHeartbeatJobIds: [],
+            lastHeartbeatAgentIds: [primaryAgentId],
+            lastHeartbeatStatus: "queued"
+          }
+        }
+      }
+    });
+    expect(configuredRuntime.statusCode).toBe(200);
+
+    const manualResponse = await inject({
+      method: "POST",
+      url: `/projects/${projectId}/runtime/heartbeat`,
+      payload: {
+        trigger: "manual",
+        reason: "manual smoke heartbeat"
+      }
+    });
+    expect(manualResponse.statusCode).toBe(200);
+    const manualBody = manualResponse.json() as {
+      item?: {
+        jobs?: Array<{ jobId: string; agentId: string }>;
+        targets?: Array<{ agentId: string }>;
+        runtimeProfile?: { metadata?: Record<string, unknown> };
+      };
+    };
+    expect(manualBody.item?.jobs?.length).toBeGreaterThan(0);
+    expect(manualBody.item?.targets?.[0]?.agentId).toBe(primaryAgentId);
+
+    const statusResponse = await inject({
+      method: "GET",
+      url: `/projects/${projectId}/runtime/heartbeat/status`
+    });
+    expect(statusResponse.statusCode).toBe(200);
+    const statusBody = statusResponse.json() as {
+      item?: {
+        projectId: string;
+        overallStatus: string;
+        queuedCount: number;
+        targets?: Array<{ agentId: string; jobStatus?: string }>;
+      };
+    };
+    expect(statusBody.item?.projectId).toBe(projectId);
+    expect(statusBody.item?.overallStatus).toBe("queued");
+    expect(statusBody.item?.queuedCount).toBeGreaterThan(0);
+    expect(statusBody.item?.targets?.[0]?.agentId).toBe(primaryAgentId);
+  });
+
+  it("ticks scheduled project heartbeat when stale and skips when fresh", async () => {
+    const staleHeartbeatAt = new Date(Date.now() - 2 * 60_000).toISOString();
+    const seededRuntime = await inject({
+      method: "PUT",
+      url: `/projects/${projectId}/runtime`,
+      payload: {
+        primaryAgentId,
+        heartbeatPolicy: {
+          interval: "1m",
+          triggers: ["manual", "on_startup"],
+          enabled: true,
+          metadata: {}
+        },
+        metadata: {
+          heartbeat: {
+            lastHeartbeatAt: staleHeartbeatAt,
+            lastHeartbeatTrigger: "manual",
+            lastHeartbeatJobIds: [],
+            lastHeartbeatAgentIds: [primaryAgentId],
+            lastHeartbeatStatus: "queued"
+          }
+        }
+      }
+    });
+    expect(seededRuntime.statusCode).toBe(200);
+
+    const tickResponse = await inject({
+      method: "POST",
+      url: `/projects/${projectId}/runtime/heartbeat/tick`,
+      payload: {
+        trigger: "on_startup",
+        reason: "scheduled_tick"
+      }
+    });
+    expect(tickResponse.statusCode).toBe(200);
+    const tickBody = tickResponse.json() as {
+      item?: {
+        skipped?: boolean;
+        jobs?: Array<{ jobId: string }>;
+        targets?: Array<{ agentId: string }>;
+      };
+    };
+    expect(tickBody.item?.skipped).toBe(false);
+    expect(tickBody.item?.jobs?.length).toBeGreaterThan(0);
+
+    const freshStatus = await inject({
+      method: "GET",
+      url: `/projects/${projectId}/runtime/heartbeat/status`
+    });
+    expect(freshStatus.statusCode).toBe(200);
+    const freshStatusBody = freshStatus.json() as {
+      item?: {
+        due: boolean;
+        lastTrigger?: string;
+        overallStatus: string;
+      };
+    };
+    expect(freshStatusBody.item?.due).toBe(false);
+    expect(freshStatusBody.item?.lastTrigger).toBe("on_startup");
+  });
+
+  it("browses allowed workspace roots and blocks escapes", async () => {
+    const rootsResponse = await inject({
+      method: "GET",
+      url: "/workspaces/browser/roots"
+    });
+    expect(rootsResponse.statusCode).toBe(200);
+    const rootsBody = rootsResponse.json() as {
+      items?: Array<{ path: string; exists: boolean }>;
+    };
+    expect(Array.isArray(rootsBody.items)).toBe(true);
+    expect(rootsBody.items?.length).toBeGreaterThan(0);
+
+    const browseResponse = await inject({
+      method: "GET",
+      url: `/workspaces/browser?path=${encodeURIComponent(process.cwd())}`
+    });
+    expect(browseResponse.statusCode).toBe(200);
+    const browseBody = browseResponse.json() as {
+      item?: { resolvedPath?: string; entries?: Array<{ name: string; kind: string }> };
+    };
+    expect(browseBody.item?.resolvedPath).toContain(process.cwd());
+    expect(Array.isArray(browseBody.item?.entries)).toBe(true);
+
+    const escapeResponse = await inject({
+      method: "GET",
+      url: `/workspaces/browser?path=${encodeURIComponent("/etc")}`
+    });
+    expect(escapeResponse.statusCode).toBe(400);
+    expect((escapeResponse.json() as { error?: string }).error).toBe("workspace_browser_invalid_path");
   });
 
   it("dispatches workspace runtime actions through runner jobs", async () => {
@@ -370,7 +598,7 @@ describe("Workspaces API contract", () => {
     };
     expect(created.item?.runtimeStatus).toBe("error");
     const pathValidation = (created.item?.runtimeDetails?.pathValidation ?? {}) as Record<string, unknown>;
-    expect(pathValidation.reason).toBe("permission_denied");
+    expect(["permission_denied", "path_escape"]).toContain(pathValidation.reason);
 
     const startResponse = await inject({
       method: "PATCH",
