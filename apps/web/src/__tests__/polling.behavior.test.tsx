@@ -3,6 +3,7 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppStoreProvider, useAppStore } from "../store/app-store";
 import { DashboardPage } from "../pages/DashboardPage";
+import { ProjectsPage } from "../pages/ProjectsPage";
 
 vi.mock("@tanstack/react-router", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
@@ -152,5 +153,54 @@ describe("Polling behavior", () => {
       await vi.advanceTimersByTimeAsync(12_000);
     });
     expect(dashboardJobsCalls).toBe(initialCalls + 2);
+  });
+
+  it("does not refetch /projects on every store update", async () => {
+    let projectCalls = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const raw = typeof input === "string" ? input : input.toString();
+        const url = raw.includes("://") ? new URL(raw) : new URL(raw, "http://localhost");
+        const path = `${url.pathname}${url.search}`;
+
+        if (path === "/projects") {
+          projectCalls += 1;
+          return jsonResponse({
+            items: [
+              {
+                id: "proj_001",
+                tenantId: "tenant_default",
+                key: "ALPHA",
+                name: "Alpha",
+                description: "Primary workspace",
+                status: "active",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                createdBy: "tester",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                updatedBy: "tester"
+              }
+            ]
+          });
+        }
+
+        return jsonResponse({ items: [] });
+      })
+    );
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <ProjectsPage />
+      </AppStoreProvider>
+    );
+
+    expect(await screen.findByText("Alpha")).toBeInTheDocument();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+
+    expect(projectCalls).toBe(1);
   });
 });

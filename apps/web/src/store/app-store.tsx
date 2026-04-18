@@ -1028,21 +1028,26 @@ export function AppStoreProvider({
     setAuth((current) => ({ ...current, error: undefined }));
   }, []);
 
+  const authActions = useMemo(
+    () => ({
+      login,
+      completeOidcCallback,
+      logout,
+      clearError,
+      apiFetch,
+      apiFetchJson
+    }),
+    [login, completeOidcCallback, logout, clearError, apiFetch, apiFetchJson]
+  );
+
   const value = useMemo(
     () => ({
       state,
       dispatch,
       auth,
-      authActions: {
-        login,
-        completeOidcCallback,
-        logout,
-        clearError,
-        apiFetch,
-        apiFetchJson
-      }
+      authActions
     }),
-    [state, auth, login, completeOidcCallback, logout, clearError, apiFetch, apiFetchJson]
+    [state, auth, authActions]
   );
 
   return <AppStoreContext.Provider value={value}>{children}</AppStoreContext.Provider>;
