@@ -1,4 +1,5 @@
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
+import type { AgentConfig } from "@cp/domain";
 import {
   startTestExecutionWorkerHarness,
   type TestExecutionWorkerHarness
@@ -148,6 +149,46 @@ describe("Agents API contract", () => {
       url: `/agents/${created.item.id}`
     });
     expect(deleteResponse.statusCode).toBe(200);
+  });
+
+  it("lists legacy agents with unknown adapter types without crashing", async () => {
+    const { apiStore } = await import("../services/api-store.js");
+    const now = new Date().toISOString();
+    await apiStore.createAgent({
+      id: "agent_legacy_paperclip",
+      name: "legacy-paperclip",
+      role: "codex_builder",
+      icon: "tool",
+      description: "Legacy CLI adapter record",
+      adapterType: "paperclip_cli" as AgentConfig["adapterType"],
+      desiredSkills: [],
+      runtimeConfig: {},
+      runtimeProfile: {} as NonNullable<AgentConfig["runtimeProfile"]>,
+      heartbeatPolicy: {
+        interval: "manual",
+        triggers: ["manual"],
+        enabled: true,
+        metadata: {}
+      },
+      capabilities: ["coding"],
+      createdAt: now,
+      updatedAt: now,
+      status: "active"
+    });
+
+    const response = await inject({ method: "GET", url: "/agents" });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<{
+        id: string;
+        adapterType: string;
+        runtimeProfile?: { runtimeKind?: string; vendor?: string };
+      }>;
+    };
+    const legacyAgent = body.items.find((item) => item.id === "agent_legacy_paperclip");
+    expect(legacyAgent?.adapterType).toBe("custom_cli");
+    expect(legacyAgent?.runtimeProfile?.runtimeKind).toBe("custom_command");
+    expect(legacyAgent?.runtimeProfile?.vendor).toBe("generic_cli");
   });
 
   it("accepts runtime profiles and dispatches manual and scheduled heartbeats", async () => {

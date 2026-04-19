@@ -4,6 +4,7 @@ import type { AuditEvent, Project, Task } from "@cp/domain";
 import { requirePermission, requireRole, requireScopedPermission } from "../auth/runtime.js";
 import { auditLogService } from "../services/audit-log-service.js";
 import { apiStore } from "../services/api-store.js";
+import { createProjectWithCoordinator } from "../services/project-bootstrap-service.js";
 
 interface CreateRoleBody {
   name: "admin" | "editor" | "operator" | "viewer";
@@ -518,21 +519,15 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    const now = new Date().toISOString();
-    const project: Project = {
-      id: randomUUID(),
+    const { project: created } = await createProjectWithCoordinator({
       tenantId: request.tenantId ?? "tenant_default",
       key: body.key,
       name: body.name,
       ...(body.description ? { description: body.description } : {}),
-      status: body.status ?? "active",
+      ...(body.status ? { status: body.status } : {}),
       ...(body.policySetId ? { policySetId: body.policySetId } : {}),
-      createdAt: now,
-      createdBy: principal.userId,
-      updatedAt: now,
-      updatedBy: principal.userId
-    };
-    const created = await apiStore.createProject(project);
+      actor: principal.userId
+    });
 
     await auditLogService.record({
       userId: principal.userId,

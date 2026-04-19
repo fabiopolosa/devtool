@@ -105,6 +105,14 @@ const agentRuntimeAdapterTypeToRuntimeKindMap = {
   legacy_cli: "legacy_command"
 } as const satisfies Record<AgentRuntimeAdapterType, AgentRuntimeKind>;
 
+const runtimeKinds = new Set<AgentRuntimeKind>([
+  "desktop_cli",
+  "server_api",
+  "mcp_bridge",
+  "custom_command",
+  "legacy_command"
+]);
+
 const agentRuntimeKindDefaults: Record<
   AgentRuntimeKind,
   {
@@ -161,6 +169,13 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined =>
 const asString = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 
+const normalizeAdapterType = (adapterType: AgentRuntimeAdapterType | string): AgentRuntimeAdapterType => {
+  if (adapterType === "legacy_cli" || adapterType === "custom_cli" || adapterType === "mcp_runtime") {
+    return adapterType;
+  }
+  return adapterType.endsWith("_cli") ? "custom_cli" : "mcp_runtime";
+};
+
 const asStringArray = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) return undefined;
   const items = value
@@ -170,9 +185,14 @@ const asStringArray = (value: unknown): string[] | undefined => {
 };
 
 const resolveRuntimeKind = (
-  adapterType: AgentRuntimeAdapterType,
+  adapterType: AgentRuntimeAdapterType | string,
   runtimeKind?: AgentRuntimeProfile["runtimeKind"]
-): AgentRuntimeKind => runtimeKind ?? agentRuntimeAdapterTypeToRuntimeKindMap[adapterType];
+): AgentRuntimeKind => {
+  if (runtimeKind && runtimeKinds.has(runtimeKind)) {
+    return runtimeKind;
+  }
+  return agentRuntimeAdapterTypeToRuntimeKindMap[normalizeAdapterType(adapterType)];
+};
 
 const resolveRuntimeDefaults = (runtimeKind: AgentRuntimeKind): {
   vendor: AgentRuntimeVendor;
@@ -381,18 +401,20 @@ export const normalizeHeartbeatPolicy = (
 
 const normalizeAgentRecord = (agent: AgentConfig): AgentConfig => {
   const runtimeConfig = asRecord(agent.runtimeConfig) ?? {};
+  const adapterType = normalizeAdapterType(agent.adapterType);
   try {
     return {
       ...agent,
+      adapterType,
       runtimeConfig,
       runtimeProfile: agent.runtimeProfile
         ? normalizeAgentRuntimeProfile({
-            adapterType: agent.adapterType,
+            adapterType,
             runtimeConfig,
             runtimeProfile: agent.runtimeProfile
           })
         : normalizeAgentRuntimeProfile({
-            adapterType: agent.adapterType,
+            adapterType,
             runtimeConfig
           }),
       heartbeatPolicy: normalizeHeartbeatPolicy(agent.heartbeatPolicy)
@@ -403,6 +425,7 @@ const normalizeAgentRecord = (agent: AgentConfig): AgentConfig => {
     }
     return {
       ...agent,
+      adapterType,
       runtimeConfig,
       heartbeatPolicy: normalizeHeartbeatPolicy(agent.heartbeatPolicy)
     };

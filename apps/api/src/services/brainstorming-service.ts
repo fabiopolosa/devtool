@@ -25,6 +25,7 @@ import { capabilityClasses, providerNames } from "@cp/domain";
 import { apiStore } from "./api-store.js";
 import { buildCompactKnowledgeContext, formatCompactKnowledgeContext } from "./knowledge-service.js";
 import { createJob, updateJobStatus } from "./jobs-service.js";
+import { createProjectWithCoordinator } from "./project-bootstrap-service.js";
 import { promptRegistryService } from "./prompt-registry-service.js";
 import { skillsService } from "./skills-service.js";
 import { getSubprompt, listSubprompts, syncSubpromptsCatalog } from "./subprompts-service.js";
@@ -560,20 +561,15 @@ export async function applyBrainstormPlan(
     );
   }
 
-  const createdAt = nowIso();
   const baseName = input.projectName?.trim() || plan.title;
-  const project = await apiStore.createProject({
-    id: randomUUID(),
+  const { project } = await createProjectWithCoordinator({
     tenantId,
     key: input.projectKey?.trim() || toSlug(baseName) || `project-${Date.now()}`,
     name: baseName,
     description: input.description?.trim() || plan.executiveSummary,
     status: "active",
     policySetId: "policy-main",
-    createdAt,
-    createdBy: actor,
-    updatedAt: createdAt,
-    updatedBy: actor
+    actor
   });
 
   const repositories = await ensureRepositoriesForPlan(tenantId, project.id, input, actor);

@@ -143,6 +143,24 @@ describe("@cp/agents AgentService", () => {
     expect(created.heartbeatPolicy?.triggers).toContain("after_failure");
   });
 
+  it("falls back safely for legacy adapter types outside the current enum", async () => {
+    const store = new InMemoryAgentStore([
+      baseAgent({
+        adapterType: "paperclip_cli" as AgentConfig["adapterType"],
+        runtimeProfile: {}
+      })
+    ]);
+    const service = new AgentService({
+      store,
+      runtimeScheduler: new InMemoryAgentRuntimeScheduler()
+    });
+
+    const listed = await service.listAgents();
+    expect(listed[0]?.adapterType).toBe("custom_cli");
+    expect(listed[0]?.runtimeProfile?.runtimeKind).toBe("custom_command");
+    expect(listed[0]?.runtimeProfile?.vendor).toBe("generic_cli");
+  });
+
   it("rejects invalid runtime profile combinations", async () => {
     const service = new AgentService({
       store: new InMemoryAgentStore(),
