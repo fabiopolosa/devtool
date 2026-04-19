@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   buildHeartbeatPolicy,
   buildProjectRuntimeProfile,
@@ -12,6 +13,8 @@ import {
 import { runWithTenantContext } from "@cp/db";
 import { apiStore } from "./api-store.js";
 import { dispatchRunnerJob } from "./job-dispatch-service.js";
+import { getExecutionWorkerAvailability } from "./execution-router-service.js";
+import { getWorkspace } from "./workspaces-service.js";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -42,6 +45,116 @@ const asStringArray = (value: unknown): string[] => {
   return value
     .map((entry) => asString(entry))
     .filter((entry): entry is string => Boolean(entry));
+};
+
+const asNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const asStringRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+
+const sanitizeAppTargetId = (value: string, fallback: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || fallback;
+
+const readProjectMetadata = (project: ProjectRuntimeProjectRecord): Record<string, unknown> =>
+  buildProjectRuntimeProfile(project.runtimeProfile ?? {}).metadata ?? {};
+
+const readAppTargetList = (metadata: Record<string, unknown>): ProjectAppTarget[] => {
+  const rawTargets = metadata.appTargets;
+  if (!Array.isArray(rawTargets)) return [];
+
+  return rawTargets
+    .map((entry, index) => {
+      const record = asStringRecord(entry);
+      if (!record) return null;
+      const name = asString(record.name);
+      if (!name) return null;
+      const id = asString(record.id) ?? sanitizeAppTargetId(name, `app-target-${index + 1}`);
+      const target: ProjectAppTarget = {
+        id,
+        name,
+        metadata: asStringRecord(record.metadata) ?? {}
+      };
+      const path = asString(record.path);
+      const runCommand = asString(record.runCommand);
+      const testCommand = asString(record.testCommand);
+      const devCommand = asString(record.devCommand);
+      const previewCommand = asString(record.previewCommand);
+      const previewUrl = asString(record.previewUrl);
+      const defaultPort = asNumber(record.defaultPort);
+      const previewType =
+        record.previewType === "port" || record.previewType === "url" ? record.previewType : undefined;
+
+      return {
+        ...target,
+        ...(path ? { path } : {}),
+        ...(runCommand ? { runCommand } : {}),
+        ...(testCommand ? { testCommand } : {}),
+        ...(devCommand ? { devCommand } : {}),
+        ...(previewCommand ? { previewCommand } : {}),
+        ...(defaultPort !== undefined ? { defaultPort } : {}),
+        ...(previewType ? { previewType } : {}),
+        ...(previewUrl ? { previewUrl } : {})
+      };
+    })
+    .filter((entry): entry is ProjectAppTarget => Boolean(entry));
+};
+
+const normalizeAppTarget = (input: Record<string, unknown>, index: number): ProjectAppTarget => {
+  const name = asString(input.name);
+  if (!name) {
+    throw new ProjectRuntimeError(`App target at index ${index} is missing a name`);
+  }
+
+  const id = asString(input.id) ?? sanitizeAppTargetId(name, `app-target-${index + 1}`);
+  const target: ProjectAppTarget = {
+    id,
+    name,
+    metadata: asStringRecord(input.metadata) ?? {}
+  };
+  const path = asString(input.path);
+  const runCommand = asString(input.runCommand);
+  const testCommand = asString(input.testCommand);
+  const devCommand = asString(input.devCommand);
+  const previewCommand = asString(input.previewCommand);
+  const previewUrl = asString(input.previewUrl);
+  const defaultPort = asNumber(input.defaultPort);
+  const previewType =
+    input.previewType === "port" || input.previewType === "url" ? input.previewType : undefined;
+
+  return {
+    ...target,
+    ...(path ? { path } : {}),
+    ...(runCommand ? { runCommand } : {}),
+    ...(testCommand ? { testCommand } : {}),
+    ...(devCommand ? { devCommand } : {}),
+    ...(previewCommand ? { previewCommand } : {}),
+    ...(defaultPort !== undefined ? { defaultPort } : {}),
+    ...(previewType ? { previewType } : {}),
+    ...(previewUrl ? { previewUrl } : {})
+  };
+};
+
+const resolvePreviewUrl = (target: ProjectAppTarget): string | undefined => {
+  if (target.previewUrl) return target.previewUrl;
+  if (target.defaultPort !== undefined) {
+    return `http://localhost:${target.defaultPort}`;
+  }
+  return undefined;
+};
+
+const resolveAppTargetCommand = (
+  target: ProjectAppTarget,
+  action: ProjectAppTargetAction
+): string | undefined => {
+  if (action === "run") return target.runCommand ?? target.devCommand ?? target.previewCommand;
+  if (action === "test") return target.testCommand;
+  if (action === "dev") return target.devCommand ?? target.runCommand;
+  return target.previewCommand ?? target.devCommand ?? target.runCommand;
 };
 
 export type ProjectRuntimeProjectRecord = Project & { runtimeProfile?: ProjectRuntimeProfile };
@@ -83,6 +196,62 @@ export interface ProjectHeartbeatExecutionResult {
   runtimeProfile: ProjectRuntimeProfile;
   targets: ProjectHeartbeatTarget[];
   jobs: ProjectHeartbeatJobReference[];
+}
+
+export interface ProjectLocalHost {
+  kind: "local_companion";
+  projectId: string;
+  projectName: string;
+  attached: boolean;
+  connected: boolean;
+  machineAttached: boolean;
+  machineId?: string;
+  workspaceId?: string;
+  workspacePath?: string;
+  folderAttached: boolean;
+  previewAvailable: boolean;
+  previewUrl?: string;
+  previewPort?: number;
+  status: "disconnected" | "machine_only" | "attached";
+  defaultHost: ProjectRuntimeProfile["defaultHost"];
+  defaultExecutionMode: ProjectRuntimeProfile["defaultExecutionMode"];
+  appTargetCount: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface ProjectAppTarget {
+  id: string;
+  name: string;
+  path?: string;
+  runCommand?: string;
+  testCommand?: string;
+  devCommand?: string;
+  previewCommand?: string;
+  defaultPort?: number;
+  previewType?: "port" | "url";
+  previewUrl?: string;
+  metadata: Record<string, unknown>;
+}
+
+export type ProjectAppTargetAction = "run" | "test" | "dev" | "preview";
+
+export interface ProjectAppTargetActionJobReference {
+  jobId: string;
+  resourceId: string;
+  action: ProjectAppTargetAction;
+  targetId: string;
+  targetName: string;
+  command?: string;
+  createdAt: string;
+}
+
+export interface ProjectAppTargetActionResult {
+  project: ProjectRuntimeProjectRecord;
+  runtimeProfile: ProjectRuntimeProfile;
+  target: ProjectAppTarget;
+  action: ProjectAppTargetAction;
+  job: ProjectAppTargetActionJobReference;
+  previewUrl?: string;
 }
 
 export interface ProjectHeartbeatStatusTarget {
@@ -257,6 +426,114 @@ export const updateProjectRuntimeProfile = async (input: {
     const next = mergeProjectRuntimeProfile(current, patch);
     return writeProjectRuntimeProfile(input.tenantId, project.id, next);
   });
+
+export const getProjectLocalHost = async (input: {
+  tenantId: string;
+  projectId: string;
+}): Promise<ProjectLocalHost> => {
+  const project = await getProjectRuntimeProfile({
+    tenantId: input.tenantId,
+    projectId: input.projectId
+  });
+  const profile = readProjectRuntimeProfile(project);
+  const metadata = readProjectMetadata(project);
+  const localHostMetadata = asStringRecord(metadata.localHost) ?? {};
+  const workspaceId = asString(profile.workspaceId) ?? asString(localHostMetadata.workspaceId);
+  const workspace = workspaceId
+    ? await getWorkspace(input.tenantId, workspaceId).catch(() => null)
+    : await runWithTenantContext({ tenantId: input.tenantId }, async () => {
+        const candidates = await apiStore.listWorkspaces({ projectId: project.id });
+        return candidates[0] ?? null;
+      });
+  const workspacePath = workspace?.localPath ? asString(workspace.localPath) : undefined;
+  const appTargets = readAppTargetList(metadata);
+  const appTargetCount = appTargets.length;
+  const previewTarget = appTargets.find((target) => resolvePreviewUrl(target));
+  const previewUrl = previewTarget ? resolvePreviewUrl(previewTarget) : undefined;
+  const previewPort = previewTarget?.defaultPort;
+  const workerAvailability = await getExecutionWorkerAvailability(input.tenantId);
+  const machineId = workerAvailability.localMachineId;
+  const machineAttached = Boolean(machineId);
+  const folderAttached = Boolean(workspacePath);
+  const attached = machineAttached && folderAttached;
+  const status: ProjectLocalHost["status"] = attached
+    ? "attached"
+    : machineAttached
+      ? "machine_only"
+      : "disconnected";
+  const metadataWithStatus = {
+    ...localHostMetadata,
+    ...(machineId ? { machineId } : {}),
+    attached,
+    machineAttached,
+    folderAttached,
+    status
+  };
+
+  return {
+    kind: "local_companion",
+    projectId: project.id,
+    projectName: project.name,
+    attached,
+    connected: machineAttached,
+    machineAttached,
+    ...(machineId ? { machineId } : {}),
+    ...(workspaceId ? { workspaceId } : {}),
+    ...(workspacePath ? { workspacePath } : {}),
+    folderAttached,
+    previewAvailable: Boolean(previewUrl || previewPort),
+    ...(previewUrl ? { previewUrl } : {}),
+    ...(typeof previewPort === "number" ? { previewPort } : {}),
+    status,
+    defaultHost: profile.defaultHost,
+    defaultExecutionMode: profile.defaultExecutionMode,
+    appTargetCount,
+    metadata: metadataWithStatus
+  };
+};
+
+export const getProjectAppTargets = async (input: {
+  tenantId: string;
+  projectId: string;
+}): Promise<{ project: ProjectRuntimeProjectRecord; runtimeProfile: ProjectRuntimeProfile; items: ProjectAppTarget[] }> => {
+  const project = await getProjectRuntimeProfile({
+    tenantId: input.tenantId,
+    projectId: input.projectId
+  });
+  const runtimeProfile = readProjectRuntimeProfile(project);
+  const metadata = readProjectMetadata(project);
+  return {
+    project,
+    runtimeProfile,
+    items: readAppTargetList(metadata)
+  };
+};
+
+export const updateProjectAppTargets = async (input: {
+  tenantId: string;
+  projectId: string;
+  targets: Array<Record<string, unknown>>;
+}): Promise<{ project: ProjectRuntimeProjectRecord; runtimeProfile: ProjectRuntimeProfile; items: ProjectAppTarget[] }> => {
+  const project = await getProjectRuntimeProfile({
+    tenantId: input.tenantId,
+    projectId: input.projectId
+  });
+  const profile = readProjectRuntimeProfile(project);
+  const items = input.targets.map((target, index) => normalizeAppTarget(target, index));
+  const nextProfile = buildProjectRuntimeProfile({
+    ...profile,
+    metadata: {
+      ...(profile.metadata ?? {}),
+      appTargets: items
+    }
+  });
+  const updated = await writeProjectRuntimeProfile(input.tenantId, project.id, nextProfile);
+  return {
+    project: updated,
+    runtimeProfile: nextProfile,
+    items
+  };
+};
 
 export const listProjectRuntimeHeartbeatJobs = async (input: {
   tenantId: string;
@@ -552,4 +829,105 @@ export const tickProjectHeartbeat = async (input: {
 export const projectHeartbeatPolicyIsValid = (policy: Partial<HeartbeatPolicy>): boolean => {
   const interval = policy.interval ?? "manual";
   return interval in heartbeatIntervalToMs;
+};
+
+export const dispatchProjectAppTargetAction = async (input: {
+  tenantId: string;
+  projectId: string;
+  targetId: string;
+  action: ProjectAppTargetAction;
+  actor: string;
+  executionMode?: "local" | "remote" | "hybrid";
+  reason?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<ProjectAppTargetActionResult> => {
+  const { project, runtimeProfile, items } = await getProjectAppTargets({
+    tenantId: input.tenantId,
+    projectId: input.projectId
+  });
+  const target = items.find((entry) => entry.id === input.targetId);
+  if (!target) {
+    throw new ProjectRuntimeError(`App target not found: ${input.targetId}`);
+  }
+
+  const command = resolveAppTargetCommand(target, input.action);
+  const previewUrl = input.action === "preview" ? resolvePreviewUrl(target) : undefined;
+  if (input.action !== "preview" && !command) {
+    throw new ProjectRuntimeError(
+      `App target '${target.name}' is missing a ${input.action} command`
+    );
+  }
+  const executionMode =
+    input.executionMode
+    ?? (runtimeProfile.defaultHost === "api" || runtimeProfile.defaultHost === "remote_worker"
+      ? "remote"
+      : "local");
+  const dispatchCommand = command ?? (previewUrl ? `echo "Preview available at ${previewUrl}"` : undefined);
+  if (!dispatchCommand) {
+    throw new ProjectRuntimeError(
+      `App target '${target.name}' cannot run action '${input.action}' because no command is configured`
+    );
+  }
+  const workspaceId = asString(runtimeProfile.workspaceId);
+  const workspace = workspaceId
+    ? await getWorkspace(input.tenantId, workspaceId).catch(() => null)
+    : null;
+  const workspaceRoot = workspace?.localPath ? asString(workspace.localPath) : undefined;
+  const configuredTargetPath = asString(target.path);
+  const commandCwd = configuredTargetPath
+    ? workspaceRoot && !path.isAbsolute(configuredTargetPath)
+      ? path.resolve(workspaceRoot, configuredTargetPath)
+      : configuredTargetPath
+    : workspaceRoot;
+
+  const job = await dispatchRunnerJob({
+    tenantId: input.tenantId,
+    projectId: project.id,
+    type: "agent_runtime",
+    title: `Project app target ${target.name} ${input.action}`,
+    createdBy: input.actor,
+    resourceType: "project_runtime",
+    resourceId: project.id,
+    payload: {
+      projectId: project.id,
+      projectKey: project.key,
+      projectName: project.name,
+      appTargetId: target.id,
+      appTargetName: target.name,
+      action: input.action,
+      command: dispatchCommand,
+      localExecution: {
+        command: dispatchCommand,
+        ...(commandCwd ? { cwd: commandCwd } : {}),
+        targetId: target.id,
+        action: input.action
+      },
+      ...(previewUrl ? { previewUrl } : {}),
+      ...(input.reason ? { reason: input.reason } : {}),
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+      target,
+      execution: {
+        mode: executionMode,
+        adapter: "shell",
+        requiredCapabilities: ["shell"]
+      }
+    }
+  });
+
+  return {
+    project,
+    runtimeProfile,
+    target,
+    action: input.action,
+    job: {
+      jobId: job.id,
+      resourceId: job.resourceId ?? job.id,
+      action: input.action,
+      targetId: target.id,
+      targetName: target.name,
+      command: dispatchCommand,
+      createdAt: job.createdAt
+    },
+    ...(previewUrl ? { previewUrl } : {})
+  };
 };

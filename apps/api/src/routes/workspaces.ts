@@ -25,6 +25,8 @@ import {
 import {
   browseWorkspacePath,
   listWorkspaceBrowserRoots,
+  pickWorkspaceFolderDialog,
+  WorkspaceBrowserDialogError,
   WorkspaceBrowserPathError
 } from "../services/workspace-browser-service.js";
 import { requireTenantPermission } from "../tenant/rbac.js";
@@ -112,6 +114,10 @@ const projectHeartbeatBodySchema = z.object({
 });
 
 const workspaceBrowserQuerySchema = z.object({
+  path: z.string().min(1).optional()
+});
+
+const workspaceBrowserPickBodySchema = z.object({
   path: z.string().min(1).optional()
 });
 
@@ -237,13 +243,18 @@ export const workspacesRoutes: FastifyPluginAsync = async (fastify) => {
             message: "runtimeStatus must be one of: stopped, starting, running, deploying, unknown, error"
           });
         }
-        const localPath = asString(request.body?.localPath);
+        const localPathProvided = request.body ? Object.prototype.hasOwnProperty.call(request.body, "localPath") : false;
+        const localPath = localPathProvided
+          ? typeof request.body?.localPath === "string"
+            ? request.body.localPath.trim()
+            : ""
+          : undefined;
         const item = await updateWorkspace({
           tenantId,
           workspaceId,
           actor,
           ...(mode ? { mode } : {}),
-          ...(localPath ? { localPath } : {}),
+          ...(localPath !== undefined ? { localPath } : {}),
           ...(runtimeStatus ? { runtimeStatus } : {})
         });
         return { item };
@@ -540,6 +551,48 @@ export const workspacesRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(500).send({
           error: "workspace_browser_failed",
           message: error instanceof Error ? error.message : "Unable to browse workspace folders"
+        });
+      }
+    }
+  );
+
+  fastify.post<{ Body: { path?: string } }>(
+    "/workspaces/browser/pick-folder",
+    { schema: { tags: ["workspaces"], summary: "Open a native folder picker for local workspace selection" } },
+    async (request, reply) => {
+      if (!requireTenantPermission(request, reply, "canEdit")) return;
+      const parse = workspaceBrowserPickBodySchema.safeParse(request.body ?? {});
+      if (!parse.success) {
+        return reply.code(400).send({
+          error: "invalid_request",
+          message: parse.error.issues.map((issue) => issue.message).join("; ")
+        });
+      }
+
+      try {
+        const item = await pickWorkspaceFolderDialog(
+          parse.data.path !== undefined ? { path: parse.data.path } : {}
+        );
+        if (!item) {
+          return { cancelled: true };
+        }
+        return { item };
+      } catch (error) {
+        if (error instanceof WorkspaceBrowserPathError) {
+          return reply.code(400).send({
+            error: "workspace_browser_invalid_path",
+            message: error.message
+          });
+        }
+        if (error instanceof WorkspaceBrowserDialogError) {
+          return reply.code(501).send({
+            error: "workspace_browser_dialog_unavailable",
+            message: error.message
+          });
+        }
+        return reply.code(500).send({
+          error: "workspace_browser_dialog_failed",
+          message: error instanceof Error ? error.message : "Unable to open local folder picker"
         });
       }
     }

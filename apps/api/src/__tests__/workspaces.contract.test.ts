@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Job } from "@cp/domain";
+import { setWorkspaceFolderDialogPickerForTests } from "../services/workspace-browser-service.js";
 import {
   startTestExecutionWorkerHarness,
   type TestExecutionWorkerHarness
@@ -76,6 +77,7 @@ describe("Workspaces API contract", () => {
   });
 
   afterAll(async () => {
+    setWorkspaceFolderDialogPickerForTests(undefined);
     for (const dirPath of temporaryPaths) {
       try {
         await chmod(dirPath, 0o700);
@@ -120,6 +122,43 @@ describe("Workspaces API contract", () => {
     expect(typeof createdProjectId).toBe("string");
     return createdProjectId as string;
   };
+
+  it("bootstraps a coordinator agent when a project is created", async () => {
+    const bootstrapName = `project-bootstrap-${Date.now()}`;
+    const response = await inject({
+      method: "POST",
+      url: "/projects",
+      payload: {
+        name: bootstrapName
+      }
+    });
+    expect(response.statusCode).toBe(201);
+    const body = response.json() as { item?: { id?: string } };
+    const createdProjectId = body.item?.id;
+    expect(typeof createdProjectId).toBe("string");
+
+    const runtimeResponse = await inject({
+      method: "GET",
+      url: `/projects/${createdProjectId}/runtime`
+    });
+    expect(runtimeResponse.statusCode).toBe(200);
+    const runtimeBody = runtimeResponse.json() as {
+      item?: { runtimeProfile?: { primaryAgentId?: string; metadata?: Record<string, unknown> } };
+    };
+    const primaryAgentId = runtimeBody.item?.runtimeProfile?.primaryAgentId;
+    expect(typeof primaryAgentId).toBe("string");
+    expect(runtimeBody.item?.runtimeProfile?.metadata?.coordinatorBootstrap).toBe(true);
+
+    const agentsResponse = await inject({
+      method: "GET",
+      url: "/agents"
+    });
+    expect(agentsResponse.statusCode).toBe(200);
+    const agentsBody = agentsResponse.json() as { items?: Array<{ id: string; name: string; description?: string }> };
+    const coordinator = agentsBody.items?.find((item) => item.id === primaryAgentId);
+    expect(coordinator?.name).toContain(bootstrapName);
+    expect(coordinator?.description).toContain("coordinating agent");
+  });
 
   it("creates and updates a workspace runtime entity", async () => {
     const created = await inject({
@@ -240,6 +279,120 @@ describe("Workspaces API contract", () => {
     };
     expect(roundTripBody.item?.runtimeProfile?.primaryAgentId).toBe(primaryAgentId);
     expect(roundTripBody.item?.runtimeProfile?.heartbeatPolicy?.interval).toBe("1m");
+  });
+
+  it("manages local companion and app target runtime metadata", async () => {
+    const hostSeed = await inject({
+      method: "PUT",
+      url: `/projects/${projectId}/runtime`,
+      payload: {
+        workspaceId,
+        metadata: {
+          localHost: {
+            status: "attached"
+          }
+        }
+      }
+    });
+    expect(hostSeed.statusCode).toBe(200);
+
+    const localHostResponse = await inject({
+      method: "GET",
+      url: `/projects/${projectId}/local-host`
+    });
+    expect(localHostResponse.statusCode).toBe(200);
+    const localHostBody = localHostResponse.json() as {
+      item?: {
+        kind: string;
+        attached: boolean;
+        workspaceId?: string;
+        workspacePath?: string;
+        appTargetCount: number;
+      };
+    };
+    expect(localHostBody.item?.kind).toBe("local_companion");
+    expect(localHostBody.item?.attached).toBe(true);
+    expect(localHostBody.item?.workspaceId).toBe(workspaceId);
+    expect(localHostBody.item?.workspacePath).toBe(process.cwd());
+    expect(localHostBody.item?.appTargetCount).toBeGreaterThanOrEqual(0);
+
+    const updateTargetsResponse = await inject({
+      method: "PUT",
+      url: `/projects/${projectId}/app-targets`,
+      payload: {
+        items: [
+          {
+            id: "web-app",
+            name: "Web App",
+            path: "apps/web",
+            runCommand: "pnpm --filter @cp/web start",
+            testCommand: "pnpm --filter @cp/web test",
+            devCommand: "pnpm --filter @cp/web dev",
+            previewCommand: "pnpm --filter @cp/web preview",
+            defaultPort: 5173,
+            previewType: "port",
+            previewUrl: "http://localhost:5173",
+            metadata: {
+              framework: "vite"
+            }
+          }
+        ]
+      }
+    });
+    expect(updateTargetsResponse.statusCode).toBe(200);
+    const updateTargetsBody = updateTargetsResponse.json() as {
+      items?: Array<{ id: string; name: string; previewUrl?: string; defaultPort?: number }>;
+    };
+    expect(updateTargetsBody.items?.[0]?.id).toBe("web-app");
+    expect(updateTargetsBody.items?.[0]?.previewUrl).toBe("http://localhost:5173");
+
+    const listTargetsResponse = await inject({
+      method: "GET",
+      url: `/projects/${projectId}/app-targets`
+    });
+    expect(listTargetsResponse.statusCode).toBe(200);
+    const listTargetsBody = listTargetsResponse.json() as {
+      items?: Array<{ id: string; name: string; previewUrl?: string }>;
+    };
+    expect(listTargetsBody.items?.[0]?.name).toBe("Web App");
+    expect(listTargetsBody.items?.[0]?.previewUrl).toBe("http://localhost:5173");
+
+    const actionResponse = await inject({
+      method: "POST",
+      url: `/projects/${projectId}/app-targets/web-app/actions`,
+      payload: {
+        action: "preview"
+      }
+    });
+    expect(actionResponse.statusCode).toBe(200);
+    const actionBody = actionResponse.json() as {
+      item?: {
+        job?: { jobId: string; action: string };
+        previewUrl?: string;
+        action?: string;
+      };
+    };
+    expect(typeof actionBody.item?.job?.jobId).toBe("string");
+    expect(actionBody.item?.action).toBe("preview");
+    expect(actionBody.item?.previewUrl).toBe("http://localhost:5173");
+
+    const runActionResponse = await inject({
+      method: "POST",
+      url: `/projects/${projectId}/app-targets/web-app/actions`,
+      payload: {
+        action: "run"
+      }
+    });
+    expect(runActionResponse.statusCode).toBe(200);
+    const runActionBody = runActionResponse.json() as {
+      item?: {
+        job?: { jobId: string; command?: string };
+        action?: string;
+      };
+    };
+    expect(typeof runActionBody.item?.job?.jobId).toBe("string");
+    expect(runActionBody.item?.action).toBe("run");
+    expect(runActionBody.item?.job?.command).toBe("pnpm --filter @cp/web start");
   });
 
   it("triggers project heartbeat jobs and reports aggregate status", async () => {
@@ -395,6 +548,90 @@ describe("Workspaces API contract", () => {
     });
     expect(escapeResponse.statusCode).toBe(400);
     expect((escapeResponse.json() as { error?: string }).error).toBe("workspace_browser_invalid_path");
+  });
+
+  it("opens the native folder picker and returns a validated listing", async () => {
+    setWorkspaceFolderDialogPickerForTests(async () => process.cwd());
+
+    const response = await inject({
+      method: "POST",
+      url: "/workspaces/browser/pick-folder",
+      payload: {
+        path: process.cwd()
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      cancelled?: boolean;
+      item?: { resolvedPath?: string; path?: string; entries?: Array<{ name: string }> };
+    };
+    expect(body.cancelled).not.toBe(true);
+    expect(body.item?.resolvedPath ?? body.item?.path).toContain(process.cwd());
+    expect(Array.isArray(body.item?.entries)).toBe(true);
+    setWorkspaceFolderDialogPickerForTests(undefined);
+  });
+
+  it("treats cancelled native folder picking as a non-error", async () => {
+    setWorkspaceFolderDialogPickerForTests(async () => undefined);
+
+    const response = await inject({
+      method: "POST",
+      url: "/workspaces/browser/pick-folder",
+      payload: {
+        path: process.cwd()
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ cancelled: true });
+    setWorkspaceFolderDialogPickerForTests(undefined);
+  });
+
+  it("falls back to local machine roots when no workspace roots are configured", async () => {
+    const previousRoots = process.env.WORKSPACE_ALLOWED_ROOTS;
+    const previousRoot = process.env.WORKSPACE_ALLOWED_ROOT;
+    delete process.env.WORKSPACE_ALLOWED_ROOTS;
+    delete process.env.WORKSPACE_ALLOWED_ROOT;
+
+    try {
+      const rootsResponse = await inject({
+        method: "GET",
+        url: "/workspaces/browser/roots"
+      });
+      expect(rootsResponse.statusCode).toBe(200);
+      const rootsBody = rootsResponse.json() as {
+        items?: Array<{ path: string; exists: boolean }>;
+      };
+      expect(Array.isArray(rootsBody.items)).toBe(true);
+      expect(rootsBody.items?.some((item) => item.path === process.cwd())).toBe(true);
+
+      setWorkspaceFolderDialogPickerForTests(async () => process.cwd());
+      const pickResponse = await inject({
+        method: "POST",
+        url: "/workspaces/browser/pick-folder",
+        payload: {}
+      });
+      expect(pickResponse.statusCode).toBe(200);
+      const pickBody = pickResponse.json() as {
+        cancelled?: boolean;
+        item?: { resolvedPath?: string; path?: string };
+      };
+      expect(pickBody.cancelled).not.toBe(true);
+      expect(pickBody.item?.resolvedPath ?? pickBody.item?.path).toContain(process.cwd());
+    } finally {
+      setWorkspaceFolderDialogPickerForTests(undefined);
+      if (previousRoots !== undefined) {
+        process.env.WORKSPACE_ALLOWED_ROOTS = previousRoots;
+      }
+      if (previousRoots === undefined) {
+        delete process.env.WORKSPACE_ALLOWED_ROOTS;
+      }
+      if (previousRoot !== undefined) {
+        process.env.WORKSPACE_ALLOWED_ROOT = previousRoot;
+      }
+      if (previousRoot === undefined) {
+        delete process.env.WORKSPACE_ALLOWED_ROOT;
+      }
+    }
   });
 
   it("dispatches workspace runtime actions through runner jobs", async () => {
