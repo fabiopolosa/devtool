@@ -25,6 +25,7 @@ const main = async (): Promise<void> => {
   const result = await host.start();
   console.log(`[desktop-host] registered worker ${result.registrationId ?? "unavailable"}`);
   console.log(`[desktop-host] opened web app: ${result.openedWebApp ? "yes" : "no"}`);
+  console.log("[desktop-host] companion loop: enabled via env when configured");
   await waitForShutdownSignal();
   await host.stop();
 };

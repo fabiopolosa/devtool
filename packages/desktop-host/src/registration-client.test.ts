@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createWorkerApiClient,
   buildWorkerHeartbeatPayload,
   buildWorkerRegistrationPayload
 } from "./registration-client.js";
@@ -50,4 +51,29 @@ test("heartbeat payload keeps explicit status and metadata", () => {
       revision: "abc123"
     }
   });
+});
+
+test("worker api client posts JSON to execution endpoints", async () => {
+  const calls: Array<{ url: string; body: string }> = [];
+  const client = createWorkerApiClient({
+    apiBaseUrl: "http://localhost:4000",
+    fetchFn: async (input, init) => {
+      calls.push({
+        url: String(input),
+        body: String(init?.body ?? "")
+      });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+
+  const response = await client.post<{ ok: boolean }>("/execution/workers/register", {
+    name: "desktop-host"
+  });
+
+  assert.deepEqual(response, { ok: true });
+  assert.equal(calls[0]?.url, "http://localhost:4000/execution/workers/register");
+  assert.equal(calls[0]?.body, JSON.stringify({ name: "desktop-host" }));
 });

@@ -48,6 +48,10 @@ export interface WorkerRegistrationClientOptions {
   fetchFn?: typeof fetch;
 }
 
+export interface WorkerApiClient {
+  post<T>(path: string, body?: unknown): Promise<T>;
+}
+
 const normalizeStrings = (values: string[] | undefined): string[] =>
   (values ?? []).map((value) => value.trim()).filter((value) => value.length > 0);
 
@@ -79,6 +83,30 @@ export const buildWorkerHeartbeatPayload = (
   }
 });
 
+export const createWorkerApiClient = (
+  options: WorkerRegistrationClientOptions
+): WorkerApiClient => ({
+  async post<T>(path: string, body?: unknown): Promise<T> {
+    const fetchImpl = options.fetchFn ?? fetch;
+    const response = await fetchImpl(`${options.apiBaseUrl.replace(/\/$/, "")}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.tenantId ? { "x-tenant-id": options.tenantId } : {}),
+        ...(options.authToken ? { authorization: `Bearer ${options.authToken}` } : {})
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {})
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message.trim() || `Request failed (${response.status})`);
+    }
+
+    return (await response.json()) as T;
+  }
+});
+
 export class WorkerRegistrationClient {
   constructor(private readonly options: WorkerRegistrationClientOptions) {}
 
@@ -105,23 +133,7 @@ export class WorkerRegistrationClient {
   }
 
   private async fetchJson<T>(path: string, body: object): Promise<T> {
-    const fetchImpl = this.options.fetchFn ?? fetch;
-    const response = await fetchImpl(`${this.options.apiBaseUrl.replace(/\/$/, "")}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(this.options.tenantId ? { "x-tenant-id": this.options.tenantId } : {}),
-        ...(this.options.authToken ? { authorization: `Bearer ${this.options.authToken}` } : {})
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const message = await response.text();
-      throw new Error(message.trim() || `Request failed (${response.status})`);
-    }
-
-    return (await response.json()) as T;
+    return await createWorkerApiClient(this.options).post<T>(path, body);
   }
 }
 
