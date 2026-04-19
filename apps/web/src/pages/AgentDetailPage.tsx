@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { capabilityClasses, type AgentConfig, type AgentRuntimeProfile, type CapabilityClass, type HeartbeatPolicy, type Skill } from "@cp/domain";
+import { extractAgentProfile } from "@/components/agents/agent-profile";
 import { Button, Input, Panel, Pill, SectionHeading } from "@/components/common";
 import { HeartbeatPolicyEditor } from "@/components/runtime-profile/HeartbeatPolicyEditor";
 import { RuntimeProfilePicker } from "@/components/runtime-profile/RuntimeProfilePicker";
@@ -67,6 +68,8 @@ const resolveRuntimeJobPollDelay = (input: {
   }
   return 2000;
 };
+
+const formatToken = (value: string): string => value.replace(/[_-]/g, " ");
 
 export function AgentDetailPage() {
   const navigate = useNavigate();
@@ -211,6 +214,8 @@ export function AgentDetailPage() {
     [auth.principal?.userId, installedSkills, skillScopeFilter]
   );
 
+  const readableProfile = useMemo(() => (agent ? extractAgentProfile(agent) : undefined), [agent]);
+
   const toggleDesiredSkill = (skillName: string): void => {
     setDesiredSkills((current) =>
       current.includes(skillName)
@@ -328,6 +333,71 @@ export function AgentDetailPage() {
       </Panel>
 
       <Panel>
+        <SectionHeading title="Readable profile" subtitle="Persona, language and generated artifacts" />
+        {readableProfile ? (
+          <div className="space-y-3">
+            <div className="grid gap-2 md:grid-cols-2">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                <div className="label">Language</div>
+                <p className="mt-1 text-sm text-white">{readableProfile.language ?? "not specified"}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                <div className="label">Work mode</div>
+                <p className="mt-1 text-sm text-white">{formatToken(readableProfile.workMode ?? "not specified")}</p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+              <div className="label">Purpose</div>
+              <p className="mt-1 text-sm text-slate-200">{readableProfile.purpose ?? "No purpose profile yet."}</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+              <div className="label">Persona</div>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-slate-200">
+                {readableProfile.persona ?? "No persona profile yet."}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(readableProfile.compatibility.length > 0 ? readableProfile.compatibility : [agent?.adapterType ?? "n/a"]).map((item) => (
+                <Pill key={`compat:${item}`} tone="default">
+                  compatibility {item}
+                </Pill>
+              ))}
+              {(readableProfile.supportedProviders.length > 0 ? readableProfile.supportedProviders : ["n/a"]).map((provider) => (
+                <Pill key={`provider:${provider}`} tone="default">
+                  provider {formatToken(provider)}
+                </Pill>
+              ))}
+              {(readableProfile.supportedModes.length > 0 ? readableProfile.supportedModes : ["n/a"]).map((mode) => (
+                <Pill key={`mode:${mode}`} tone="default">
+                  mode {formatToken(mode)}
+                </Pill>
+              ))}
+            </div>
+            {readableProfile.artifacts.agentMd || readableProfile.artifacts.soulMd ? (
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                  <div className="label">agent.md artifact</div>
+                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-200">
+                    {readableProfile.artifacts.agentMd ?? "No agent.md artifact stored yet."}
+                  </pre>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                  <div className="label">soul.md artifact</div>
+                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-200">
+                    {readableProfile.artifacts.soulMd ?? "No soul.md artifact stored yet."}
+                  </pre>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">No profile artifacts found yet. Save this agent from the wizard to generate them.</p>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">Profile preview unavailable.</p>
+        )}
+      </Panel>
+
+      <Panel>
         <SectionHeading title="Configuration" subtitle="Identity and runtime" />
         <div className="grid gap-2 md:grid-cols-2">
           <Input value={name} onChange={setName} placeholder="Agent name" />
@@ -367,25 +437,35 @@ export function AgentDetailPage() {
             value={runtimeProfile}
             onChange={setRuntimeProfile}
             title="Runtime profile"
-            subtitle="Family, vendor, host and launch mode"
+            subtitle="Pick the simplest execution path first. Advanced runtime options stay tucked away until you need them."
           />
         </div>
-        <div className="mt-4">
-          <HeartbeatPolicyEditor
-            value={heartbeatPolicy}
-            onChange={setHeartbeatPolicy}
-            title="Agent heartbeat policy"
-            subtitle="Schedule and trigger policy for this agent"
-          />
-        </div>
-        <div className="mt-4">
-          <div className="label">Advanced runtime config</div>
-          <textarea
-            value={runtimeConfigRaw}
-            onChange={(event) => setRuntimeConfigRaw(event.target.value)}
-            className="mt-2 min-h-40 w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 font-mono text-xs text-white outline-none focus:border-cyan-400/40"
-          />
-        </div>
+        <details className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <summary className="cursor-pointer list-none text-sm font-semibold text-slate-100">
+            Advanced heartbeat policy
+          </summary>
+          <div className="mt-4">
+            <HeartbeatPolicyEditor
+              value={heartbeatPolicy}
+              onChange={setHeartbeatPolicy}
+              title="Agent heartbeat policy"
+              subtitle="Schedule and trigger policy for this agent"
+            />
+          </div>
+        </details>
+        <details className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <summary className="cursor-pointer list-none text-sm font-semibold text-slate-100">
+            Raw runtime config
+          </summary>
+          <div className="mt-4">
+            <div className="label">Advanced runtime config</div>
+            <textarea
+              value={runtimeConfigRaw}
+              onChange={(event) => setRuntimeConfigRaw(event.target.value)}
+              className="mt-2 min-h-40 w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 font-mono text-xs text-white outline-none focus:border-cyan-400/40"
+            />
+          </div>
+        </details>
       </Panel>
 
       <Panel>
