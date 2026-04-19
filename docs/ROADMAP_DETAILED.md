@@ -5,6 +5,22 @@
 - Primary objective: move from feature-rich alpha to predictable platform behavior under multi-agent load.
 - Non-goal for this roadmap: maximizing feature count before control, reliability, and operating contracts are stable.
 
+### 0.1 Workspace and Runtime Thesis
+- `Workspace` is the persistent project filesystem, not the place where agents or application runtimes permanently live.
+- `Project agent` is the per-project coordinator. It manages run/test/build/restart/deploy flows through runner jobs and remains the operational brain of the project.
+- `Application sandbox` is a temporary runtime used for `npm run dev`, tests, build, preview, and similar app execution tasks. It is distinct from both the workspace and the agent runtime.
+- `Local companion / worker` gives the same project access to local filesystem, local CLI, and local preview flows without creating a second control plane.
+- Browser and desktop must converge on the same control plane and project model. The desktop shell may add native capabilities, but it must not create a separate product logic path.
+- Model/provider compute is expected to be customer-supplied by default (`BYO API key`, `BYO CLI`, customer-local or customer-hosted runtimes). Platform value comes from orchestration, workspace continuity, and project control.
+
+### 0.2 Workspace Modes (Product Contract)
+- `Local only`: project works against a customer filesystem only, with no remote workspace copy.
+- `Remote only`: project works against a remote workspace copy and uses remote app sandboxes.
+- `Hybrid synced`: local and remote workspace copies can be synchronized under explicit sync policy.
+- `Hybrid manual`: local remains primary until the user explicitly pushes/pulls sync state.
+- Workspace sync policy must be explicit (`no sync`, `manual sync`, `auto sync`) and conflict handling must be visible to the operator.
+- Multi-app projects must be first-class: each project can define multiple app targets with command contracts, default ports, preview semantics, and runtime requirements.
+
 ## 1. Phase Map (P0 to P5)
 | Phase | Status | Primary Outcome | Exit Gate |
 |---|---|---|---|
@@ -14,6 +30,59 @@
 | P3 | Planned | Content system productization | Research/content/multimodal pipelines are production-shaped |
 | P4 | Planned | Scalable execution substrate | Tenant-safe queue and worker scaling with fairness |
 | P5 | Planned | Platform extension model | Plugins/integrations/API can extend system without forking core |
+
+## 1.1 Deployment Track A: Cloud.it MVP
+### Mission
+Validate the product on low-cost private infrastructure before committing to hyperscaler complexity.
+
+### Topology
+- Public edge: `frontend` and preview/access gateway.
+- Private network: `api/control plane`, `postgres + pgvector`, `runner host`, and remote workspace backing services.
+- Remote workspaces remain persistent while app sandboxes are started on demand.
+- One warm runner is acceptable for MVP; additional runner capacity should be added horizontally, not by turning the control-plane node into a general compute host.
+
+### MVP Principles
+- Prefer small machines and explicit limits over early autoscaling complexity.
+- Keep control plane, database, and runner isolation explicit even if fleet size is tiny.
+- Do not expose sandbox nodes directly to the public Internet; preview access should flow through a controlled gateway/proxy path.
+- Accept that local development is the primary path early on; remote workspaces and remote sandboxes are there to validate continuity, not to replace the developer workstation on day one.
+
+### MVP Backlog Additions
+- Define remote workspace storage contract for `20 GB` / `50 GB` workspace plans.
+- Add project-level workspace mode selection (`local`, `remote`, `hybrid`) in onboarding and project settings.
+- Add project app-target schema (`name`, `path`, `devCommand`, `testCommand`, `buildCommand`, `defaultPort`, `previewType`).
+- Add preview gateway contract for multi-app projects and port selection.
+- Add local companion registration path so a browser user can attach a local machine without changing control-plane behavior.
+
+### MVP Exit Gate
+- A developer can start local-first, attach a remote workspace, continue from another machine, and return to the original machine with an explicit sync flow.
+- A project agent can run install/test/build/restart actions against both local companion targets and remote app sandboxes through the same runner job model.
+- Remote previews work without exposing sandbox nodes directly.
+
+## 1.2 Deployment Track B: AWS Migration Target
+### Mission
+Move from small-scale validation infrastructure to managed, scalable, isolated production infrastructure after product validation.
+
+### Migration Trigger
+- Trigger migration only after product validation shows repeated hybrid workspace use, meaningful remote sandbox demand, and stable paying usage.
+- AWS migration is not a prerequisite for product-market validation; it is a scaling and operability milestone.
+
+### Target Topology
+- Public edge: CDN/ALB/web frontend.
+- Private VPC services: API/control plane, queue/cache, project-agent execution pool, sandbox runner pools, database, workspace backing services.
+- Managed services preferred where they reduce operational risk (`RDS/pgvector-compatible Postgres`, managed queue/cache, object/block storage, autoscaling groups or container orchestration only when justified).
+- Separate pools for control-plane workloads, agent workloads, and app sandbox workloads.
+
+### Migration Objectives
+- Preserve the same project/workspace/app-target contracts used in the Cloud.it MVP.
+- Replace hand-managed runner growth with predictable autoscaling policies.
+- Improve tenant/project isolation, observability, and disaster recovery.
+- Introduce cost controls for remote workspaces, preview lifetimes, and sandbox concurrency before widening remote-runtime usage.
+
+### AWS Exit Gate
+- Same workspace contract works unchanged across both infrastructure tracks.
+- Project agents and app sandboxes remain on one runner job model with auditable routing.
+- Tenant-heavy usage no longer requires manual node intervention for normal workload bursts.
 
 ## 2. P0 (DONE) Baseline Summary
 Delivered baseline capabilities (without re-explaining internals):
@@ -48,29 +117,41 @@ Make daily internal operation stable, legible, and low-friction before adding la
 - `P1-PROV-02` Standardize provider misconfiguration messages for UI + CLI parity.
 - `P1-CLI-01` CLI usability: simplify command surfaces around run/inspect/fix workflows and make mode choice explicit.
 - `P1-CLI-02` Add one-command diagnostics (`devtools doctor`) including auth/provider/worker/readiness checks.
+- `P1-WS-01` Workspace UX: make `local`, `remote`, and `hybrid` modes explicit in onboarding and project views, with no ambiguous duplicate controls.
+- `P1-WS-02` Remove "project not found / onboarding dead-end" flows by ensuring every new project is born with a default coordinator agent and a pending setup state.
+- `P1-WS-03` Add first usable workspace sync semantics (`manual push`, `manual pull`, visible conflict state) before any auto-sync expansion.
+- `P1-RUN-01` Project runtime UX: make app targets, default ports, preview actions, and local-vs-remote execution intent visible at project level.
+- `P1-RUN-02` Split onboarding from advanced runtime configuration: onboarding should capture the minimal decisions needed to start, while detailed runtime/app controls live in project settings.
+- `P1-LOCAL-01` Ship the first local wrapper / companion path as soon as possible so the same project can access local folders, local CLI, and local browser previews from the unified Devtools UI.
+- `P1-LOCAL-02` Keep the wrapper thin: native bridge, machine registration, local folder attach, command execution, and local preview open; no separate control logic in the wrapper.
 
 ### P1 Architectural Decisions
 - Keep runner as canonical execution engine, not per-feature executors.
 - Keep API as system-of-record and policy gate.
 - Keep worker as execution runtime and telemetry emitter.
 - Keep prompt resolution explicit and traceable with source metadata.
+- Keep `workspace`, `project agent`, and `application sandbox` as separate concerns in both code and UX.
 
 ### P1 Risks
 - Boundary leakage between API and execution runtime can reintroduce hidden execution paths.
 - Mock/fallback behavior in runtime can mask production defects.
 - UI can drift into duplicate entry points if navigation is not constrained.
+- Workspace sync without explicit conflict semantics can destroy user trust faster than almost any other feature.
 
 ### P1 Exit Criteria
 - 95% of internal tasks complete without manual DB edits or service restarts.
 - 100% execution actions carry routing metadata and actor attribution.
 - CLI and web show the same job state and failure reasons for sampled flows.
 - Prompt source (`registry` vs fallback) is visible in logs for all generation paths.
+- A new project is always created with a default coordinator agent and a valid setup path.
+- Workspace mode and preview target are legible from the project UI without reading documentation.
 
 ### P1 Not To Build Yet
 - No plugin marketplace work.
 - No custom queue infrastructure beyond current minimal needs.
 - No new orchestration engines.
 - No broad "universal builder" UI.
+- No fully automatic bidirectional filesystem sync until manual sync and conflict visibility are proven usable.
 
 ## 4. P2 Control System
 ### P2 Mission
@@ -81,6 +162,7 @@ Turn chat and operator intent into deterministic, typed, auditable job plans.
 - Intent-to-job mapping with strict schema validation.
 - Agent orchestration policies (selection, budget, retries, approval boundaries).
 - Pipeline abstraction as typed domain contracts, not free-form graphs.
+- Workspace action envelopes (`sync`, `attach local`, `prepare sandbox`, `open preview`, `restart app`) with typed intent and auditability.
 
 ### P2 Backlog
 - `P2-CHAT-01` Define canonical chat command contract with validation and versioning.
@@ -90,6 +172,9 @@ Turn chat and operator intent into deterministic, typed, auditable job plans.
 - `P2-ORCH-01` Add orchestration policy module for capability match, budget, and approval gates.
 - `P2-ORCH-02` Add deterministic idempotency keys for repeated control requests.
 - `P2-PIPE-01` Normalize pipeline contracts (research/content/visual/multimodal) into stable I/O schemas.
+- `P2-WS-01` Define typed workspace sync contract (`push`, `pull`, `reconcile`, `no-sync`) with explicit conflict results.
+- `P2-WS-02` Define canonical app-target execution contract so the same project can run one or more apps on known ports locally or remotely.
+- `P2-AGENT-01` Normalize the project-agent contract so every project has one primary coordinator and optional additional agents created either manually or through governed setup flows.
 
 ### P2 Dependencies
 - Depends on P1 status semantics, diagnostics, and boundary hardening.
@@ -102,6 +187,7 @@ Turn chat and operator intent into deterministic, typed, auditable job plans.
 - Same intent produces same job plan under same inputs.
 - All control actions are replayable from audit logs.
 - Pipeline invocation path is singular through runner contracts.
+- Workspace sync and preview operations produce typed, reversible job plans instead of hidden side effects.
 
 ### P2 Not To Build Yet
 - No low-code "build your own workflow graph" system.
@@ -152,6 +238,8 @@ Support sustained multi-tenant throughput with fairness and isolation.
 - GPU routing (Flux) for relevant workloads.
 - Priority and fairness scheduling.
 - Tenant isolation for compute and storage paths.
+- Separation of project-agent compute from application-sandbox compute.
+- Remote workspace durability and quota enforcement as billable platform primitives.
 
 ### P4 Backlog
 - `P4-QUEUE-01` Move job dispatch to durable queue backend with retry/dead-letter policies.
@@ -162,6 +250,9 @@ Support sustained multi-tenant throughput with fairness and isolation.
 - `P4-GPU-02` Add GPU fallback strategy and cost guardrails.
 - `P4-FAIR-01` Implement weighted fairness scheduler and starvation prevention.
 - `P4-ISO-01` Enforce runtime and data isolation boundaries per tenant/project.
+- `P4-WS-01` Add workspace storage quota enforcement, retention policy, and billing hooks per remote workspace.
+- `P4-WS-02` Separate local companion execution, project-agent execution, and remote app sandbox execution into measurable capability pools.
+- `P4-INFRA-01` Replace MVP manual runner growth with managed autoscaling policy on AWS while preserving the Cloud.it-era job and workspace contracts.
 
 ### P4 Dependencies
 - Depends on P2 deterministic orchestration and P3 stable pipeline contracts.
@@ -174,6 +265,7 @@ Support sustained multi-tenant throughput with fairness and isolation.
 - Queue durability and replay are verified by chaos drills.
 - Tenant-heavy load does not starve small tenants.
 - GPU tasks route deterministically with measurable success and fallback behavior.
+- Remote workspace usage and app-sandbox usage can be measured, limited, and billed without changing the control-plane API surface.
 
 ### P4 Not To Build Yet
 - No custom queue engine from scratch.
@@ -218,6 +310,7 @@ Open the system for extensibility without sacrificing control-plane integrity.
 - `P2 -> P3`: Typed control contracts are required before scaling content pipelines.
 - `P2 + P3 -> P4`: Queue/pool scaling only after stable orchestration and payload schemas.
 - `P4 -> P5`: Plugin/API platform only after isolation, fairness, and policy enforcement.
+- `Cloud.it MVP -> AWS`: infrastructure migration must follow, not precede, validated workspace and runtime contracts.
 
 ## 9. Architectural Decisions (Locked)
 - `ADR-RUN-01` One execution path: all runnable work becomes runner jobs.
@@ -226,6 +319,9 @@ Open the system for extensibility without sacrificing control-plane integrity.
 - `ADR-PROMPT-01` Prompts are governed assets in registry with version/status/scope.
 - `ADR-PIPE-01` Pipelines are domain contracts, not generic graph construction.
 - `ADR-MT-01` Tenant isolation is a first-class constraint, not a post-hoc optimization.
+- `ADR-WS-01` Workspace persistence is separate from compute. Workspaces store project state; agents and app sandboxes execute against them.
+- `ADR-WS-02` Browser and desktop share one control-plane model. Native/local capabilities extend that model but do not fork it.
+- `ADR-INFRA-01` Cloud.it is the validation substrate; AWS is the scaling substrate. Product contracts must survive the migration intact.
 
 ## 10. Global "Do Not Build Yet" List
 - Generic n8n-style pipeline builder.
@@ -242,7 +338,21 @@ Open the system for extensibility without sacrificing control-plane integrity.
 - Scale: queue lag percentiles, fairness index, worker utilization.
 
 ## 12. Immediate Next 30-Day Focus (P1 Execution Plan)
-- Week 1: finalize guardrails, remove/flag runtime mock paths, publish diagnostics baseline.
-- Week 2: unify control UX status model and failure taxonomy.
-- Week 3: harden coding workflow gates and prompt provenance visibility.
-- Week 4: close CLI/API parity gaps and run operability drill with incident checklist.
+- Week 1: finalize workspace and project-agent contracts, remove/flag runtime mock paths, publish diagnostics baseline.
+- Week 2: ship the first local wrapper / companion slice so local folder attach and local preview can be tested end-to-end from the real UI.
+- Week 3: unify control UX status model, runtime/app-target visibility, and onboarding clarity around local/remote/hybrid modes.
+- Week 4: harden coding workflow gates, prompt provenance visibility, and run an operability drill that includes local wrapper + remote workspace handoff.
+
+## 13. Parallel Delivery Tracks (Immediate)
+### Track A — Product Stability
+- Fix onboarding, navigation, provider configuration, and workspace clarity issues until the core project flow is boringly reliable.
+- Make project setup, agent setup, and workspace setup readable enough that internal users can work without intervention.
+
+### Track B — Local Wrapper / Companion
+- Prioritize the local wrapper early because it unlocks real local development validation before the remote workspace stack is fully mature.
+- Scope the first slice narrowly: machine registration, folder attach, local command execution through worker, local preview open, and explicit status reporting.
+- Defer nice-to-have shell polish until the wrapper proves the product loop works on a real developer machine.
+
+### Track C — Remote Workspace and Sandbox
+- Continue the remote workspace contract in parallel so the same project can later move between machines and remote sandboxes without changing the control-plane model.
+- Keep remote app sandbox work behind the same app-target and runner-job contracts used by the local wrapper path.
