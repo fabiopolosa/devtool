@@ -1,0 +1,55 @@
+{
+  "name": "@cp/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Devtools Desktop shell for local companion and unified UI access",
+  "author": "Devtools",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "pnpm run build && electron dist/main.js",
+    "start": "electron dist/main.js",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "smoke": "pnpm run build && CP_DESKTOP_SMOKE=1 electron dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test dist/config-store.test.js dist/companion-manager.test.js",
+    "package:dir": "pnpm run build && electron-builder --dir",
+    "package:dmg": "pnpm run build && electron-builder --mac dmg",
+    "package:mac": "pnpm run build && electron-builder --mac dir dmg zip"
+  },
+  "dependencies": {
+    "@cp/desktop-host": "workspace:*"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^3.1.1",
+    "electron": "^31.6.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.8.2"
+  },
+  "build": {
+    "appId": "com.cp.devtools.desktop",
+    "productName": "Devtools Desktop",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "afterSign": "scripts/notarize.mjs",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "target": [
+        "dir",
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "artifactName": "${productName}-${arch}.${ext}"
+    }
+  }
+}

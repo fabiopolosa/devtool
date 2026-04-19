@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Devtools Desktop</title>
+    <link rel="stylesheet" href="./renderer.css" />
+  </head>
+  <body>
+    <div class="shell" id="shell-root">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="brand-row">
+            <div>
+              <div class="eyebrow">Desktop shell</div>
+              <div class="brand">Devtools Desktop</div>
+            </div>
+            <span id="companion-status" class="status-badge status-stopped">stopped</span>
+          </div>
+          <p id="status-headline" class="status-headline">
+            Connect this machine, open a project, and continue inside Devtools.
+          </p>
+          <ol class="first-run-flow" id="first-run-flow">
+            <li><span>1</span>Connect machine</li>
+            <li><span>2</span>Open project</li>
+            <li><span>3</span>Continue in Devtools</li>
+          </ol>
+          <div class="meta-row">
+            <div class="meta-chip">
+              <span class="label">API</span>
+              <strong id="api-url-badge">http://localhost:4000</strong>
+            </div>
+            <div class="meta-chip">
+              <span class="label">Web UI</span>
+              <strong id="web-url-badge">http://localhost:5173</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="actions-wrap">
+          <button id="start-companion" class="btn btn-primary" type="button">Connect machine</button>
+          <button id="stop-companion" class="btn" type="button">Disconnect</button>
+          <button id="open-projects" class="btn" type="button">Open projects</button>
+          <button id="open-external-web" class="btn btn-ghost" type="button">Continue in browser</button>
+          <button id="toggle-settings" class="btn btn-ghost" type="button">Desktop settings</button>
+          <button id="reload-webview" class="btn btn-ghost" type="button">Reload</button>
+          <button id="toggle-chrome" class="btn btn-ghost" type="button">Focus mode</button>
+        </div>
+      </header>
+
+      <button id="restore-chrome" class="chrome-restore" type="button" hidden>
+        Show desktop controls
+      </button>
+
+      <main class="main-layout">
+        <section class="webview-wrap" id="webview-wrap">
+          <div id="desktop-guide" class="desktop-guide">
+            <div class="guide-card">
+              <div id="guide-kicker" class="guide-kicker">Desktop setup</div>
+              <h1 id="guide-title">Bring this machine online</h1>
+            <p id="guide-copy">
+                Start the companion to register this machine, then open your project and continue working in Devtools.
+              </p>
+              <ol id="guide-steps" class="guide-steps">
+                <li>Review desktop settings if you need a different API or Web URL.</li>
+                <li>Connect this machine with the companion.</li>
+                <li>Open your project from the embedded Devtools UI.</li>
+              </ol>
+              <div class="guide-actions">
+                <button id="guide-primary-action" class="btn btn-primary btn-large" type="button">
+                  Start companion
+                </button>
+                <button id="guide-secondary-action" class="btn btn-ghost btn-large" type="button">
+                  Hide guide
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <webview id="devtools-webview" class="devtools-webview" src="about:blank" allowpopups></webview>
+
+          <div id="bridge-warning" class="bridge-warning" hidden>
+            Desktop bridge unavailable. The embedded UI can still load, but companion controls are disabled.
+          </div>
+
+          <div id="companion-message-banner" class="message-banner" hidden></div>
+        </section>
+
+        <aside class="settings-panel" id="settings-panel" aria-hidden="true">
+          <div class="settings-header">
+            <h2>Desktop Settings</h2>
+            <p>
+              Keep this minimal: set API/Web URL, add access token, then connect this machine.
+            </p>
+          </div>
+
+          <form id="settings-form" class="settings-form">
+            <label class="field">
+              <span>API base URL</span>
+              <input id="api-base-url" name="apiBaseUrl" type="url" placeholder="http://localhost:4000" required />
+            </label>
+
+            <label class="field">
+              <span>Web app URL</span>
+              <input id="web-app-url" name="webAppUrl" type="url" placeholder="http://localhost:5173" required />
+            </label>
+
+            <label class="field">
+              <span>Tenant</span>
+              <input id="tenant-id" name="tenantId" type="text" placeholder="tenant_default" />
+            </label>
+
+            <label class="field">
+              <span>Auth token</span>
+              <input id="auth-token" name="authToken" type="password" placeholder="Paste session token after sign-in" />
+            </label>
+
+            <label class="field">
+              <span>Runner token</span>
+              <input id="runner-token" name="runnerToken" type="password" placeholder="RUNNER_INTERNAL_TOKEN" />
+            </label>
+
+            <label class="field field-inline">
+              <span>Auto-start companion</span>
+              <input id="autostart-companion" name="autoStartCompanion" type="checkbox" />
+            </label>
+
+            <details class="settings-advanced">
+              <summary>Advanced companion settings</summary>
+              <div class="settings-advanced-grid">
+                <label class="field">
+                  <span>Companion mode</span>
+                  <select id="companion-mode" name="companionMode">
+                    <option value="local">local</option>
+                    <option value="hybrid">hybrid</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>Allowlist</span>
+                  <input id="companion-allowlist" name="companionAllowlist" type="text" placeholder="echo,pnpm,npm,node" />
+                </label>
+
+                <label class="field field-inline">
+                  <span>Require confirmation</span>
+                  <input id="companion-confirmation" name="companionRequireConfirmation" type="checkbox" />
+                </label>
+              </div>
+            </details>
+
+            <div class="settings-actions">
+              <button id="save-settings" class="btn btn-primary" type="submit">Save settings</button>
+            </div>
+          </form>
+        </aside>
+      </main>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
