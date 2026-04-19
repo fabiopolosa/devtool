@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Panel, Pill } from "@/components/common";
+import { useAppStore } from "@/store/app-store";
 
 type WorkspaceBrowserRoot = {
   path: string;
@@ -47,12 +48,21 @@ export function WorkspaceBrowserPicker({
   title = "Workspace folder",
   subtitle = "Browse allowed local roots instead of typing a raw path"
 }: WorkspaceBrowserPickerProps) {
+  const { authActions } = useAppStore();
   const [roots, setRoots] = useState<WorkspaceBrowserRoot[]>([]);
   const [listing, setListing] = useState<WorkspaceBrowserListing | undefined>();
   const [currentPath, setCurrentPath] = useState<string | undefined>(value);
   const [loading, setLoading] = useState(false);
   const [rootLoading, setRootLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const selectedPath = value ?? currentPath;
   const rootEntries = useMemo(() => sortRoots(roots), [roots]);
@@ -61,16 +71,16 @@ export function WorkspaceBrowserPicker({
     setRootLoading(true);
     setError(undefined);
     try {
-      const response = await fetch("/workspaces/browser/roots", { credentials: "include" });
-      const body = (await response.json()) as {
+      const { response, body } = await authActions.apiFetchJson<{
         items?: WorkspaceBrowserRoot[];
         allowedRoots?: WorkspaceBrowserRoot[];
         message?: string;
-      };
+      }>("/workspaces/browser/roots");
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to load workspace roots (HTTP ${response.status})`);
       }
       const allowedRoots = body.items ?? body.allowedRoots ?? [];
+      if (!mountedRef.current) return;
       setRoots(allowedRoots);
       if (!selectedPath && allowedRoots.length > 0) {
         const firstRoot = allowedRoots[0];
@@ -79,19 +89,20 @@ export function WorkspaceBrowserPicker({
         }
       }
     } catch (loadError) {
+      if (!mountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load workspace roots");
     } finally {
+      if (!mountedRef.current) return;
       setRootLoading(false);
     }
-  }, [selectedPath]);
+  }, [authActions, selectedPath]);
 
   const fetchListing = useCallback(async (path?: string): Promise<void> => {
     setLoading(true);
     setError(undefined);
     try {
       const url = path ? `/workspaces/browser?path=${encodeURIComponent(path)}` : "/workspaces/browser";
-      const response = await fetch(url, { credentials: "include" });
-      const body = (await response.json()) as {
+      const { response, body } = await authActions.apiFetchJson<{
         item?: WorkspaceBrowserListing;
         path?: string;
         resolvedPath?: string;
@@ -102,7 +113,7 @@ export function WorkspaceBrowserPicker({
         currentRoot?: string;
         currentName?: string;
         message?: string;
-      };
+      }>(url);
       if (!response.ok) {
         throw new Error(body.message ?? `Unable to browse workspace path (HTTP ${response.status})`);
       }
@@ -124,6 +135,7 @@ export function WorkspaceBrowserPicker({
       if (!nextListing) {
         throw new Error("Workspace browser response did not include an item.");
       }
+      if (!mountedRef.current) return;
       setListing(nextListing);
       if (nextListing.path) {
         setCurrentPath(nextListing.path);
@@ -132,12 +144,14 @@ export function WorkspaceBrowserPicker({
         setRoots(nextListing.allowedRoots);
       }
     } catch (browseError) {
+      if (!mountedRef.current) return;
       setError(browseError instanceof Error ? browseError.message : "Unable to browse workspace path");
       setListing(undefined);
     } finally {
+      if (!mountedRef.current) return;
       setLoading(false);
     }
-  }, []);
+  }, [authActions]);
 
   useEffect(() => {
     void fetchRoots();
@@ -173,7 +187,12 @@ export function WorkspaceBrowserPicker({
           <div className="label">{subtitle}</div>
           <h3 className="mt-1 text-lg font-semibold text-white">{title}</h3>
         </div>
-        <Pill tone="default">server-side browser</Pill>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="secondary" onClick={() => void fetchListing(selectedPath ?? currentPath)}>
+            {loading ? "Browsing..." : "Refresh browser"}
+          </Button>
+          <Pill tone="default">server-side browser</Pill>
+        </div>
       </div>
 
       {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}

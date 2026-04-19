@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider } from "@tanstack/react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { router } from "../router/router";
@@ -117,11 +117,11 @@ const installApiFetchMock = () => {
           items: [
             {
               id: "agent_001",
-              name: "codex-builder-primary",
-              role: "codex_builder",
-              icon: "tool",
-              description: "Primary builder",
-              adapterType: "legacy_cli",
+              name: "Apollo Coordinator",
+              role: "planner",
+              icon: "orbit",
+              description: "Default coordinating agent for Apollo.",
+              adapterType: "custom_cli",
               runtimeProfile: {
                 runtimeKind: "desktop_cli",
                 vendor: "openai_codex",
@@ -147,6 +147,12 @@ const installApiFetchMock = () => {
         });
       }
 
+      if (path === "/providers/config") {
+        return jsonResponse({
+          items: []
+        });
+      }
+
       if (path === "/workspaces?projectId=proj-control-plane") {
         return jsonResponse({
           items: [
@@ -161,6 +167,41 @@ const installApiFetchMock = () => {
               createdBy: "test",
               updatedAt: "2026-04-14T10:00:00.000Z",
               updatedBy: "test"
+            }
+          ]
+        });
+      }
+
+      if (path === "/projects/proj-control-plane/local-host") {
+        return jsonResponse({
+          item: {
+            attached: true,
+            machineAttached: true,
+            status: "attached",
+            machineName: "desktop-01",
+            workspaceAttached: true,
+            folderAttached: true,
+            localPath: "/workspace-root",
+            previewAvailable: true,
+            previewStatus: "available",
+            previewUrl: "http://localhost:5173",
+            previewPort: 5173
+          }
+        });
+      }
+
+      if (path === "/projects/proj-control-plane/app-targets") {
+        return jsonResponse({
+          items: [
+            {
+              id: "target_001",
+              name: "Main app target",
+              runCommand: "pnpm dev",
+              testCommand: "pnpm test",
+              devCommand: "pnpm dev",
+              previewUrl: "http://localhost:5173",
+              previewPort: 5173,
+              enabled: true
             }
           ]
         });
@@ -261,13 +302,56 @@ describe("Project onboarding smoke", () => {
 
     expect(await screen.findByText("Project basics")).toBeInTheDocument();
     expect(screen.getByText("primary agent")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
-    fireEvent.click(screen.getByRole("button", { name: /workspace picker/i }));
+    fireEvent.click(screen.getByRole("button", { name: /workspace/i }));
     expect(await screen.findByText("Browse workspace folders")).toBeInTheDocument();
     expect(await screen.findByText("workspace-root")).toBeInTheDocument();
 
     expect(await screen.findByRole("button", { name: /packages/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /packages/i }));
     fireEvent.click(screen.getByRole("button", { name: "Use this folder" }));
+    expect(await screen.findByText("/workspace-root/packages")).toBeInTheDocument();
+    expect(screen.getByText("Local wrapper")).toBeInTheDocument();
+    expect(screen.getByText("Local preview")).toBeInTheDocument();
+  });
+
+  it("redirects missing onboarding targets to the new project flow", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const raw = typeof input === "string" ? input : input.toString();
+        const url = raw.includes("://") ? new URL(raw) : new URL(raw, "http://localhost");
+        const path = `${url.pathname}${url.search}`;
+
+        if (path === "/projects") {
+          return jsonResponse({ items: [] });
+        }
+
+        if (path === "/projects/proj-missing" || path === "/projects/proj-missing/runtime") {
+          return jsonResponse({ message: "Project not found" }, 404);
+        }
+
+        if (path === "/agents" || path === "/workspaces?projectId=proj-missing") {
+          return jsonResponse({ items: [] });
+        }
+
+        return jsonResponse({ items: [] });
+      })
+    );
+
+    window.localStorage.setItem("cp_owner_mode", "1");
+    window.history.pushState({}, "", "/project/proj-missing/onboarding");
+    await router.navigate({ to: "/project/$projectId/onboarding", params: { projectId: "proj-missing" } });
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <RouterProvider router={router} />
+      </AppStoreProvider>
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/projects/new");
+    });
   });
 });

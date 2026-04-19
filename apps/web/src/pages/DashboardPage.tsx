@@ -177,14 +177,14 @@ export function DashboardPage() {
     <div className="space-y-4">
       <Panel>
         <SectionHeading
-          title="Situation Awareness"
-          subtitle="Runtime-first landing: queue pressure, failures, providers, agents, usage and worker health"
+          title="Control Center"
+          subtitle="Project-first overview: queue pressure, runtime health, agents, providers, usage and workers"
           action={
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => void load()}>
                 {loading ? "Refreshing..." : "Refresh"}
               </Button>
-              <Button variant="primary" onClick={() => void navigate({ to: "/projects" })}>
+              <Button variant="primary" onClick={() => void navigate({ to: "/projects/new" } as any)}>
                 New Project
               </Button>
             </div>

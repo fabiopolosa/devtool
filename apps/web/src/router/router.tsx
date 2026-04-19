@@ -60,6 +60,12 @@ const projectsRoute = createRoute({
   component: ProjectsPage
 });
 
+const projectsNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/new',
+  component: ProjectsPage
+});
+
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'activity',
@@ -382,6 +388,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   activityRoute,
   projectsRoute,
+  projectsNewRoute,
   projectWorkspaceRoute,
   projectOnboardingRoute,
   projectTasksListRoute,

@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppStoreProvider, useAppStore } from "../store/app-store";
 import { DashboardPage } from "../pages/DashboardPage";
 import { ProjectsPage } from "../pages/ProjectsPage";
 
+const mockedNavigate = vi.fn();
+
 vi.mock("@tanstack/react-router", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
   return {
     ...actual,
-    useNavigate: () => vi.fn()
+    useNavigate: () => mockedNavigate
   };
 });
 
@@ -60,6 +62,7 @@ describe("Polling behavior", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    mockedNavigate.mockReset();
   });
 
   it("deduplicates concurrent GET JSON requests through the app store", async () => {
@@ -131,7 +134,7 @@ describe("Polling behavior", () => {
       </AppStoreProvider>
     );
 
-    expect(screen.getByText("Situation Awareness")).toBeInTheDocument();
+    expect(screen.getByText("Control Center")).toBeInTheDocument();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
@@ -202,5 +205,113 @@ describe("Polling behavior", () => {
     });
 
     expect(projectCalls).toBe(1);
+  });
+
+  it("opens the create flow directly on /projects/new", async () => {
+    window.history.pushState({}, "", "/projects/new");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const raw = typeof input === "string" ? input : input.toString();
+        const url = raw.includes("://") ? new URL(raw) : new URL(raw, "http://localhost");
+        const path = `${url.pathname}${url.search}`;
+
+        if (path === "/projects") {
+          return jsonResponse({ items: [] });
+        }
+
+        return jsonResponse({ items: [] });
+      })
+    );
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <ProjectsPage />
+      </AppStoreProvider>
+    );
+
+    expect(await screen.findByRole("button", { name: "Back to Projects" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Project name")).toBeInTheDocument();
+  });
+
+  it("exposes onboarding entrypoints from the projects list", async () => {
+    window.history.pushState({}, "", "/projects");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const raw = typeof input === "string" ? input : input.toString();
+        const url = raw.includes("://") ? new URL(raw) : new URL(raw, "http://localhost");
+        const path = `${url.pathname}${url.search}`;
+
+        if (path === "/projects" && (!init?.method || init.method === "GET")) {
+          return jsonResponse({
+            items: [
+              {
+                id: "proj_001",
+                tenantId: "tenant_default",
+                key: "ALPHA",
+                name: "Alpha",
+                description: "Primary workspace",
+                status: "active",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                createdBy: "tester",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                updatedBy: "tester"
+              }
+            ]
+          });
+        }
+
+        if (path === "/projects" && init?.method === "POST") {
+          return jsonResponse({
+            item: {
+              id: "proj_002",
+              tenantId: "tenant_default",
+              key: "BETA",
+              name: "Beta",
+              description: "New workspace",
+              status: "active",
+              createdAt: "2026-01-02T00:00:00.000Z",
+              createdBy: "tester",
+              updatedAt: "2026-01-02T00:00:00.000Z",
+              updatedBy: "tester"
+            }
+          });
+        }
+
+        return jsonResponse({ items: [] });
+      })
+    );
+
+    render(
+      <AppStoreProvider authEnabledOverride={false}>
+        <ProjectsPage />
+      </AppStoreProvider>
+    );
+
+    expect(await screen.findByText("Alpha")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    expect(mockedNavigate).toHaveBeenCalledWith({
+      to: "/project/$projectId/onboarding",
+      params: { projectId: "proj_001" }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "New Project" }));
+    expect(mockedNavigate).toHaveBeenCalledWith({ to: "/projects/new" });
+    fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Beta" } });
+    fireEvent.change(screen.getByPlaceholderText("Short description (optional)"), { target: { value: "New workspace" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockedNavigate).toHaveBeenCalledWith({
+      to: "/project/$projectId/onboarding",
+      params: { projectId: "proj_002" }
+    });
   });
 });

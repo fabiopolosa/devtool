@@ -12,6 +12,8 @@ type HeartbeatPolicyEditorProps = {
   onChange: (value: HeartbeatPolicy) => void;
   title?: string;
   subtitle?: string;
+  showEnabledToggle?: boolean;
+  showSummary?: boolean;
 };
 
 const toggleTrigger = (triggers: HeartbeatPolicy["triggers"], trigger: HeartbeatPolicy["triggers"][number]): HeartbeatPolicy["triggers"] => {
@@ -26,13 +28,15 @@ export function HeartbeatPolicyEditor({
   value,
   onChange,
   title = "Heartbeat policy",
-  subtitle = "Schedule, trigger and enablement"
+  subtitle = "Schedule and triggers",
+  showEnabledToggle = true,
+  showSummary = true
 }: HeartbeatPolicyEditorProps) {
   return (
     <div className="space-y-4">
       <SectionHeading title={title} subtitle={subtitle} />
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className={`grid gap-3 ${showEnabledToggle ? "md:grid-cols-2" : ""}`}>
         <label className="space-y-1">
           <div className="label">Interval</div>
           <select
@@ -52,23 +56,25 @@ export function HeartbeatPolicyEditor({
             ))}
           </select>
         </label>
-        <label className="space-y-1">
-          <div className="label">Enabled</div>
-          <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
-            <input
-              checked={value.enabled}
-              onChange={(event) =>
-                onChange({
-                  ...value,
-                  enabled: event.target.checked
-                })
-              }
-              type="checkbox"
-              className="h-4 w-4 rounded border-white/20 bg-transparent text-cyan-400 focus:ring-cyan-400"
-            />
-            <span className="text-sm text-slate-200">Heartbeat is active</span>
-          </div>
-        </label>
+        {showEnabledToggle ? (
+          <label className="space-y-1">
+            <div className="label">Enabled</div>
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+              <input
+                checked={value.enabled}
+                onChange={(event) =>
+                  onChange({
+                    ...value,
+                    enabled: event.target.checked
+                  })
+                }
+                type="checkbox"
+                className="h-4 w-4 rounded border-white/20 bg-transparent text-cyan-400 focus:ring-cyan-400"
+              />
+              <span className="text-sm text-slate-200">Heartbeat is active</span>
+            </div>
+          </label>
+        ) : null}
       </div>
 
       <div className="space-y-2">
@@ -99,14 +105,16 @@ export function HeartbeatPolicyEditor({
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Pill tone="default">interval {heartbeatIntervalLabels[value.interval]}</Pill>
-        {value.triggers.map((trigger) => (
-          <Pill key={trigger} tone={trigger === "manual" ? "accent" : "default"}>
-            {heartbeatTriggerLabels[trigger]}
-          </Pill>
-        ))}
-      </div>
+      {showSummary ? (
+        <div className="flex flex-wrap gap-2">
+          <Pill tone="default">interval {heartbeatIntervalLabels[value.interval]}</Pill>
+          {value.triggers.map((trigger) => (
+            <Pill key={trigger} tone={trigger === "manual" ? "accent" : "default"}>
+              {heartbeatTriggerLabels[trigger]}
+            </Pill>
+          ))}
+        </div>
+      ) : null}
 
       <Button
         variant="secondary"

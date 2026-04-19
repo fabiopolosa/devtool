@@ -26,37 +26,46 @@ export type RuntimeOption = {
 export const runtimeKindOptions: RuntimeOption[] = [
   {
     value: "desktop_cli",
-    label: "Desktop CLI",
-    description: "Launch a vendor CLI from the desktop host."
+    label: "Local CLI",
+    description: "Run a CLI like Codex, Claude Code or Gemini on this machine."
   },
   {
     value: "server_api",
-    label: "Server API",
-    description: "Use an API-backed runtime through the control plane."
+    label: "Cloud / API",
+    description: "Use hosted models and provider keys through the control plane."
   },
   {
     value: "mcp_bridge",
-    label: "MCP bridge/runtime",
-    description: "Bridge the control plane to a worker-managed CLI runtime."
+    label: "Managed worker bridge",
+    description: "Use a worker-managed runtime without exposing low-level bridge setup."
   },
   {
     value: "custom_command",
     label: "Custom command",
-    description: "Run a custom command with explicit arguments and cwd."
+    description: "Advanced: run your own command with explicit cwd and arguments."
   },
   {
     value: "legacy_command",
     label: "Legacy command",
-    description: "Keep compatibility with older command-based setups."
+    description: "Compatibility mode for older command-based setups."
   }
 ];
 
-export const runtimeKindFromAdapterType = (adapterType: AgentRuntimeAdapterType): RuntimeKind =>
-  adapterType === "legacy_cli"
+const normalizeAdapterType = (adapterType: AgentRuntimeAdapterType | string): AgentRuntimeAdapterType =>
+  adapterType === "legacy_cli" || adapterType === "custom_cli" || adapterType === "mcp_runtime"
+    ? adapterType
+    : adapterType.endsWith("_cli")
+      ? "custom_cli"
+      : "mcp_runtime";
+
+export const runtimeKindFromAdapterType = (adapterType: AgentRuntimeAdapterType | string): RuntimeKind => {
+  const normalizedAdapterType = normalizeAdapterType(adapterType);
+  return normalizedAdapterType === "legacy_cli"
     ? "legacy_command"
-    : adapterType === "custom_cli"
+    : normalizedAdapterType === "custom_cli"
       ? "custom_command"
       : "mcp_bridge";
+};
 
 export const runtimeVendorOptions: Record<RuntimeKind, Array<{ value: AgentRuntimeVendor; label: string }>> = {
   desktop_cli: [
@@ -132,9 +141,9 @@ export const heartbeatTriggerOptions: Array<{ value: HeartbeatTriggerPreset; lab
 ];
 
 export const runtimeKindLabels: Record<RuntimeKind, string> = {
-  desktop_cli: "Desktop CLI",
-  server_api: "Server API",
-  mcp_bridge: "MCP bridge/runtime",
+  desktop_cli: "Local CLI",
+  server_api: "Cloud / API",
+  mcp_bridge: "Managed worker bridge",
   custom_command: "Custom command",
   legacy_command: "Legacy command"
 };
@@ -151,10 +160,10 @@ export const runtimeVendorLabels: Record<AgentRuntimeVendor, string> = {
 };
 
 export const runtimeHostLabels: Record<AgentRuntimeHost, string> = {
-  desktop_app: "Desktop app",
-  local_worker: "Local worker",
+  desktop_app: "This machine (desktop app)",
+  local_worker: "This machine (local worker)",
   remote_worker: "Remote worker",
-  api: "API"
+  api: "Cloud / API"
 };
 
 export const launchModeLabels: Record<AgentLaunchMode, string> = {
@@ -231,5 +240,179 @@ export const describeHeartbeatPolicy = (policy?: Partial<HeartbeatPolicy> | null
 };
 
 export const resolveRuntimeProfileForAgent = (
-  agent: Pick<AgentConfig, "adapterType"> & { runtimeProfile?: AgentRuntimeProfile | undefined }
-): AgentRuntimeProfile => agent.runtimeProfile ?? defaultRuntimeProfile(runtimeKindFromAdapterType(agent.adapterType));
+  agent: Pick<AgentConfig, "adapterType"> & { runtimeProfile?: Partial<AgentRuntimeProfile> | undefined }
+): AgentRuntimeProfile => {
+  const runtimeKind = runtimeKindFromAdapterType(normalizeAdapterType(agent.adapterType));
+  const defaults = defaultRuntimeProfile(runtimeKind);
+  const profile = agent.runtimeProfile;
+  const normalizedRuntimeKind =
+    profile?.runtimeKind && runtimeKindOptions.some((option) => option.value === profile.runtimeKind)
+      ? profile.runtimeKind
+      : defaults.runtimeKind;
+  return {
+    ...defaults,
+    runtimeKind: normalizedRuntimeKind,
+    ...(profile?.vendor ? { vendor: profile.vendor } : {}),
+    ...(profile?.host ? { host: profile.host } : {}),
+    ...(profile?.launchMode ? { launchMode: profile.launchMode } : {}),
+    ...(profile?.command ? { command: profile.command } : {}),
+    ...(profile?.cwd ? { cwd: profile.cwd } : {}),
+    ...(profile?.mcpServerRef ? { mcpServerRef: profile.mcpServerRef } : {}),
+    ...(profile?.apiConfigRef ? { apiConfigRef: profile.apiConfigRef } : {}),
+    ...(typeof profile?.workerPoolSize === "number" ? { workerPoolSize: profile.workerPoolSize } : {}),
+    args: profile?.args ?? defaults.args,
+    metadata:
+      profile?.metadata && typeof profile.metadata === "object" && !Array.isArray(profile.metadata)
+        ? profile.metadata
+        : defaults.metadata
+  };
+};
+
+export type LocalHostSnapshot = {
+  attached?: boolean;
+  connected?: boolean;
+  machineAttached?: boolean;
+  status?: string;
+  machineName?: string;
+  hostname?: string;
+  workspaceAttached?: boolean;
+  folderAttached?: boolean;
+  localPath?: string;
+  workspacePath?: string;
+  previewAvailable?: boolean;
+  previewStatus?: string;
+  previewUrl?: string;
+  previewPort?: number;
+  message?: string;
+};
+
+export type AppTargetConfig = {
+  id?: string;
+  name: string;
+  runCommand?: string;
+  testCommand?: string;
+  devCommand?: string;
+  previewUrl?: string;
+  previewPort?: number;
+  enabled?: boolean;
+  status?: string;
+  lastAction?: string;
+  lastActionAt?: string;
+};
+
+export type AppTargetConfigInput = {
+  id?: string | undefined;
+  name?: string | undefined;
+  runCommand?: string | undefined;
+  testCommand?: string | undefined;
+  devCommand?: string | undefined;
+  previewUrl?: string | undefined;
+  previewPort?: number | string | undefined;
+  enabled?: boolean | undefined;
+  status?: string | undefined;
+  lastAction?: string | undefined;
+  lastActionAt?: string | undefined;
+};
+
+export type LocalWrapperSignals = {
+  machineAttached: boolean;
+  folderAttached: boolean;
+  previewAvailable: boolean;
+  machineLabel: string;
+  folderLabel: string;
+  previewLabel: string;
+  previewHref: string | undefined;
+};
+
+const hasText = (value?: string | null): boolean => Boolean(value && value.trim().length > 0);
+
+export const resolveLocalWrapperSignals = (
+  localHost?: Partial<LocalHostSnapshot> | null,
+  workspacePath?: string | null,
+  appTarget?: Partial<AppTargetConfigInput> | null
+): LocalWrapperSignals => {
+  const machineAttached = Boolean(
+    localHost?.attached
+    || localHost?.connected
+    || localHost?.machineAttached
+    || localHost?.status === "attached"
+    || localHost?.status === "connected"
+  );
+  const folderAttached = Boolean(
+    localHost?.workspaceAttached
+    || localHost?.folderAttached
+    || hasText(localHost?.localPath)
+    || hasText(localHost?.workspacePath)
+    || hasText(workspacePath)
+  );
+  const previewHref = localHost?.previewUrl ?? appTarget?.previewUrl;
+  const previewPort = localHost?.previewPort ?? appTarget?.previewPort;
+  const previewAvailable = Boolean(
+    localHost?.previewAvailable
+    || localHost?.previewStatus === "available"
+    || hasText(previewHref)
+    || typeof previewPort === "number"
+    || (typeof previewPort === "string" && hasText(previewPort))
+  );
+
+  return {
+    machineAttached,
+    folderAttached,
+    previewAvailable,
+    machineLabel: machineAttached ? "Local machine attached" : "Local machine not attached",
+    folderLabel: folderAttached ? "Local folder attached" : "Local folder not attached",
+    previewLabel: previewAvailable ? "Local preview available" : "Local preview not available",
+    previewHref: hasText(previewHref) ? previewHref : undefined
+  };
+};
+
+export const describeLocalWrapperStatus = (
+  localHost?: Partial<LocalHostSnapshot> | null,
+  workspacePath?: string | null,
+  appTarget?: Partial<AppTargetConfigInput> | null
+): string => {
+  const signals = resolveLocalWrapperSignals(localHost, workspacePath, appTarget);
+  const details: string[] = [signals.machineLabel, signals.folderLabel, signals.previewLabel];
+  return details.join(" · ");
+};
+
+export const defaultAppTargetConfig = (): AppTargetConfig => ({
+  name: "Main app target",
+  runCommand: "",
+  testCommand: "",
+  devCommand: "",
+  previewUrl: "",
+  enabled: true
+});
+
+export const normalizeAppTargetConfig = (draft: Partial<AppTargetConfigInput> | null | undefined): AppTargetConfig => {
+  const source = draft ?? {};
+  const previewPort =
+    typeof source.previewPort === "string"
+      ? Number(source.previewPort.trim())
+      : source.previewPort;
+  return {
+    ...(hasText(source.id) ? { id: source.id!.trim() } : {}),
+    name: hasText(source.name) ? source.name!.trim() : "Main app target",
+    ...(hasText(source.runCommand) ? { runCommand: source.runCommand!.trim() } : {}),
+    ...(hasText(source.testCommand) ? { testCommand: source.testCommand!.trim() } : {}),
+    ...(hasText(source.devCommand) ? { devCommand: source.devCommand!.trim() } : {}),
+    ...(hasText(source.previewUrl) ? { previewUrl: source.previewUrl!.trim() } : {}),
+    ...(typeof previewPort === "number" && Number.isFinite(previewPort) ? { previewPort } : {}),
+    enabled: source.enabled !== false,
+    ...(hasText(source.status) ? { status: source.status!.trim() } : {}),
+    ...(hasText(source.lastAction) ? { lastAction: source.lastAction!.trim() } : {}),
+    ...(hasText(source.lastActionAt) ? { lastActionAt: source.lastActionAt!.trim() } : {})
+  };
+};
+
+export const describeAppTarget = (target?: Partial<AppTargetConfigInput> | null): string => {
+  if (!target) return "No app target configured";
+  const pieces = [target.name ?? "App target"];
+  if (hasText(target.runCommand)) pieces.push(`run ${target.runCommand}`);
+  if (hasText(target.devCommand)) pieces.push(`dev ${target.devCommand}`);
+  if (hasText(target.testCommand)) pieces.push(`test ${target.testCommand}`);
+  if (hasText(target.previewUrl)) pieces.push(`preview ${target.previewUrl}`);
+  else if (typeof target.previewPort === "number") pieces.push(`preview port ${target.previewPort}`);
+  return pieces.join(" · ");
+};

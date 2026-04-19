@@ -13,12 +13,23 @@ interface CreateProjectPayload {
 export function ProjectsPage() {
   const navigate = useNavigate();
   const { state, dispatch, auth, authActions } = useAppStore();
+  const createMode = typeof window !== 'undefined' && window.location.pathname === '/projects/new';
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(createMode);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | undefined>();
+
+  const openCreateFlow = useCallback(() => {
+    setShowCreateForm(true);
+    void navigate({ to: '/projects/new' } as any);
+  }, [navigate]);
+
+  const closeCreateFlow = useCallback(() => {
+    setShowCreateForm(false);
+    void navigate({ to: '/projects' } as any);
+  }, [navigate]);
 
   const loadProjects = useCallback(async () => {
     if (auth.enabled && auth.required) return;
@@ -64,7 +75,7 @@ export function ProjectsPage() {
         setDescription('');
         setShowCreateForm(false);
         dispatch({ type: 'replaceProjects', projects: [...state.projects, body.item] });
-        await navigate({ to: '/project/$projectId', params: { projectId: body.item.id } });
+        await navigate({ to: '/project/$projectId/onboarding', params: { projectId: body.item.id } });
       } catch (createError) {
         setError(createError instanceof Error ? createError.message : 'Unable to create project');
       } finally {
@@ -89,15 +100,15 @@ export function ProjectsPage() {
     <div className="space-y-5">
       <Panel>
         <SectionHeading
-          title="Projects"
-          subtitle="Portfolio"
+          title={showCreateForm ? 'New Project' : 'Projects'}
+          subtitle={showCreateForm ? 'Create the project and its coordinator, then continue in setup' : 'Choose a project entry point'}
           action={
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => void loadProjects()}>
                 {loading ? 'Refreshing...' : 'Refresh'}
               </Button>
-              <Button variant="primary" onClick={() => setShowCreateForm((current) => !current)}>
-                {showCreateForm ? 'Close' : 'New Project'}
+              <Button variant="primary" onClick={() => (showCreateForm ? closeCreateFlow() : openCreateFlow())}>
+                {showCreateForm ? 'Back to Projects' : 'New Project'}
               </Button>
             </div>
           }
@@ -112,7 +123,7 @@ export function ProjectsPage() {
           </form>
         ) : (
           <p className="text-sm text-[color:var(--muted)]">
-            Create a tenant-scoped project and open its workspace to start coding, context, and schema workflows.
+            Open each project through clear entry points: Project Home, Setup, Coding, and Context.
           </p>
         )}
         {error ? <p className="mt-3 text-sm text-[color:var(--bad)]">{error}</p> : null}
@@ -128,10 +139,10 @@ export function ProjectsPage() {
         <Panel>
           <SectionHeading title="No projects yet" subtitle="Empty state" />
           <p className="text-sm text-[color:var(--muted)]">
-            Start by creating your first project. It will open directly into `/project/:id` after creation.
+            Start by creating your first project. A coordinator agent is created with it automatically, then you land in setup instead of a generic list.
           </p>
           <div className="mt-3">
-            <Button variant="primary" onClick={() => setShowCreateForm(true)}>
+            <Button variant="primary" onClick={openCreateFlow}>
               New Project
             </Button>
           </div>
@@ -158,10 +169,20 @@ export function ProjectsPage() {
                     })
                   }
                 >
-                  Open project
+                  Project Home
                 </Button>
                 <Button
                   variant="secondary"
+                  onClick={() =>
+                    void navigate({
+                      to: '/project/$projectId/onboarding',
+                      params: { projectId: card.project.id }
+                    })
+                  }
+                >
+                  Setup
+                </Button>
+                <Button
                   onClick={() =>
                     void navigate({
                       to: '/project/$projectId/coding',
@@ -169,7 +190,7 @@ export function ProjectsPage() {
                     })
                   }
                 >
-                  Open coding
+                  Coding
                 </Button>
                 <Button
                   onClick={() =>
@@ -179,7 +200,7 @@ export function ProjectsPage() {
                     })
                   }
                 >
-                  Open context
+                  Context
                 </Button>
               </div>
             </div>

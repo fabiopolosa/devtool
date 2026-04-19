@@ -23,13 +23,37 @@ type AgentChatLog = {
 
 type JobStage = 'waiting_user' | 'running' | 'done' | 'error' | 'ready' | 'waiting_dependencies';
 
-type OperationModule = {
+type ProjectNavigatorItem = {
   id: string;
   label: string;
   to: string;
   params?: Record<string, string>;
-  enabled: boolean;
-  reason?: string;
+  badge?: string;
+  tone?: 'warn' | 'good';
+};
+
+type ProjectRuntimeSnapshot = {
+  primaryAgentId?: string;
+  workspaceId?: string;
+};
+
+type WorkspaceSummary = {
+  id?: string;
+  localPath?: string;
+};
+
+type ProjectLauncherSummary = {
+  repoCount: number;
+  roadmapCount: number;
+  taskCount: number;
+  likelyNeedsSetup: boolean;
+};
+
+type ProjectLauncherTone = {
+  background: string;
+  border: string;
+  text: string;
+  glow: string;
 };
 
 const resolveJobStage = (job: Job): JobStage => {
@@ -57,10 +81,20 @@ const projectFromPath = (pathname: string): string | undefined => {
 };
 
 const routeLabelFromPath = (pathname: string): string => {
-  const first = pathname.split('/').filter(Boolean)[0];
+  const segments = pathname.split('/').filter(Boolean);
+  const first = segments[0];
   if (!first) return 'Dashboard';
   if (first === 'settings') return 'Platform Settings';
-  if (first === 'project') return 'Project Workspace';
+  if (first === 'projects' && segments[1] === 'new') return 'New Project';
+  if (first === 'project') {
+    const section = segments[2];
+    if (!section) return 'Project Home';
+    if (section === 'onboarding') return 'Project Setup';
+    return section
+      .split('-')
+      .map((item) => item[0]?.toUpperCase() + item.slice(1))
+      .join(' ');
+  }
   if (first === 'projects') return 'Projects';
   return first
     .split('-')
@@ -70,10 +104,28 @@ const routeLabelFromPath = (pathname: string): string => {
 
 const toLauncherCode = (project: Project): string => {
   const key = project.key.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-  if (key.length >= 2) return key.slice(0, 2);
+  if (key.length >= 2) return key.slice(0, Math.min(3, key.length));
   const name = project.name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-  if (name.length >= 2) return name.slice(0, 2);
-  return (key || name || project.id.slice(0, 2)).toUpperCase();
+  if (name.length >= 2) return name.slice(0, Math.min(3, name.length));
+  return (key || name || project.id.slice(0, 3)).toUpperCase();
+};
+
+const launcherToneForProject = (project: Project): ProjectLauncherTone => {
+  const palette = [
+    { background: 'rgba(31, 119, 255, 0.18)', border: 'rgba(95, 166, 255, 0.38)', text: '#d9eeff', glow: 'rgba(31, 119, 255, 0.26)' },
+    { background: 'rgba(30, 201, 122, 0.18)', border: 'rgba(96, 230, 161, 0.38)', text: '#ddfff1', glow: 'rgba(30, 201, 122, 0.24)' },
+    { background: 'rgba(255, 163, 26, 0.18)', border: 'rgba(255, 196, 95, 0.4)', text: '#fff3d8', glow: 'rgba(255, 163, 26, 0.22)' },
+    { background: 'rgba(255, 96, 145, 0.18)', border: 'rgba(255, 150, 184, 0.42)', text: '#ffe1eb', glow: 'rgba(255, 96, 145, 0.22)' },
+    { background: 'rgba(117, 92, 255, 0.18)', border: 'rgba(160, 142, 255, 0.4)', text: '#ece7ff', glow: 'rgba(117, 92, 255, 0.22)' },
+    { background: 'rgba(0, 200, 220, 0.18)', border: 'rgba(114, 232, 242, 0.42)', text: '#d9fcff', glow: 'rgba(0, 200, 220, 0.2)' }
+  ] as const;
+
+  const seed = `${project.id}:${project.key}:${project.name}`;
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 33 + seed.charCodeAt(index)) >>> 0;
+  }
+  return palette[hash % palette.length] ?? palette[0];
 };
 
 const resolveProjectJobsPollDelay = (input: {
@@ -99,6 +151,7 @@ export function AppShell() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | undefined>();
+  const [launcherBusyProjectId, setLauncherBusyProjectId] = useState<string | undefined>();
   const isMountedRef = useRef(true);
   const projectJobsPollFailuresRef = useRef(0);
 
@@ -132,13 +185,14 @@ export function AppShell() {
     },
     [canAccessPlatformProjectTier, canAccessPlatformSystemTier, canAccessPlatformTenantTier]
   );
-  const showOwnerModeDebugPanel = import.meta.env.DEV;
+  const showOwnerModeDebugPanel =
+    import.meta.env.DEV
+    && typeof window !== 'undefined'
+    && window.localStorage.getItem('cp_shell_debug') === '1';
   const brandName = ((import.meta.env.VITE_PLATFORM_BRAND as string | undefined) ?? '').trim() || 'DevTools';
-  const openApprovals = state.approvals.filter((approval) => approval.status === 'pending').length;
   const runningJobsCount = jobs.filter((job) => resolveJobStage(job) === 'running').length;
   const readyJobsCount = jobs.filter((job) => resolveJobStage(job) === 'ready').length;
   const waitingDependencyJobsCount = jobs.filter((job) => resolveJobStage(job) === 'waiting_dependencies').length;
-  const errorJobsCount = jobs.filter((job) => resolveJobStage(job) === 'error').length;
   const attentionJobs = jobs.filter((job) => job.actionRequired).length;
   const runnerLikelyActive = runningJobsCount > 0 || readyJobsCount > 0 || waitingDependencyJobsCount > 0;
 
@@ -294,6 +348,22 @@ export function AppShell() {
     [state.projects]
   );
 
+  const projectLauncherSummaries = useMemo(() => {
+    const summaries = new Map<string, ProjectLauncherSummary>();
+    for (const project of sortedProjects) {
+      const repoCount = state.projectRepositoryLinks.filter((link) => link.projectId === project.id).length;
+      const roadmapCount = state.roadmapItems.filter((item) => item.projectId === project.id).length;
+      const taskCount = state.tasks.filter((item) => item.projectId === project.id).length;
+      summaries.set(project.id, {
+        repoCount,
+        roadmapCount,
+        taskCount,
+        likelyNeedsSetup: repoCount + roadmapCount + taskCount === 0
+      });
+    }
+    return summaries;
+  }, [sortedProjects, state.projectRepositoryLinks, state.roadmapItems, state.tasks]);
+
   const selectedProject = useMemo(() => {
     const fromPath = projectFromPath(pathname);
     if (fromPath) {
@@ -302,6 +372,8 @@ export function AppShell() {
 
     return sortedProjects.find((project) => project.status === 'active') ?? sortedProjects[0];
   }, [pathname, sortedProjects]);
+
+  const selectedProjectSummary = selectedProject ? projectLauncherSummaries.get(selectedProject.id) : undefined;
 
   const contextMode: ShellContextMode = useMemo(() => {
     if (pathname === '/settings' || pathname.startsWith('/settings/')) return 'platform';
@@ -320,22 +392,9 @@ export function AppShell() {
     [contextMode, selectedProject?.id, selectedProject?.tenantId, state.projects]
   );
 
-  const defaultThreadId = state.threads[0]?.id ?? 'thread-1';
-  const projectScopedRun = useMemo(() => {
-    if (!selectedProject?.id) {
-      return state.taskRuns[0];
-    }
-    const projectTaskIds = new Set(
-      state.tasks.filter((task) => task.projectId === selectedProject.id).map((task) => task.id)
-    );
-    return (
-      state.taskRuns.find((run) => projectTaskIds.has(run.taskId)) ??
-      state.taskRuns[0]
-    );
-  }, [selectedProject?.id, state.taskRuns, state.tasks]);
-
   const topBarItems: ShellNavItem[] = useMemo(
     () => [
+      { to: '/projects', label: 'Projects', tier: 'primary' },
       { to: '/activity', label: 'Activity', tier: 'primary' },
       { to: '/agents', label: 'Agents', tier: 'primary' }
     ],
@@ -364,143 +423,107 @@ export function AppShell() {
     return candidates.filter((item) => hasAccessForTier(item.access ?? 'project'));
   }, [canAccessPlatformProjectTier, hasAccessForTier]);
 
-  const projectNavItems: ShellNavItem[] = useMemo(() => {
+  const projectNavigatorItems = useMemo((): ProjectNavigatorItem[] => {
     if (!selectedProject?.id) return [];
+    const setupRequired = Boolean(selectedProjectSummary?.likelyNeedsSetup);
+    const queueBadge = jobsLoading
+      ? 'Queue syncing…'
+      : jobs.length > 0
+        ? `${runningJobsCount} running · ${readyJobsCount} ready`
+        : 'Queue idle';
     return [
-      { to: '/project/$projectId/tasks', params: { projectId: selectedProject.id }, label: 'Tasks', tier: 'primary' },
-      { to: '/project/$projectId/pipelines', params: { projectId: selectedProject.id }, label: 'Pipelines', tier: 'primary' },
       {
-        to: '/project/$projectId/artifacts/$runId',
-        params: { projectId: selectedProject.id, runId: projectScopedRun?.id ?? 'run-1' },
-        label: 'Artifacts',
-        tier: 'secondary'
+        id: 'project-home',
+        label: 'Project Home',
+        to: '/project/$projectId',
+        params: { projectId: selectedProject.id }
       },
       {
-        to: '/project/$projectId/chat/$threadId',
-        params: { projectId: selectedProject.id, threadId: defaultThreadId },
-        label: 'Chat',
-        tier: 'primary'
-      },
-      { to: '/project/$projectId/coding', params: { projectId: selectedProject.id }, label: 'Coding', tier: 'primary' },
-      { to: '/project/$projectId/brainstorming', params: { projectId: selectedProject.id }, label: 'Brainstorming', tier: 'primary' },
-      { to: '/project/$projectId/context', params: { projectId: selectedProject.id }, label: 'Context', tier: 'secondary' },
-      { to: '/project/$projectId/approvals', params: { projectId: selectedProject.id }, label: 'Approvals', tier: 'primary' },
-      {
-        to: '/project/$projectId/experiments',
+        id: 'setup',
+        label: 'Setup',
+        to: '/project/$projectId/onboarding',
         params: { projectId: selectedProject.id },
-        label: 'AutoSearch',
-        tier: 'secondary'
-      },
-      {
-        to: '/project/$projectId/ruflo',
-        params: { projectId: selectedProject.id },
-        label: 'Ruflo',
-        tier: 'secondary'
-      }
-    ];
-  }, [defaultThreadId, projectScopedRun?.id, selectedProject?.id]);
-
-  const operationModules = useMemo((): OperationModule[] => {
-    if (!selectedProject?.id) return [];
-    const byLabel = new Map(projectNavItems.map((item) => [item.label, item]));
-    const hasJobs = jobs.length > 0;
-    const hasApprovals = openApprovals > 0;
-    const hasRuns = state.taskRuns.length > 0;
-    const hasExperiments = state.experiments.length > 0;
-    const routeFor = (label: string): { to: string; params?: Record<string, string> } | undefined => {
-      const found = byLabel.get(label);
-      if (!found) return undefined;
-      return found.params ? { to: found.to, params: found.params } : { to: found.to };
-    };
-
-    const modules: OperationModule[] = [
-      {
-        id: 'chat',
-        label: 'Chat',
-        ...(routeFor('Chat') ?? { to: '/project/$projectId/chat/$threadId', params: { projectId: selectedProject.id, threadId: defaultThreadId } }),
-        enabled: true
-      },
-      {
-        id: 'tasks',
-        label: 'Tasks',
-        ...(routeFor('Tasks') ?? { to: '/project/$projectId/tasks', params: { projectId: selectedProject.id } }),
-        enabled: true
-      },
-      {
-        id: 'agents',
-        label: 'Agents',
-        to: '/project/$projectId/agents',
-        params: { projectId: selectedProject.id },
-        enabled: true
-      },
-      {
-        id: 'monitoring',
-        label: 'Monitoring',
-        to: '/project/$projectId/monitoring',
-        params: { projectId: selectedProject.id },
-        enabled: hasJobs,
-        ...(!hasJobs ? { reason: 'No jobs yet' } : {})
-      },
-      {
-        id: 'actions',
-        label: 'Actions',
-        ...(routeFor('Approvals') ?? { to: '/project/$projectId/approvals', params: { projectId: selectedProject.id } }),
-        enabled: true,
-        ...(!hasApprovals ? { reason: 'No pending approvals' } : {})
-      },
-      {
-        id: 'schemas',
-        label: 'Schemas',
-        to: '/project/$projectId/schemas',
-        params: { projectId: selectedProject.id },
-        enabled: true
-      },
-      {
-        id: 'context',
-        label: 'Context',
-        ...(routeFor('Context') ?? { to: '/project/$projectId/context', params: { projectId: selectedProject.id } }),
-        enabled: true
+        badge: setupRequired ? 'Required' : 'Configured',
+        tone: setupRequired ? 'warn' : 'good'
       },
       {
         id: 'coding',
         label: 'Coding',
-        ...(routeFor('Coding') ?? { to: '/project/$projectId/coding', params: { projectId: selectedProject.id } }),
-        enabled: true
+        to: '/project/$projectId/coding',
+        params: { projectId: selectedProject.id }
       },
       {
-        id: 'observability',
-        label: 'Observability',
-        to: '/project/$projectId/observability',
+        id: 'context',
+        label: 'Context',
+        to: '/project/$projectId/context',
+        params: { projectId: selectedProject.id }
+      },
+      {
+        id: 'operations',
+        label: 'Operations',
+        to: '/project/$projectId/monitoring',
         params: { projectId: selectedProject.id },
-        enabled: hasRuns,
-        ...(!hasRuns ? { reason: 'No runs yet' } : {})
-      },
-      {
-        id: 'autosearch',
-        label: 'AutoSearch',
-        ...(routeFor('AutoSearch') ?? { to: '/project/$projectId/experiments', params: { projectId: selectedProject.id } }),
-        enabled: hasExperiments || state.tasks.length > 0,
-        ...(!hasExperiments ? { reason: 'No experiment history' } : {})
-      },
-      {
-        id: 'ruflo',
-        label: 'Ruflo',
-        ...(routeFor('Ruflo') ?? { to: '/project/$projectId/ruflo', params: { projectId: selectedProject.id } }),
-        enabled: true
+        badge: queueBadge,
+        ...(jobs.length > 0 ? { tone: 'good' as const } : {})
       }
     ];
-
-    return modules.filter((module) => Boolean(module.to));
   }, [
-    openApprovals,
     jobs.length,
-    projectNavItems,
+    jobsLoading,
+    readyJobsCount,
+    runningJobsCount,
     selectedProject?.id,
-    state.experiments.length,
-    state.taskRuns.length,
-    state.tasks.length,
-    defaultThreadId
+    selectedProjectSummary?.likelyNeedsSetup
   ]);
+
+  const resolveProjectEntry = useCallback(
+    async (project: Project): Promise<{ to: '/project/$projectId' | '/project/$projectId/onboarding'; params: { projectId: string } }> => {
+      const fallback =
+        projectLauncherSummaries.get(project.id)?.likelyNeedsSetup
+          ? { to: '/project/$projectId/onboarding' as const, params: { projectId: project.id } }
+          : { to: '/project/$projectId' as const, params: { projectId: project.id } };
+
+      try {
+        const [runtimeResult, workspaceResult] = await Promise.all([
+          authActions.apiFetchJson<{ item?: { runtimeProfile?: ProjectRuntimeSnapshot }; message?: string }>(
+            `/projects/${project.id}/runtime`
+          ),
+          authActions.apiFetchJson<{ items?: WorkspaceSummary[]; message?: string }>(
+            `/workspaces?projectId=${encodeURIComponent(project.id)}`
+          )
+        ]);
+
+        if (!runtimeResult.response.ok || !workspaceResult.response.ok) {
+          return fallback;
+        }
+
+        const runtimeProfile = runtimeResult.body.item?.runtimeProfile;
+        const workspace = workspaceResult.body.items?.[0];
+        const hasPrimaryAgent = Boolean(runtimeProfile?.primaryAgentId);
+        const hasWorkspace = Boolean(runtimeProfile?.workspaceId || workspace?.id || workspace?.localPath?.trim());
+
+        return !hasPrimaryAgent || !hasWorkspace
+          ? { to: '/project/$projectId/onboarding', params: { projectId: project.id } }
+          : { to: '/project/$projectId', params: { projectId: project.id } };
+      } catch {
+        return fallback;
+      }
+    },
+    [authActions, projectLauncherSummaries]
+  );
+
+  const openProjectFromLauncher = useCallback(
+    async (project: Project): Promise<void> => {
+      setLauncherBusyProjectId(project.id);
+      try {
+        const target = await resolveProjectEntry(project);
+        await navigate(target as any);
+      } finally {
+        setLauncherBusyProjectId((current) => (current === project.id ? undefined : current));
+      }
+    },
+    [navigate, resolveProjectEntry]
+  );
 
   const loadProjectJobs = useCallback(async (input?: { silent?: boolean }): Promise<void> => {
     const silent = input?.silent ?? false;
@@ -700,6 +723,22 @@ export function AppShell() {
   const activeRouteLabel = routeLabelFromPath(pathname);
   const activeWorkspaceDescriptor = selectedProject ? `${selectedProject.key} · ${selectedProject.name}` : 'No project';
   const tenantName = selectedProject?.tenantId ?? state.projects[0]?.tenantId ?? 'tenant_default';
+  const setupIsRequired = Boolean(selectedProjectSummary?.likelyNeedsSetup);
+  const selectedProjectGuidance = !selectedProject
+    ? 'Select a project from Launcher to start.'
+    : setupIsRequired
+      ? 'Continue setup first, then move to Coding and Operations.'
+      : 'Setup complete. Use Project Home, Coding, Context and Operations.';
+  const setupStateLabel = setupIsRequired ? 'Setup required' : 'Setup complete';
+  const projectOperationsActive = Boolean(
+    selectedProject
+      && (
+        pathname.startsWith(`/project/${selectedProject.id}/monitoring`)
+        || pathname.startsWith(`/project/${selectedProject.id}/approvals`)
+        || pathname.startsWith(`/project/${selectedProject.id}/agents`)
+        || pathname.startsWith(`/project/${selectedProject.id}/observability`)
+      )
+  );
   const contextDescriptor =
     context.mode === 'platform'
       ? `platform · ${context.tenantId}`
@@ -773,17 +812,9 @@ export function AppShell() {
               ) : null}
             </div>
           ) : null}
-          {canAccessPlatformProjectTier ? (
-            <Link
-              to="/settings"
-              className={`nav-link platform-topbar-link ${isActive({ to: '/settings', label: 'Settings' }) ? 'nav-link-active' : ''}`}
-            >
-              Settings
-            </Link>
-          ) : null}
           <Link
             to="/help"
-            className={`nav-link platform-topbar-link ${isActive({ to: '/help', label: 'Help' }) ? 'nav-link-active' : ''}`}
+            className={`nav-link platform-topbar-link platform-topbar-link-quiet ${isActive({ to: '/help', label: 'Help' }) ? 'nav-link-active' : ''}`}
           >
             Help
           </Link>
@@ -804,67 +835,110 @@ export function AppShell() {
               ) : (
                 sortedProjects.map((project) => {
                   const selected = selectedProject?.id === project.id;
+                  const tone = launcherToneForProject(project);
                   return (
-                    <Link
+                    <button
+                      type="button"
                       key={project.id}
-                      to="/project/$projectId/tasks"
-                      params={{ projectId: project.id }}
+                      onClick={() => void openProjectFromLauncher(project)}
+                      aria-label={project.name}
                       className={`platform-launcher-item ${selected ? 'platform-launcher-item-active' : ''}`}
+                      style={
+                        {
+                          '--launcher-accent-bg': tone.background,
+                          '--launcher-accent-border': tone.border,
+                          '--launcher-accent-text': tone.text,
+                          '--launcher-accent-glow': tone.glow
+                        } as React.CSSProperties
+                      }
                       title={project.name}
                     >
-                      <span>{toLauncherCode(project)}</span>
-                    </Link>
+                      <span>{launcherBusyProjectId === project.id ? '…' : toLauncherCode(project)}</span>
+                    </button>
                   );
                 })
               )}
             </div>
             <div className="platform-launcher-actions">
               <Link to="/projects" className="platform-launcher-cta">
+                All Projects
+              </Link>
+              <Link to="/projects/new" className="platform-launcher-cta platform-launcher-cta-primary">
                 + New Project
               </Link>
             </div>
           </section>
         </aside>
 
-        <aside className="platform-rail platform-rail-jobs">
+        <aside className={`platform-rail platform-rail-jobs ${context.mode === 'project' ? 'platform-rail-jobs-active' : ''}`}>
           <header className="platform-header-block">
             <div className="platform-job-title-row">
               <div>
-                <div className="label">Project Context</div>
+                <div className="label">Current Project</div>
                 <div className="platform-title-sm">{selectedProject?.name ?? 'No project selected'}</div>
+                {selectedProject ? (
+                  <div className="platform-project-context-meta">
+                    <span className="platform-project-context-key">{selectedProject.key}</span>
+                    <span className={`platform-project-state-badge ${setupIsRequired ? 'platform-project-state-badge-warn' : 'platform-project-state-badge-good'}`}>
+                      {setupStateLabel}
+                    </span>
+                  </div>
+                ) : null}
               </div>
               {selectedProject?.id ? (
-                <Button variant="secondary" onClick={() => void loadProjectJobs({ silent: false })}>
-                  Refresh
-                </Button>
+                <div className="platform-context-actions">
+                  <Button variant="secondary" onClick={() => void navigate({ to: '/project/$projectId', params: { projectId: selectedProject.id } } as any)}>
+                    Project Home
+                  </Button>
+                  <Button
+                    variant={setupIsRequired ? 'primary' : 'secondary'}
+                    onClick={() => void navigate({ to: '/project/$projectId/onboarding', params: { projectId: selectedProject.id } } as any)}
+                  >
+                    {setupIsRequired ? 'Continue setup' : 'Setup'}
+                  </Button>
+                </div>
               ) : null}
             </div>
-            <div className="platform-subtitle">Tasks and pipelines are project-scoped execution units.</div>
+            <div className="platform-subtitle">{selectedProjectGuidance}</div>
           </header>
 
           <section className="platform-section">
-            <div className="platform-section-title">Operations</div>
-            <div className="platform-operations-list">
-              {operationModules.length === 0 ? (
+            <div className="platform-section-title">Project Navigator</div>
+            <div className="platform-project-navigator">
+              {projectNavigatorItems.length === 0 ? (
                 <div className="platform-empty-row">Select a project from launcher.</div>
               ) : (
-                operationModules.map((module) =>
-                  module.enabled ? (
-                    <Link
-                      key={module.id}
-                      to={module.to as any}
-                      {...(module.params ? { params: module.params as any } : {})}
-                      className={`nav-link nav-link-priority ${isActive(module) ? 'nav-link-active' : ''}`}
-                    >
-                      <span>{module.label}</span>
-                    </Link>
-                  ) : (
-                    <div key={module.id} className="platform-op-disabled" title={module.reason ?? 'Unavailable'}>
-                      <span>{module.label}</span>
-                      <small>{module.reason ?? 'Unavailable'}</small>
+                projectNavigatorItems.map((item) => (
+                  <Link
+                    key={item.id}
+                    to={item.to as any}
+                    {...(item.params ? { params: item.params as any } : {})}
+                    className={`platform-project-nav-item ${
+                      isActive(
+                        item.params
+                          ? { to: item.to, params: item.params, label: item.label }
+                          : { to: item.to, label: item.label }
+                      )
+                        ? 'platform-project-nav-item-active'
+                        : ''
+                    }`}
+                  >
+                    <div className="platform-project-nav-copy">
+                      <div className="platform-project-nav-title">{item.label}</div>
                     </div>
-                  )
-                )
+                    <span
+                      className={`platform-project-nav-badge ${
+                        item.tone === 'warn'
+                          ? 'platform-project-nav-badge-warn'
+                          : item.tone === 'good'
+                            ? 'platform-project-nav-badge-good'
+                            : ''
+                      }`}
+                    >
+                      {item.badge ?? 'Open'}
+                    </span>
+                  </Link>
+                ))
               )}
             </div>
           </section>
@@ -887,16 +961,12 @@ export function AppShell() {
                   <span>Action</span>
                   <strong>{attentionJobs}</strong>
                 </div>
-                <div className="platform-inline-stat">
-                  <span>Errors</span>
-                  <strong>{errorJobsCount}</strong>
-                </div>
               </div>
             ) : null}
           </section>
         </aside>
 
-        <main className="platform-workspace">
+        <main className={`platform-workspace ${context.mode === 'project' ? 'platform-workspace-project' : ''}`}>
           <header className="platform-workspace-header">
             <div className="platform-workspace-context">
               <div className="label">Workspace</div>
@@ -932,6 +1002,61 @@ export function AppShell() {
               ) : null}
             </div>
           </header>
+
+          {context.mode === 'project' && selectedProject ? (
+            <section className="platform-project-bar">
+              <div className="platform-project-bar-main">
+                <div className="platform-project-bar-label">Project</div>
+                <div className="platform-project-bar-title-row">
+                  <div className="platform-project-bar-title">{selectedProject.name}</div>
+                  <span className="platform-project-bar-key">{selectedProject.key}</span>
+                </div>
+                <div className="platform-project-bar-meta">
+                  <span className={`platform-project-state-badge ${setupIsRequired ? 'platform-project-state-badge-warn' : 'platform-project-state-badge-good'}`}>
+                    {setupStateLabel}
+                  </span>
+                </div>
+                <div className="platform-subtitle">{selectedProjectGuidance}</div>
+              </div>
+              <div className="platform-project-bar-actions">
+                <Link
+                  to="/project/$projectId"
+                  params={{ projectId: selectedProject.id }}
+                  className={`nav-link nav-link-priority ${pathname === `/project/${selectedProject.id}` ? 'nav-link-active' : ''}`}
+                >
+                  Project Home
+                </Link>
+                <Link
+                  to="/project/$projectId/onboarding"
+                  params={{ projectId: selectedProject.id }}
+                  className={`nav-link ${pathname.includes(`/project/${selectedProject.id}/onboarding`) ? 'nav-link-active' : ''}`}
+                >
+                  {setupIsRequired ? 'Continue setup' : 'Setup'}
+                </Link>
+                <Link
+                  to="/project/$projectId/coding"
+                  params={{ projectId: selectedProject.id }}
+                  className={`nav-link ${pathname.includes(`/project/${selectedProject.id}/coding`) ? 'nav-link-active' : ''}`}
+                >
+                  Coding
+                </Link>
+                <Link
+                  to="/project/$projectId/context"
+                  params={{ projectId: selectedProject.id }}
+                  className={`nav-link ${pathname.includes(`/project/${selectedProject.id}/context`) ? 'nav-link-active' : ''}`}
+                >
+                  Context
+                </Link>
+                <Link
+                  to="/project/$projectId/monitoring"
+                  params={{ projectId: selectedProject.id }}
+                  className={`nav-link ${projectOperationsActive ? 'nav-link-active' : ''}`}
+                >
+                  Operations
+                </Link>
+              </div>
+            </section>
+          ) : null}
 
           {auth.enabled && auth.error && !isLoginRoute ? (
             <div className="platform-error-row platform-workspace-banner">{auth.error}</div>

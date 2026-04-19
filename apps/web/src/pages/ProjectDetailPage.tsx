@@ -1,10 +1,19 @@
 import { Link } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Job, ProjectRuntimeProfile } from '@cp/domain';
-import { Button, Panel, Pill, SectionHeading } from '@/components/common';
+import { Button, Panel, Pill, SectionHeading, StatCard } from '@/components/common';
 import { ApprovalBar, PlannerOutputCard, TaskTimeline } from '@/components/panels';
 import { WorkspaceBrowserPicker } from '@/components/project-onboarding/WorkspaceBrowserPicker';
-import { describeHeartbeatPolicy, launchModeLabels, runtimeHostLabels } from '@/components/runtime-profile/runtime-profile-utils';
+import {
+  defaultAppTargetConfig,
+  describeAppTarget,
+  describeHeartbeatPolicy,
+  describeLocalWrapperStatus,
+  launchModeLabels,
+  normalizeAppTargetConfig,
+  resolveLocalWrapperSignals,
+  runtimeHostLabels
+} from '@/components/runtime-profile/runtime-profile-utils';
 import { usePathParam } from './_utils';
 import { useAppStore } from '@/store/app-store';
 
@@ -43,6 +52,48 @@ type WorkspacePathValidation = {
 
 type WorkspaceAction = 'start' | 'stop' | 'deploy' | 'restart';
 
+type LocalHostSnapshot = {
+  attached?: boolean;
+  connected?: boolean;
+  machineAttached?: boolean;
+  status?: string;
+  machineName?: string;
+  hostname?: string;
+  workspaceAttached?: boolean;
+  folderAttached?: boolean;
+  localPath?: string;
+  workspacePath?: string;
+  previewAvailable?: boolean;
+  previewStatus?: string;
+  previewUrl?: string;
+  previewPort?: number;
+  message?: string;
+};
+
+type AppTargetConfig = {
+  id?: string;
+  name: string;
+  runCommand?: string;
+  testCommand?: string;
+  devCommand?: string;
+  previewUrl?: string;
+  previewPort?: number;
+  enabled?: boolean;
+  status?: string;
+  lastAction?: string;
+  lastActionAt?: string;
+};
+
+type AppTargetDraft = {
+  id: string | undefined;
+  name: string;
+  runCommand: string;
+  testCommand: string;
+  devCommand: string;
+  previewUrl: string;
+  previewPort: string;
+};
+
 type ProjectHeartbeatStatus = {
   projectId: string;
   projectName: string;
@@ -73,14 +124,6 @@ const resolveWorkspaceStatusTone = (
   return 'default';
 };
 
-const heartbeatTone = (status: ProjectHeartbeatStatus['overallStatus']): 'default' | 'good' | 'warn' | 'bad' | 'accent' => {
-  if (status === 'done') return 'good';
-  if (status === 'running' || status === 'queued') return 'accent';
-  if (status === 'error') return 'bad';
-  if (status === 'disabled') return 'warn';
-  return 'default';
-};
-
 const extractWorkspacePathValidation = (workspace: WorkspaceItem | undefined): WorkspacePathValidation | undefined => {
   const runtimeDetails = workspace?.runtimeDetails;
   if (!runtimeDetails || typeof runtimeDetails !== 'object') return undefined;
@@ -88,6 +131,34 @@ const extractWorkspacePathValidation = (workspace: WorkspaceItem | undefined): W
   if (!candidate || typeof candidate !== 'object') return undefined;
   return candidate as WorkspacePathValidation;
 };
+
+const isText = (value?: string | null): boolean => Boolean(value && value.trim().length > 0);
+
+const buildAppTargetDraft = (target?: AppTargetConfig | null): AppTargetDraft => ({
+  id: target?.id,
+  name: target?.name ?? defaultAppTargetConfig().name,
+  runCommand: target?.runCommand ?? '',
+  testCommand: target?.testCommand ?? '',
+  devCommand: target?.devCommand ?? '',
+  previewUrl: target?.previewUrl ?? '',
+  previewPort: typeof target?.previewPort === 'number' ? String(target.previewPort) : ''
+});
+
+const normalizeAppTargetDraft = (draft: AppTargetDraft): AppTargetConfig => {
+  const previewPort = draft.previewPort.trim().length > 0 ? Number(draft.previewPort.trim()) : undefined;
+  return normalizeAppTargetConfig({
+    ...(isText(draft.id) ? { id: draft.id } : {}),
+    name: draft.name,
+    ...(isText(draft.runCommand) ? { runCommand: draft.runCommand } : {}),
+    ...(isText(draft.testCommand) ? { testCommand: draft.testCommand } : {}),
+    ...(isText(draft.devCommand) ? { devCommand: draft.devCommand } : {}),
+    ...(isText(draft.previewUrl) ? { previewUrl: draft.previewUrl } : {}),
+    ...(Number.isFinite(previewPort) ? { previewPort } : {})
+  });
+};
+
+const resolveLocalMachineLabel = (localHost: LocalHostSnapshot | undefined): string =>
+  localHost?.machineName ?? localHost?.hostname ?? 'Local machine';
 
 const extractJobErrorMessage = (item: { payload?: Record<string, unknown> } | undefined, fallback: string): string => {
   const payload = item?.payload;
@@ -120,6 +191,21 @@ export function ProjectDetailPage() {
   const [heartbeatStatus, setHeartbeatStatus] = useState<ProjectHeartbeatStatus | undefined>();
   const [heartbeatRunning, setHeartbeatRunning] = useState<'manual' | 'tick' | undefined>();
   const [projectRuntimeError, setProjectRuntimeError] = useState<string | undefined>();
+  const [localHost, setLocalHost] = useState<LocalHostSnapshot | undefined>();
+  const [localWrapperLoading, setLocalWrapperLoading] = useState(false);
+  const [localWrapperSaving, setLocalWrapperSaving] = useState(false);
+  const [localWrapperAction, setLocalWrapperAction] = useState<string | undefined>();
+  const [localWrapperError, setLocalWrapperError] = useState<string | undefined>();
+  const [localWrapperNotice, setLocalWrapperNotice] = useState<string | undefined>();
+  const [appTargetDraft, setAppTargetDraft] = useState<AppTargetDraft>({
+    id: undefined,
+    name: defaultAppTargetConfig().name,
+    runCommand: defaultAppTargetConfig().runCommand ?? '',
+    testCommand: defaultAppTargetConfig().testCommand ?? '',
+    devCommand: defaultAppTargetConfig().devCommand ?? '',
+    previewUrl: defaultAppTargetConfig().previewUrl ?? '',
+    previewPort: ''
+  });
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -231,6 +317,49 @@ export function ProjectDetailPage() {
     } catch (error) {
       if (!isMountedRef.current) return;
       setProjectRuntimeError(error instanceof Error ? error.message : 'Unable to load project runtime');
+    }
+  }, [authActions, scopedProjectId]);
+
+  const loadLocalWrapper = useCallback(async (): Promise<void> => {
+    if (!scopedProjectId) {
+      if (!isMountedRef.current) return;
+      setLocalHost(undefined);
+      setAppTargetDraft(buildAppTargetDraft(defaultAppTargetConfig()));
+      return;
+    }
+    if (!isMountedRef.current) return;
+    setLocalWrapperLoading(true);
+    setLocalWrapperError(undefined);
+    try {
+      const [localHostResponse, appTargetsResponse] = await Promise.all([
+        authActions.apiFetchJson<{ item?: LocalHostSnapshot; message?: string }>(`/projects/${scopedProjectId}/local-host`),
+        authActions.apiFetchJson<{ item?: AppTargetConfig; items?: AppTargetConfig[]; targets?: AppTargetConfig[]; message?: string }>(
+          `/projects/${scopedProjectId}/app-targets`
+        )
+      ]);
+
+      if (!localHostResponse.response.ok) {
+        throw new Error(localHostResponse.body.message ?? `Unable to load local host (HTTP ${localHostResponse.response.status})`);
+      }
+      if (!appTargetsResponse.response.ok) {
+        throw new Error(appTargetsResponse.body.message ?? `Unable to load app targets (HTTP ${appTargetsResponse.response.status})`);
+      }
+
+      const loadedTarget =
+        appTargetsResponse.body.item
+        ?? appTargetsResponse.body.items?.[0]
+        ?? appTargetsResponse.body.targets?.[0]
+        ?? undefined;
+
+      if (!isMountedRef.current) return;
+      setLocalHost(localHostResponse.body.item);
+      setAppTargetDraft(buildAppTargetDraft(loadedTarget));
+    } catch (error) {
+      if (!isMountedRef.current) return;
+      setLocalWrapperError(error instanceof Error ? error.message : 'Unable to load local wrapper');
+    } finally {
+      if (!isMountedRef.current) return;
+      setLocalWrapperLoading(false);
     }
   }, [authActions, scopedProjectId]);
 
@@ -415,13 +544,78 @@ export function ProjectDetailPage() {
     [authActions, loadProjectRuntime, scopedProjectId]
   );
 
+  const saveAppTarget = useCallback(async (): Promise<void> => {
+    if (!scopedProjectId) return;
+    setLocalWrapperSaving(true);
+    setLocalWrapperError(undefined);
+    setLocalWrapperNotice(undefined);
+    try {
+      const nextTarget = normalizeAppTargetDraft(appTargetDraft);
+      const { response, body } = await authActions.apiFetchJson<{ item?: AppTargetConfig; items?: AppTargetConfig[]; message?: string }>(
+        `/projects/${scopedProjectId}/app-targets`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ items: [nextTarget] })
+        }
+      );
+      if (!response.ok) {
+        throw new Error(body.message ?? `Unable to save app target (HTTP ${response.status})`);
+      }
+      const savedTarget = body.item ?? body.items?.[0] ?? nextTarget;
+      if (!isMountedRef.current) return;
+      setAppTargetDraft(buildAppTargetDraft(savedTarget));
+      setLocalWrapperNotice('App target saved.');
+      await loadLocalWrapper();
+    } catch (error) {
+      if (!isMountedRef.current) return;
+      setLocalWrapperError(error instanceof Error ? error.message : 'Unable to save app target');
+    } finally {
+      if (!isMountedRef.current) return;
+      setLocalWrapperSaving(false);
+    }
+  }, [appTargetDraft, authActions, loadLocalWrapper, scopedProjectId]);
+
+  const runAppTargetAction = useCallback(
+    async (action: 'run' | 'test' | 'dev'): Promise<void> => {
+      if (!scopedProjectId) return;
+      const targetId = appTargetDraft.id?.trim();
+      if (!targetId) {
+        setLocalWrapperError('Save the app target before running actions.');
+        return;
+      }
+      setLocalWrapperAction(action);
+      setLocalWrapperError(undefined);
+      setLocalWrapperNotice(undefined);
+      try {
+        const { response, body } = await authActions.apiFetchJson<{ item?: AppTargetConfig; message?: string }>(
+          `/projects/${scopedProjectId}/app-targets/${encodeURIComponent(targetId)}/actions`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ action })
+          }
+        );
+        if (!response.ok) {
+          throw new Error(body.message ?? `Unable to run app target ${action} (HTTP ${response.status})`);
+        }
+        setLocalWrapperNotice(`App target ${action} dispatched.`);
+        await loadLocalWrapper();
+      } catch (error) {
+        setLocalWrapperError(error instanceof Error ? error.message : `Unable to run app target ${action}`);
+      } finally {
+        setLocalWrapperAction(undefined);
+      }
+    },
+    [appTargetDraft.id, authActions, loadLocalWrapper, scopedProjectId]
+  );
+
   useEffect(() => {
     if (auth.enabled && auth.required) return;
     if (!scopedProjectId) return;
     void loadJobs();
     void loadWorkspace();
     void loadProjectRuntime();
-  }, [auth.enabled, auth.required, loadJobs, loadProjectRuntime, loadWorkspace, scopedProjectId]);
+    void loadLocalWrapper();
+  }, [auth.enabled, auth.required, loadJobs, loadLocalWrapper, loadProjectRuntime, loadWorkspace, scopedProjectId]);
 
   if (!project) return <Panel>No project found.</Panel>;
 
@@ -431,7 +625,17 @@ export function ProjectDetailPage() {
   const firstTask = tasks[0];
   const firstTaskRun = firstTask ? state.taskRuns.find((run) => run.taskId === firstTask.id) : undefined;
   const workspaceStatus = (workspace?.runtimeStatus as WorkspaceItem['runtimeStatus'] | undefined) ?? 'not_configured';
+  const selectedWorkspacePath =
+    workspaceModeDraft === 'local' ? (workspace?.localPath ?? workspacePathDraft) : 'Remote workspace';
+  const setupIsRequired = !projectRuntime?.primaryAgentId || !projectRuntime?.workspaceId;
+  const setupStateLabel = setupIsRequired ? 'Setup required' : 'Setup complete';
+  const runningJobsCount = orderedJobs.filter((job) => resolveJobStage(job) === 'running').length;
+  const readyJobsCount = orderedJobs.filter((job) => resolveJobStage(job) === 'ready').length;
+  const attentionJobsCount = orderedJobs.filter((job) => job.actionRequired).length;
   const pathValidation = extractWorkspacePathValidation(workspace);
+  const localWrapperSignals = resolveLocalWrapperSignals(localHost, selectedWorkspacePath, appTargetDraft);
+  const localWrapperReady =
+    localWrapperSignals.machineAttached && localWrapperSignals.folderAttached && localWrapperSignals.previewAvailable;
   const pathValidationTone: 'default' | 'good' | 'warn' | 'bad' | 'accent' =
     pathValidation?.status === 'valid'
       ? 'good'
@@ -450,200 +654,384 @@ export function ProjectDetailPage() {
           : 'unknown';
 
   return (
-    <div className="space-y-4">
-      <Panel>
-        <SectionHeading title={project.name} subtitle={project.key} />
-        <p className="text-sm text-[color:var(--muted)]">{project.description}</p>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--muted)]">
-          <span className="pill">Status {project.status}</span>
-          <span className="pill">Roadmap {roadmap.length}</span>
-          <span className="pill">Tasks {tasks.length}</span>
-        </div>
-        <div className="mt-3 flex gap-2">
-          <Link to="/project/$projectId/repositories" params={{ projectId: project.id }} className="btn btn-ghost">Repositories</Link>
-          <Link to="/project/$projectId/roadmap" params={{ projectId: project.id }} className="btn btn-ghost">Roadmap</Link>
-          <Link to="/project/$projectId/onboarding" params={{ projectId: project.id }} className="btn btn-ghost">
-            Onboarding
-          </Link>
-        </div>
-      </Panel>
-
-      <Panel>
-        <SectionHeading
-          title="Project Runtime"
-          subtitle="Primary agent, default host and heartbeat policy"
-          action={
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => void loadProjectRuntime()}>
-                Refresh runtime
-              </Button>
-              <Button variant="secondary" onClick={() => void runProjectHeartbeat('manual')} disabled={Boolean(heartbeatRunning)}>
-                {heartbeatRunning === 'manual' ? 'Triggering...' : 'Run heartbeat'}
-              </Button>
-              <Button variant="secondary" onClick={() => void runProjectHeartbeat('tick')} disabled={Boolean(heartbeatRunning)}>
-                {heartbeatRunning === 'tick' ? 'Ticking...' : 'Scheduler tick'}
-              </Button>
+    <div className="project-home-layout">
+      <Panel className="project-home-hero">
+        <div className="project-home-hero-grid">
+          <div className="project-home-hero-copy">
+            <div className="label">Project Home</div>
+            <h1 className="project-home-title">{project.name}</h1>
+            <p className="project-home-description">{project.description}</p>
+            <div className="project-home-pill-row">
+              <Pill tone="default">status {project.status}</Pill>
+              <Pill tone={setupIsRequired ? 'warn' : 'good'}>{setupStateLabel}</Pill>
+              <Pill tone="default">workspace {workspace?.mode ?? workspaceModeDraft}</Pill>
+              <Pill tone={resolveWorkspaceStatusTone(workspaceStatus)}>runtime {workspace?.runtimeStatus ?? 'not configured'}</Pill>
             </div>
-          }
-        />
-        {projectRuntimeError ? <p className="text-sm text-[color:var(--bad)]">{projectRuntimeError}</p> : null}
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Pill tone="default">host {runtimeHostLabels[projectRuntime?.defaultHost ?? 'local_worker']}</Pill>
-          <Pill tone="default">mode {launchModeLabels[projectRuntime?.defaultExecutionMode ?? 'queued']}</Pill>
-          <Pill tone={heartbeatTone(heartbeatStatus?.overallStatus ?? 'idle')}>status {heartbeatStatus?.overallStatus ?? 'idle'}</Pill>
-          <Pill tone={heartbeatStatus?.due ? 'warn' : 'default'}>{heartbeatStatus?.due ? 'due' : 'not due'}</Pill>
-          {projectRuntime?.primaryAgentId ? <Pill tone="good">primary agent {projectRuntime.primaryAgentId}</Pill> : <Pill tone="warn">primary agent not set</Pill>}
-        </div>
-        <p className="mt-3 text-sm text-slate-300">
-          {describeHeartbeatPolicy(projectRuntime?.heartbeatPolicy ?? undefined)}
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--muted)]">
-          <Pill tone="default">jobs {heartbeatStatus?.lastJobIds.length ?? 0}</Pill>
-          <Pill tone="default">completed {heartbeatStatus?.completedCount ?? 0}</Pill>
-          <Pill tone="default">running {heartbeatStatus?.runningCount ?? 0}</Pill>
-          <Pill tone="default">failed {heartbeatStatus?.failedCount ?? 0}</Pill>
-        </div>
-      </Panel>
+            <div className="project-home-action-row">
+              <Link to="/project/$projectId/repositories" params={{ projectId: project.id }} className="btn btn-ghost">Repositories</Link>
+              <Link to="/project/$projectId/roadmap" params={{ projectId: project.id }} className="btn btn-ghost">Roadmap</Link>
+              <Link to="/project/$projectId/onboarding" params={{ projectId: project.id }} className="btn btn-secondary">
+                {projectRuntime?.primaryAgentId ? 'Refine setup' : 'Continue setup'}
+              </Link>
+            </div>
+          </div>
 
-      <Panel>
-        <SectionHeading
-          title="Workspace Runtime"
-          subtitle="Project execution workspace (server-side folder browser)"
-          action={
-            <Button variant="secondary" onClick={() => void loadWorkspace()}>
-              {workspaceLoading ? 'Refreshing...' : 'Refresh'}
-            </Button>
-          }
-        />
-        {workspaceError ? <p className="text-sm text-[color:var(--bad)]">{workspaceError}</p> : null}
-        {workspaceNotice ? <p className="text-sm text-emerald-300">{workspaceNotice}</p> : null}
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <div>
-            <div className="label">Mode</div>
-            <select
-              className="cp-input mt-1"
-              value={workspaceModeDraft}
-              onChange={(event) => setWorkspaceModeDraft(event.target.value as 'local' | 'remote')}
-              disabled={workspaceSaving || Boolean(workspaceRunningAction)}
-            >
-              <option value="local">local</option>
-              <option value="remote">remote</option>
-            </select>
+          <div className="project-home-hero-aside">
+            <div className="project-home-spotlight">
+              <div className="label">Current posture</div>
+              <div className="project-home-spotlight-value">
+                {projectRuntime?.primaryAgentId ? 'Coordinator ready' : 'Needs coordinator setup'}
+              </div>
+              <p className="project-home-spotlight-note">
+                {projectRuntime?.primaryAgentId
+                  ? 'The project already has a primary agent and default execution posture.'
+                  : 'Finish setup to assign the coordinator and make the project runnable immediately.'}
+              </p>
+            </div>
+            <div className="project-home-spotlight-grid">
+              <div className="project-home-spotlight-card">
+                <span className="label">Heartbeat</span>
+                <strong>{heartbeatStatus?.overallStatus ?? 'idle'}</strong>
+                <span>{heartbeatStatus?.due ? 'Check due now' : 'Cadence under control'}</span>
+              </div>
+              <div className="project-home-spotlight-card">
+                <span className="label">Workspace</span>
+                <strong>{workspace?.mode ?? workspaceModeDraft}</strong>
+                <span>{selectedWorkspacePath || 'No folder selected yet'}</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div className="mt-3">
-          <WorkspaceBrowserPicker
-            value={workspacePathDraft || undefined}
-            onChange={(path) => setWorkspacePathDraft(path ?? '')}
-            title="Browse workspace folders"
-            subtitle="Select a folder from allowed roots"
+      </Panel>
+
+      <div className="project-home-stat-grid">
+        <StatCard label="Roadmap" value={roadmap.length} hint={roadmap.length === 1 ? 'item' : 'items'} />
+        <StatCard label="Tasks" value={tasks.length} hint={firstTask ? `next ${firstTask.type}` : 'nothing active'} />
+        <StatCard label="Queue" value={orderedJobs.length} hint={`${runningJobsCount} running · ${readyJobsCount} ready`} />
+        <StatCard label="Attention" value={attentionJobsCount} hint={attentionJobsCount > 0 ? 'needs review' : 'clear'} />
+      </div>
+
+      <div className="project-home-content-grid">
+        <div className="project-home-main-column">
+          <Panel className="project-home-panel-emphasis">
+            <SectionHeading
+              title="Current posture"
+              subtitle="Runtime + coordination"
+              action={
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" onClick={() => void loadProjectRuntime()}>
+                    Refresh runtime
+                  </Button>
+                  <Button variant="secondary" onClick={() => void runProjectHeartbeat('manual')} disabled={Boolean(heartbeatRunning)}>
+                    {heartbeatRunning === 'manual' ? 'Triggering...' : 'Run heartbeat'}
+                  </Button>
+                  <Button variant="secondary" onClick={() => void runProjectHeartbeat('tick')} disabled={Boolean(heartbeatRunning)}>
+                    {heartbeatRunning === 'tick' ? 'Ticking...' : 'Scheduler tick'}
+                  </Button>
+                </div>
+              }
+            />
+            {projectRuntimeError ? <p className="text-sm text-[color:var(--bad)]">{projectRuntimeError}</p> : null}
+            <div className="project-home-summary-grid">
+              <div className="project-home-summary-card">
+                <span className="label">Primary agent</span>
+                <strong>{projectRuntime?.primaryAgentId ?? 'Not assigned yet'}</strong>
+                <span>{projectRuntime?.primaryAgentId ? 'Coordinator linked to project runtime' : 'Finish setup to assign it'}</span>
+              </div>
+              <div className="project-home-summary-card">
+                <span className="label">Default host</span>
+                <strong>{runtimeHostLabels[projectRuntime?.defaultHost ?? 'local_worker']}</strong>
+                <span>{launchModeLabels[projectRuntime?.defaultExecutionMode ?? 'queued']}</span>
+              </div>
+              <div className="project-home-summary-card">
+                <span className="label">Heartbeat</span>
+                <strong>{heartbeatStatus?.overallStatus ?? 'idle'}</strong>
+                <span>{heartbeatStatus?.due ? 'Due for a project-wide check' : 'Not currently due'}</span>
+              </div>
+              <div className="project-home-summary-card">
+                <span className="label">Recent jobs</span>
+                <strong>{heartbeatStatus?.lastJobIds.length ?? 0}</strong>
+                <span>{heartbeatStatus?.failedCount ?? 0} failed · {heartbeatStatus?.runningCount ?? 0} running</span>
+              </div>
+            </div>
+            <p className="project-home-summary-note">
+              {describeHeartbeatPolicy(projectRuntime?.heartbeatPolicy ?? undefined)}
+            </p>
+          </Panel>
+
+          <Panel className="project-home-panel-emphasis">
+            <SectionHeading
+              title="Project jobs"
+              subtitle="Execution queue"
+              action={
+                <button
+                  type="button"
+                  className="pill border border-cyan-400/30 bg-cyan-500/20 text-cyan-100"
+                  onClick={() => void loadJobs()}
+                >
+                  Refresh
+                </button>
+              }
+            />
+            {jobsLoading ? <p className="text-sm text-slate-400">Loading project jobs...</p> : null}
+            {!jobsLoading && jobsError ? <p className="text-sm text-[color:var(--bad)]">{jobsError}</p> : null}
+            {!jobsLoading && !jobsError && orderedJobs.length === 0 ? (
+              <p className="text-sm text-[color:var(--muted)]">No jobs linked to this project yet.</p>
+            ) : null}
+            {!jobsLoading && !jobsError ? (
+              <div className="space-y-2">
+                {orderedJobs.map((job) => (
+                  <div
+                    key={job.id}
+                    className={`border px-3 py-2 text-sm ${
+                      job.actionRequired
+                        ? 'border-amber-400/50 bg-amber-500/10'
+                        : 'border-white/10 bg-white/5'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-[color:var(--text)]">{job.title}</div>
+                        <div className="truncate text-xs text-[color:var(--muted)]">{job.id}</div>
+                      </div>
+                      <span className="pill">{resolveJobStage(job)}</span>
+                    </div>
+                    <div className="mt-2 text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">
+                      type {job.type} · priority {job.priority} · retries {job.retryCount}/{job.maxRetries} · deps{' '}
+                      {job.dependsOnCount}
+                    </div>
+                    {job.resourceType === 'brainstorm' && job.resourceId ? (
+                      <div className="mt-2">
+                        <Link
+                          to="/project/$projectId/brainstorm/$id"
+                          params={{ projectId: project.id, id: job.resourceId }}
+                          className="text-xs uppercase tracking-[0.08em] text-[color:var(--accent)]"
+                        >
+                          Open linked brainstorm plan
+                        </Link>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </Panel>
+
+          {firstTask ? <TaskTimeline task={firstTask} run={firstTaskRun} /> : null}
+        </div>
+
+        <div className="project-home-side-column">
+          <Panel>
+            <SectionHeading
+              title="Workspace"
+              subtitle="Code location + runtime controls"
+              action={
+                <Button variant="secondary" onClick={() => void loadWorkspace()}>
+                  {workspaceLoading ? 'Refreshing...' : 'Refresh'}
+                </Button>
+              }
+            />
+            {workspaceError ? <p className="text-sm text-[color:var(--bad)]">{workspaceError}</p> : null}
+            {workspaceNotice ? <p className="text-sm text-emerald-300">{workspaceNotice}</p> : null}
+            <div className="project-home-summary-grid project-home-summary-grid-compact">
+              <div className="project-home-summary-card">
+                <span className="label">Mode</span>
+                <strong>{workspace?.mode ?? workspaceModeDraft}</strong>
+                <span>{selectedWorkspacePath || 'No folder selected yet'}</span>
+              </div>
+              <div className="project-home-summary-card">
+                <span className="label">Runtime</span>
+                <strong>{workspace?.runtimeStatus ?? 'not configured'}</strong>
+                <span>{pathValidation?.message ?? 'Select and save a workspace path'}</span>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div>
+                <div className="label">Mode</div>
+                <select
+                  className="cp-input mt-1"
+                  value={workspaceModeDraft}
+                  onChange={(event) => setWorkspaceModeDraft(event.target.value as 'local' | 'remote')}
+                  disabled={workspaceSaving || Boolean(workspaceRunningAction)}
+                >
+                  <option value="local">local</option>
+                  <option value="remote">remote</option>
+                </select>
+              </div>
+            </div>
+            <div className="mt-3">
+              <WorkspaceBrowserPicker
+                value={workspacePathDraft || undefined}
+                onChange={(path) => setWorkspacePathDraft(path ?? '')}
+                title="Browse workspace folders"
+                subtitle="Select a folder from allowed roots"
+              />
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={() => void saveWorkspaceConfig()} disabled={Boolean(workspaceRunningAction)}>
+                {workspaceSaving ? 'Saving...' : workspace ? 'Save workspace' : 'Create workspace'}
+              </Button>
+              <Button variant="primary" onClick={() => void runWorkspaceRuntimeAction('start')} disabled={workspaceSaving}>
+                {workspaceRunningAction === 'start' ? 'Starting...' : 'Start'}
+              </Button>
+              <Button variant="secondary" onClick={() => void runWorkspaceRuntimeAction('stop')} disabled={workspaceSaving}>
+                {workspaceRunningAction === 'stop' ? 'Stopping...' : 'Stop'}
+              </Button>
+              <Button variant="secondary" onClick={() => void runWorkspaceRuntimeAction('deploy')} disabled={workspaceSaving}>
+                {workspaceRunningAction === 'deploy' ? 'Deploying...' : 'Deploy'}
+              </Button>
+              <Button variant="secondary" onClick={() => void runWorkspaceRuntimeAction('restart')} disabled={workspaceSaving}>
+                {workspaceRunningAction === 'restart' ? 'Restarting...' : 'Restart'}
+              </Button>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--muted)]">
+              <Pill tone={resolveWorkspaceStatusTone(workspaceStatus)}>status {workspace?.runtimeStatus ?? 'not configured'}</Pill>
+              <Pill tone="default">mode {workspace?.mode ?? workspaceModeDraft}</Pill>
+              <Pill tone={pathValidationTone}>path validation {pathValidationLabel}</Pill>
+              {workspace?.lastStartedAt ? <Pill tone="good">started {workspace.lastStartedAt}</Pill> : null}
+              {workspace?.lastStoppedAt ? <Pill tone="warn">stopped {workspace.lastStoppedAt}</Pill> : null}
+              {workspace?.lastDeployedAt ? <Pill tone="accent">deployed {workspace.lastDeployedAt}</Pill> : null}
+            </div>
+          </Panel>
+
+          <Panel>
+            <SectionHeading
+              title="Local wrapper"
+              subtitle="Machine, folder, and preview"
+              action={
+                <Button variant="secondary" onClick={() => void loadLocalWrapper()}>
+                  {localWrapperLoading ? 'Refreshing...' : 'Refresh'}
+                </Button>
+              }
+            />
+            {localWrapperError ? <p className="text-sm text-[color:var(--bad)]">{localWrapperError}</p> : null}
+            {localWrapperNotice ? <p className="text-sm text-emerald-300">{localWrapperNotice}</p> : null}
+            <div className="project-home-summary-grid project-home-summary-grid-compact">
+              <div className="project-home-summary-card">
+                <span className="label">Local machine</span>
+                <strong>{localWrapperSignals.machineAttached ? resolveLocalMachineLabel(localHost) : 'Not attached'}</strong>
+                <span>{describeLocalWrapperStatus(localHost, selectedWorkspacePath, appTargetDraft).split(' · ')[0] ?? 'Not attached'}</span>
+              </div>
+              <div className="project-home-summary-card">
+                <span className="label">Local folder</span>
+                <strong>{localWrapperSignals.folderAttached ? 'Attached' : 'Not attached'}</strong>
+                <span>{selectedWorkspacePath || 'No folder selected yet'}</span>
+              </div>
+              <div className="project-home-summary-card">
+                <span className="label">Local preview</span>
+                <strong>{localWrapperSignals.previewAvailable ? 'Available' : 'Unavailable'}</strong>
+                <span>{localWrapperSignals.previewHref ?? (typeof appTargetDraft.previewPort === 'string' && appTargetDraft.previewPort.trim() ? `Port ${appTargetDraft.previewPort.trim()}` : 'No preview URL or port configured')}</span>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <label className="space-y-1">
+                <div className="label">App target name</div>
+                <input
+                  className="cp-input"
+                  value={appTargetDraft.name}
+                  onChange={(event) => setAppTargetDraft((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Main app target"
+                />
+              </label>
+              <label className="space-y-1">
+                <div className="label">Preview URL</div>
+                <input
+                  className="cp-input"
+                  value={appTargetDraft.previewUrl}
+                  onChange={(event) => setAppTargetDraft((current) => ({ ...current, previewUrl: event.target.value }))}
+                  placeholder="http://localhost:5173"
+                />
+              </label>
+              <label className="space-y-1">
+                <div className="label">Run command</div>
+                <input
+                  className="cp-input"
+                  value={appTargetDraft.runCommand}
+                  onChange={(event) => setAppTargetDraft((current) => ({ ...current, runCommand: event.target.value }))}
+                  placeholder="pnpm dev"
+                />
+              </label>
+              <label className="space-y-1">
+                <div className="label">Preview port</div>
+                <input
+                  className="cp-input"
+                  value={appTargetDraft.previewPort}
+                  onChange={(event) => setAppTargetDraft((current) => ({ ...current, previewPort: event.target.value }))}
+                  placeholder="5173"
+                />
+              </label>
+              <label className="space-y-1">
+                <div className="label">Test command</div>
+                <input
+                  className="cp-input"
+                  value={appTargetDraft.testCommand}
+                  onChange={(event) => setAppTargetDraft((current) => ({ ...current, testCommand: event.target.value }))}
+                  placeholder="pnpm test"
+                />
+              </label>
+              <label className="space-y-1">
+                <div className="label">Dev command</div>
+                <input
+                  className="cp-input"
+                  value={appTargetDraft.devCommand}
+                  onChange={(event) => setAppTargetDraft((current) => ({ ...current, devCommand: event.target.value }))}
+                  placeholder="pnpm dev"
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => void saveAppTarget()} disabled={localWrapperSaving}>
+                {localWrapperSaving ? 'Saving...' : 'Save app target'}
+              </Button>
+              <Button variant="primary" onClick={() => void runAppTargetAction('run')} disabled={localWrapperSaving}>
+                {localWrapperAction === 'run' ? 'Running...' : 'Run'}
+              </Button>
+              <Button variant="secondary" onClick={() => void runAppTargetAction('test')} disabled={localWrapperSaving}>
+                {localWrapperAction === 'test' ? 'Testing...' : 'Test'}
+              </Button>
+              <Button variant="secondary" onClick={() => void runAppTargetAction('dev')} disabled={localWrapperSaving}>
+                {localWrapperAction === 'dev' ? 'Starting dev...' : 'Dev'}
+              </Button>
+              {localWrapperSignals.previewHref ? (
+                <a
+                  href={localWrapperSignals.previewHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white transition hover:bg-white/10"
+                >
+                  Open preview
+                </a>
+              ) : null}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--muted)]">
+              <Pill tone={localWrapperSignals.machineAttached ? 'good' : 'warn'}>{localWrapperSignals.machineLabel}</Pill>
+              <Pill tone={localWrapperSignals.folderAttached ? 'good' : 'warn'}>{localWrapperSignals.folderLabel}</Pill>
+              <Pill tone={localWrapperSignals.previewAvailable ? 'good' : 'warn'}>{localWrapperSignals.previewLabel}</Pill>
+              <Pill tone="default">{describeAppTarget(appTargetDraft)}</Pill>
+              {localWrapperReady ? <Pill tone="good">ready</Pill> : <Pill tone="warn">not ready</Pill>}
+            </div>
+          </Panel>
+
+          <ApprovalBar
+            approvals={approvals}
+            onApprove={(roadmapItemId) => dispatch({ type: 'approveRoadmap', roadmapItemId })}
+            onReject={(roadmapItemId) => dispatch({ type: 'rejectRoadmap', roadmapItemId })}
+          />
+          <PlannerOutputCard
+            title="Execution basis"
+            summary="Approved roadmap items become task specs. Tasks require deterministic verification before completion."
           />
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={() => void saveWorkspaceConfig()} disabled={Boolean(workspaceRunningAction)}>
-            {workspaceSaving ? 'Saving...' : workspace ? 'Save workspace' : 'Create workspace'}
-          </Button>
-          <Button variant="primary" onClick={() => void runWorkspaceRuntimeAction('start')} disabled={workspaceSaving}>
-            {workspaceRunningAction === 'start' ? 'Starting...' : 'Start'}
-          </Button>
-          <Button variant="secondary" onClick={() => void runWorkspaceRuntimeAction('stop')} disabled={workspaceSaving}>
-            {workspaceRunningAction === 'stop' ? 'Stopping...' : 'Stop'}
-          </Button>
-          <Button variant="secondary" onClick={() => void runWorkspaceRuntimeAction('deploy')} disabled={workspaceSaving}>
-            {workspaceRunningAction === 'deploy' ? 'Deploying...' : 'Deploy'}
-          </Button>
-          <Button variant="secondary" onClick={() => void runWorkspaceRuntimeAction('restart')} disabled={workspaceSaving}>
-            {workspaceRunningAction === 'restart' ? 'Restarting...' : 'Restart'}
-          </Button>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--muted)]">
-          <Pill tone={resolveWorkspaceStatusTone(workspaceStatus)}>status {workspace?.runtimeStatus ?? 'not configured'}</Pill>
-          <Pill tone="default">mode {workspace?.mode ?? workspaceModeDraft}</Pill>
-          <Pill tone="default">path {(workspace?.localPath ?? workspacePathDraft) || 'n/a'}</Pill>
-          <Pill tone={pathValidationTone}>path validation {pathValidationLabel}</Pill>
-          {workspace?.lastStartedAt ? <Pill tone="good">started {workspace.lastStartedAt}</Pill> : null}
-          {workspace?.lastStoppedAt ? <Pill tone="warn">stopped {workspace.lastStoppedAt}</Pill> : null}
-          {workspace?.lastDeployedAt ? <Pill tone="accent">deployed {workspace.lastDeployedAt}</Pill> : null}
-        </div>
-        {pathValidation?.message ? (
-          <p className={`mt-2 text-xs ${pathValidation.status === 'invalid' ? 'text-[color:var(--bad)]' : 'text-[color:var(--muted)]'}`}>
+      </div>
+
+      {pathValidation?.message ? (
+        <Panel className="py-2">
+          <p className={`text-xs ${pathValidation.status === 'invalid' ? 'text-[color:var(--bad)]' : 'text-[color:var(--muted)]'}`}>
             {pathValidation.message}
             {pathValidation.path ? ` (${pathValidation.path})` : ''}
           </p>
-        ) : null}
-      </Panel>
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        <PlannerOutputCard
-          title="Execution basis"
-          summary="Approved roadmap items become task specs. Tasks require deterministic verification before completion."
-        />
-        <ApprovalBar
-          approvals={approvals}
-          onApprove={(roadmapItemId) => dispatch({ type: 'approveRoadmap', roadmapItemId })}
-          onReject={(roadmapItemId) => dispatch({ type: 'rejectRoadmap', roadmapItemId })}
-        />
-      </div>
-
-      <Panel>
-        <SectionHeading
-          title="Project Jobs"
-          subtitle="Execution units scoped to this project"
-          action={
-            <button
-              type="button"
-              className="pill border border-cyan-400/30 bg-cyan-500/20 text-cyan-100"
-              onClick={() => void loadJobs()}
-            >
-              Refresh
-            </button>
-          }
-        />
-        {jobsLoading ? <p className="text-sm text-slate-400">Loading project jobs...</p> : null}
-        {!jobsLoading && jobsError ? <p className="text-sm text-[color:var(--bad)]">{jobsError}</p> : null}
-        {!jobsLoading && !jobsError && orderedJobs.length === 0 ? (
-          <p className="text-sm text-[color:var(--muted)]">No jobs linked to this project yet.</p>
-        ) : null}
-        {!jobsLoading && !jobsError ? (
-          <div className="space-y-2">
-            {orderedJobs.map((job) => (
-              <div
-                key={job.id}
-                className={`border px-3 py-2 text-sm ${
-                  job.actionRequired
-                    ? 'border-amber-400/50 bg-amber-500/10'
-                    : 'border-white/10 bg-white/5'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate font-medium text-[color:var(--text)]">{job.title}</div>
-                    <div className="truncate text-xs text-[color:var(--muted)]">{job.id}</div>
-                  </div>
-                  <span className="pill">{resolveJobStage(job)}</span>
-                </div>
-                <div className="mt-2 text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">
-                  type {job.type} · priority {job.priority} · retries {job.retryCount}/{job.maxRetries} · deps{' '}
-                  {job.dependsOnCount}
-                </div>
-                {job.resourceType === 'brainstorm' && job.resourceId ? (
-                  <div className="mt-2">
-                    <Link
-                      to="/project/$projectId/brainstorm/$id"
-                      params={{ projectId: project.id, id: job.resourceId }}
-                      className="text-xs uppercase tracking-[0.08em] text-[color:var(--accent)]"
-                    >
-                      Open linked brainstorm plan
-                    </Link>
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </Panel>
-
-      {firstTask ? <TaskTimeline task={firstTask} run={firstTaskRun} /> : null}
+        </Panel>
+      ) : null}
     </div>
   );
 }
