@@ -655,6 +655,17 @@ a {
   .platform-topbar-right {
     display: flex;
     align-items: center;
+    gap: 8px;
+  }
+
+  .platform-topbar-left {
+    min-width: 0;
+  }
+
+  .platform-topbar-nav {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 6px;
   }
 
@@ -693,6 +704,91 @@ a {
     color: color-mix(in oklab, var(--muted) 96%, transparent);
   }
 
+  .platform-owner-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    border: 1px solid color-mix(in oklab, var(--line) 62%, transparent);
+    background: color-mix(in oklab, var(--panel2) 86%, transparent);
+  }
+
+  .platform-owner-switch-option {
+    border: 1px solid transparent;
+    background: transparent;
+    color: color-mix(in oklab, var(--muted) 92%, transparent);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 5px 8px;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+  }
+
+  .platform-owner-switch-option:hover {
+    border-color: color-mix(in oklab, var(--line) 70%, transparent);
+    color: color-mix(in oklab, var(--text) 90%, transparent);
+  }
+
+  .platform-owner-switch-option-active {
+    border-color: color-mix(in oklab, var(--accent-3) 56%, transparent);
+    background: color-mix(in oklab, var(--accent-3) 16%, transparent);
+    color: color-mix(in oklab, white 90%, var(--accent-3) 10%);
+  }
+
+  .platform-breadcrumb-bar {
+    display: flex;
+    align-items: center;
+    padding: 7px 12px;
+    border-bottom: 1px solid color-mix(in oklab, var(--line) 50%, transparent);
+    background: color-mix(in oklab, var(--panel2) 86%, transparent);
+  }
+
+  .platform-breadcrumb-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .platform-breadcrumb-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .platform-breadcrumb-link,
+  .platform-breadcrumb-current {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+
+  .platform-breadcrumb-link {
+    color: color-mix(in oklab, var(--muted) 92%, transparent);
+    transition: color 120ms ease;
+  }
+
+  .platform-breadcrumb-link:hover {
+    color: color-mix(in oklab, var(--text) 90%, transparent);
+  }
+
+  .platform-breadcrumb-current {
+    color: color-mix(in oklab, var(--text) 92%, transparent);
+    font-weight: 700;
+  }
+
+  .platform-breadcrumb-separator {
+    color: color-mix(in oklab, var(--line-strong) 72%, transparent);
+    font-size: 11px;
+  }
+
   .platform-megamenu {
     position: relative;
   }
@@ -713,7 +809,7 @@ a {
   .platform-grid {
     display: grid;
     grid-template-columns: 72px 230px minmax(0, 1fr);
-    min-height: calc(100vh - 54px);
+    min-height: calc(100vh - 88px);
     width: 100%;
     gap: 0;
   }
@@ -1340,13 +1436,6 @@ a {
     justify-content: flex-end;
   }
 
-  .platform-topbar-nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 8px;
-  }
-
   .platform-workspace-title {
     font-size: 1rem;
     font-weight: 620;
@@ -1676,6 +1765,28 @@ a {
     color: color-mix(in oklab, var(--accent-3) 82%, white 18%);
   }
 
+  .context-account .platform-workspace {
+    background:
+      linear-gradient(180deg, color-mix(in oklab, var(--panel2) 98%, black 2%), color-mix(in oklab, var(--panel) 95%, black 5%)),
+      radial-gradient(circle at 86% -10%, color-mix(in oklab, var(--accent-2) 10%, transparent), transparent 54%);
+  }
+
+  .context-account .platform-context-chip {
+    border-color: color-mix(in oklab, var(--accent-2) 42%, transparent);
+    color: color-mix(in oklab, var(--accent-2) 80%, white 20%);
+  }
+
+  .context-tenant .platform-workspace {
+    background:
+      linear-gradient(180deg, color-mix(in oklab, var(--panel2) 98%, black 2%), color-mix(in oklab, var(--panel) 95%, black 5%)),
+      radial-gradient(circle at 86% -10%, color-mix(in oklab, var(--accent) 11%, transparent), transparent 54%);
+  }
+
+  .context-tenant .platform-context-chip {
+    border-color: color-mix(in oklab, var(--accent) 44%, transparent);
+    color: color-mix(in oklab, var(--accent) 82%, white 18%);
+  }
+
   .grid-cols-dashboard {
     grid-template-columns: 280px minmax(0, 1fr) 340px;
   }
@@ -1768,9 +1879,30 @@ a {
     align-items: flex-start;
   }
 
+  .platform-topbar-left {
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .platform-topbar-nav {
+    width: 100%;
+  }
+
   .platform-topbar-right {
     width: 100%;
     justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .platform-owner-switch {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .platform-breadcrumb-bar {
+    overflow-x: auto;
+    white-space: nowrap;
   }
 
   .platform-grid {

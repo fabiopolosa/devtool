@@ -38,6 +38,7 @@ import { CodingWorkflowPage } from '@/pages/CodingWorkflowPage';
 import { ContextPage } from '@/pages/ContextPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { SettingsProvidersPage } from '@/pages/SettingsProvidersPage';
+import { ModelsPage } from '@/pages/ModelsPage';
 import { SettingsKnowledgePage } from '@/pages/SettingsKnowledgePage';
 import { SettingsPromptsPage } from '@/pages/SettingsPromptsPage';
 import { SettingsUsersPage } from '@/pages/SettingsUsersPage';
@@ -64,6 +65,54 @@ const projectsNewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'projects/new',
   component: ProjectsPage
+});
+
+const canonicalProjectOverviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/$projectId/overview',
+  component: ProjectDetailPage
+});
+
+const canonicalProjectDefaultRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/$projectId',
+  component: ProjectDetailPage
+});
+
+const canonicalProjectSetupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/$projectId/setup',
+  component: ProjectOnboardingPage
+});
+
+const canonicalProjectWorkspaceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/$projectId/workspace',
+  component: CodingWorkflowPage
+});
+
+const canonicalProjectWorkspaceContextRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/$projectId/workspace/context',
+  component: ContextPage
+});
+
+const canonicalProjectAgentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/$projectId/agents',
+  component: AgentsListPage
+});
+
+const canonicalProjectRunsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/$projectId/runs',
+  component: RuntimePage
+});
+
+const canonicalProjectKnowledgeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/$projectId/knowledge',
+  component: KnowledgePage
 });
 
 const activityRoute = createRoute({
@@ -228,10 +277,142 @@ const settingsRoute = createRoute({
   component: SettingsPage
 });
 
+const accountRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'account',
+  component: SettingsPage
+});
+
+const accountProfileRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'account/profile',
+  component: SettingsPage
+});
+
+const accountPreferencesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'account/preferences',
+  component: SettingsPage
+});
+
+const accountProvidersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'account/providers',
+  component: SettingsProvidersPage
+});
+
+const accountDesktopRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'account/desktop',
+  component: LocalReposPage
+});
+
+const tenantRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'tenant',
+  component: SettingsProvidersPage
+});
+
+const tenantUsersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'tenant/users',
+  component: SettingsUsersPage
+});
+
+const tenantProvidersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'tenant/providers',
+  component: SettingsProvidersPage
+});
+
+const tenantModelsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'tenant/models',
+  component: ModelsPage
+});
+
+const tenantKnowledgeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'tenant/knowledge',
+  component: SettingsKnowledgePage
+});
+
+const tenantPromptsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'tenant/prompts',
+  component: SettingsPromptsPage
+});
+
+const tenantWorkersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'tenant/workers',
+  component: WorkersPage
+});
+
+const platformRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform',
+  component: SecretsPage
+});
+
+const platformTenantsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform/tenants',
+  component: SettingsProvidersPage
+});
+
+const platformSecretsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform/secrets',
+  component: SecretsPage
+});
+
+const platformIntegrationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform/integrations',
+  component: McpPage
+});
+
+const platformRbacRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform/rbac',
+  component: AdminRbacPage
+});
+
+const platformAuditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform/audit',
+  component: AdminRbacPage
+});
+
+const platformDatabaseRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform/database',
+  component: DatabasePage
+});
+
+const platformStackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform/stack',
+  component: StackPage
+});
+
+const platformVersioningRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform/versioning',
+  component: VersioningPage
+});
+
 const settingsProvidersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings/providers',
   component: SettingsProvidersPage
+});
+
+const settingsProvidersDiscoveryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/providers/discovery',
+  component: ProvidersPage
 });
 
 const settingsSkillsRoute = createRoute({
@@ -339,7 +520,7 @@ const settingsPromptsRoute = createRoute({
 const settingsModelsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings/models',
-  component: ProvidersPage
+  component: ModelsPage
 });
 
 const settingsPipelinesRoute = createRoute({
@@ -389,6 +570,14 @@ const routeTree = rootRoute.addChildren([
   activityRoute,
   projectsRoute,
   projectsNewRoute,
+  canonicalProjectDefaultRoute,
+  canonicalProjectOverviewRoute,
+  canonicalProjectSetupRoute,
+  canonicalProjectWorkspaceRoute,
+  canonicalProjectWorkspaceContextRoute,
+  canonicalProjectAgentsRoute,
+  canonicalProjectRunsRoute,
+  canonicalProjectKnowledgeRoute,
   projectWorkspaceRoute,
   projectOnboardingRoute,
   projectTasksListRoute,
@@ -414,8 +603,30 @@ const routeTree = rootRoute.addChildren([
   projectBrainstormingRoute,
   projectBrainstormPlanRoute,
   agentsRoute,
+  accountRoute,
+  accountProfileRoute,
+  accountPreferencesRoute,
+  accountProvidersRoute,
+  accountDesktopRoute,
+  tenantRoute,
+  tenantUsersRoute,
+  tenantProvidersRoute,
+  tenantModelsRoute,
+  tenantKnowledgeRoute,
+  tenantPromptsRoute,
+  tenantWorkersRoute,
+  platformRoute,
+  platformTenantsRoute,
+  platformSecretsRoute,
+  platformIntegrationsRoute,
+  platformRbacRoute,
+  platformAuditRoute,
+  platformDatabaseRoute,
+  platformStackRoute,
+  platformVersioningRoute,
   settingsRoute,
   settingsProvidersRoute,
+  settingsProvidersDiscoveryRoute,
   settingsSkillsRoute,
   settingsAgentsRoute,
   settingsAgentCreateRoute,

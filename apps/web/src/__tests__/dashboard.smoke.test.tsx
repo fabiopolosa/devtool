@@ -28,8 +28,14 @@ describe("Web smoke", () => {
     );
 
     expect(await screen.findByRole("link", { name: "DevTools Home" })).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "Activity" }).length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Platform" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Account" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Tenant" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Platform" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tenant view" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Platform owner view" })).toBeInTheDocument();
+    expect(screen.getAllByText("Home").length).toBeGreaterThan(0);
     expect(screen.getByText("Launcher")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /\+ New Project/i })).toHaveAttribute("href", "/projects/new");
     expect(screen.getByRole("button", { name: "New Project" })).toBeInTheDocument();
@@ -103,7 +109,7 @@ describe("Web smoke", () => {
     fireEvent.click(launcherProject);
 
     await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/project/proj-control-plane/onboarding");
+      expect(router.state.location.pathname).toBe("/projects/proj-control-plane/setup");
     });
   });
 });

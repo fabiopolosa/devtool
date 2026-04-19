@@ -1,11 +1,22 @@
 import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { Button, Panel, Pill, SectionHeading } from '@/components/common';
+import { uiLocaleOptions, useLocale } from '@/i18n/locale';
 import { useAppStore } from '@/store/app-store';
 import { getThemeMode, onThemeChange, setThemeMode, toggleThemeMode, type ThemeMode } from '@/theme';
 
 export function SettingsPage() {
   const { auth } = useAppStore();
+  const {
+    uiLocale,
+    userOutputLocale,
+    tenantOutputLocale,
+    projectOutputLocale,
+    setUiLocale,
+    setUserOutputLocale,
+    setTenantOutputLocale,
+    setProjectOutputLocale
+  } = useLocale();
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => getThemeMode());
   const roleNames = auth.principal?.roles ?? [];
   const tenantRole = auth.principal?.tenantRole;
@@ -22,87 +33,114 @@ export function SettingsPage() {
   return (
     <div className="space-y-4">
       <Panel>
-        <SectionHeading title="Settings" subtitle="Appearance and operator preferences" />
+        <SectionHeading title="Settings Transition" subtitle="Choose a clear domain before editing configuration" />
         <p className="text-sm text-[color:var(--muted)]">
-          Platform settings are always visible. Access is tiered by role: project (all users), tenant (admin), system (owner).
+          This page is now an orientation checkpoint. Use top navigation for Account, Tenant, and Platform domains instead of treating
+          `settings/*` as a single flat hub.
         </p>
-      </Panel>
-
-      <Panel>
-        <SectionHeading title="Project Tier" subtitle="Available to authenticated users" />
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {[
-            { to: "/projects", label: "Projects" },
-            { to: "/agents", label: "Agents" },
-            { to: "/settings/skills", label: "Skills" }
-          ].map((item) => (
-            <Link
-              key={item.to}
-              to={item.to as any}
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white transition hover:bg-white/10"
-            >
-              {item.label}
-            </Link>
-          ))}
+        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          <Link
+            to={"/account/profile" as any}
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-white transition hover:bg-white/10"
+          >
+            <div className="font-semibold">Account</div>
+            <div className="mt-1 text-xs text-[color:var(--muted)]">Profile, preferences, desktop defaults.</div>
+          </Link>
+          <Link
+            to={"/tenant/providers" as any}
+            className={`rounded-xl border px-3 py-3 text-sm transition ${
+              canManageTenant
+                ? "border-white/10 bg-white/5 text-white hover:bg-white/10"
+                : "cursor-not-allowed border-white/10 bg-white/5 text-[color:var(--muted)] pointer-events-none"
+            }`}
+          >
+            <div className="font-semibold">Tenant</div>
+            <div className="mt-1 text-xs text-[color:var(--muted)]">Users, providers, models, prompts, workers.</div>
+          </Link>
+          <Link
+            to={"/platform/secrets" as any}
+            className={`rounded-xl border px-3 py-3 text-sm transition ${
+              isSystemOwner
+                ? "border-white/10 bg-white/5 text-white hover:bg-white/10"
+                : "cursor-not-allowed border-white/10 bg-white/5 text-[color:var(--muted)] pointer-events-none"
+            }`}
+          >
+            <div className="font-semibold">Platform</div>
+            <div className="mt-1 text-xs text-[color:var(--muted)]">Owner-only controls: secrets, RBAC, audit, stack.</div>
+          </Link>
+          <Link
+            to={"/projects" as any}
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-white transition hover:bg-white/10"
+          >
+            <div className="font-semibold">Projects</div>
+            <div className="mt-1 text-xs text-[color:var(--muted)]">Back to project setup and daily operations.</div>
+          </Link>
         </div>
       </Panel>
 
       <Panel>
-        <SectionHeading title="Tenant Tier" subtitle="Admin / owner tenant controls" />
-        {!canManageTenant ? (
-          <p className="text-sm text-[color:var(--muted)]">Tenant controls require tenant role `admin|owner` (or system admin).</p>
-        ) : null}
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {[
-            { to: "/settings/providers", label: "Providers" },
-            { to: "/settings/models", label: "Models" },
-            { to: "/settings/users", label: "Users" },
-            { to: "/settings/knowledge", label: "Knowledge" },
-            { to: "/settings/pipelines", label: "Pipelines" },
-            { to: "/settings/prompts", label: "Prompts" },
-            { to: "/settings/workers", label: "Workers" },
-            { to: "/settings/agents", label: "Agent Registry" },
-            { to: "/settings/tenants", label: "Tenants" }
-          ].map((item) => (
-            <Link
-              key={item.to}
-              to={item.to as any}
-              className={`rounded-xl border px-3 py-2 text-sm transition ${
-                canManageTenant
-                  ? "border-white/10 bg-white/5 text-white hover:bg-white/10"
-                  : "cursor-not-allowed border-white/10 bg-white/5 text-[color:var(--muted)] pointer-events-none"
-              }`}
+        <SectionHeading title="Language Foundation" subtitle="UI language and output language fallbacks" />
+        <p className="text-sm text-[color:var(--muted)]">
+          Fallback chain for agent output is explicit: agent override {'->'} project {'->'} user {'->'} tenant {'->'} app default.
+          UI language is independent from agent output language.
+        </p>
+        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          <label className="space-y-1 text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">
+            UI language
+            <select
+              value={uiLocale}
+              onChange={(event) => setUiLocale(event.target.value as typeof uiLocale)}
+              className="w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-cyan-400/40"
             >
-              {item.label}
-            </Link>
-          ))}
-        </div>
-      </Panel>
-
-      <Panel>
-        <SectionHeading title="System Tier" subtitle="Owner role required" />
-        {!isSystemOwner ? (
-          <p className="text-sm text-[color:var(--muted)]">System controls require owner role.</p>
-        ) : null}
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {[
-            { to: "/settings/secrets", label: "Secrets" },
-            { to: "/settings/integrations", label: "Integrations" },
-            { to: "/settings/rbac", label: "RBAC" },
-            { to: "/settings/audit", label: "Audit" }
-          ].map((item) => (
-            <Link
-              key={item.to}
-              to={item.to as any}
-              className={`rounded-xl border px-3 py-2 text-sm transition ${
-                isSystemOwner
-                  ? "border-white/10 bg-white/5 text-white hover:bg-white/10"
-                  : "cursor-not-allowed border-white/10 bg-white/5 text-[color:var(--muted)] pointer-events-none"
-              }`}
+              {uiLocaleOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">
+            User output language
+            <select
+              value={userOutputLocale}
+              onChange={(event) => setUserOutputLocale(event.target.value as typeof userOutputLocale)}
+              className="w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-cyan-400/40"
             >
-              {item.label}
-            </Link>
-          ))}
+              {uiLocaleOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">
+            Tenant default language
+            <select
+              value={tenantOutputLocale}
+              onChange={(event) => setTenantOutputLocale(event.target.value as typeof tenantOutputLocale)}
+              className="w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-cyan-400/40"
+            >
+              {uiLocaleOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">
+            Project default language
+            <select
+              value={projectOutputLocale}
+              onChange={(event) => setProjectOutputLocale(event.target.value as typeof projectOutputLocale)}
+              className="w-full rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-cyan-400/40"
+            >
+              {uiLocaleOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </Panel>
 

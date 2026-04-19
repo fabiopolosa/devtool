@@ -2,18 +2,33 @@ import { Link, Outlet, useMatchRoute, useNavigate, useRouterState } from '@tanst
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Job, Project } from '@cp/domain';
 import { Button } from '@/components/common';
+import {
+  accountSidebarItems,
+  buildBreadcrumb,
+  domainLabel,
+  extractProjectRouteContext,
+  homeSidebarItems,
+  platformSidebarItems,
+  projectSidebarItems,
+  resolveVisualDomain,
+  routeLabelFromPath,
+  tenantSidebarItems,
+  type ContextNavItem,
+  type VisualDomain
+} from '@/layout/navigation-model';
+import { getOwnerMode, onOwnerModeChange, setOwnerMode } from '@/owner-mode';
 import { useAppStore } from '@/store/app-store';
 import { getThemeMode, onThemeChange, setThemeMode, toggleThemeMode, type ThemeMode } from '@/theme';
 
 type ShellNavItem = {
+  id: 'home' | 'projects' | 'account' | 'tenant' | 'platform';
   to: string;
   label: string;
-  tier?: 'primary' | 'secondary';
-  access?: 'project' | 'tenant' | 'system';
   params?: Record<string, string>;
+  visible: boolean;
 };
 
-type ShellContextMode = 'global' | 'project' | 'platform';
+type ShellContextMode = 'global' | 'project' | 'account' | 'tenant' | 'platform';
 
 type AgentChatLog = {
   id: string;
@@ -22,15 +37,6 @@ type AgentChatLog = {
 };
 
 type JobStage = 'waiting_user' | 'running' | 'done' | 'error' | 'ready' | 'waiting_dependencies';
-
-type ProjectNavigatorItem = {
-  id: string;
-  label: string;
-  to: string;
-  params?: Record<string, string>;
-  badge?: string;
-  tone?: 'warn' | 'good';
-};
 
 type ProjectRuntimeSnapshot = {
   primaryAgentId?: string;
@@ -72,34 +78,6 @@ const stageRank: Record<JobStage, number> = {
   ready: 3,
   waiting_dependencies: 4,
   done: 5
-};
-
-const projectFromPath = (pathname: string): string | undefined => {
-  const segments = pathname.split('/').filter(Boolean);
-  if (segments[0] === 'project' && segments[1]) return segments[1];
-  return undefined;
-};
-
-const routeLabelFromPath = (pathname: string): string => {
-  const segments = pathname.split('/').filter(Boolean);
-  const first = segments[0];
-  if (!first) return 'Dashboard';
-  if (first === 'settings') return 'Platform Settings';
-  if (first === 'projects' && segments[1] === 'new') return 'New Project';
-  if (first === 'project') {
-    const section = segments[2];
-    if (!section) return 'Project Home';
-    if (section === 'onboarding') return 'Project Setup';
-    return section
-      .split('-')
-      .map((item) => item[0]?.toUpperCase() + item.slice(1))
-      .join(' ');
-  }
-  if (first === 'projects') return 'Projects';
-  return first
-    .split('-')
-    .map((item) => item[0]?.toUpperCase() + item.slice(1))
-    .join(' ');
 };
 
 const toLauncherCode = (project: Project): string => {
@@ -146,7 +124,7 @@ export function AppShell() {
   const [chatInput, setChatInput] = useState('');
   const [chatPending, setChatPending] = useState(false);
   const [chatLogs, setChatLogs] = useState<AgentChatLog[]>([]);
-  const [platformMenuOpen, setPlatformMenuOpen] = useState(false);
+  const [ownerViewEnabled, setOwnerViewEnabled] = useState<boolean>(() => getOwnerMode());
   const [ownerGuardNotice, setOwnerGuardNotice] = useState<string | undefined>();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
@@ -162,6 +140,8 @@ export function AppShell() {
     };
   }, []);
 
+  useEffect(() => onOwnerModeChange((enabled) => setOwnerViewEnabled(enabled)), []);
+
   const isLoginRoute = Boolean(matchRoute({ to: '/login' }));
   const userRoleNames = auth.principal?.roles ?? [];
   const userRoleLabel = userRoleNames.length > 0 ? userRoleNames.join(', ') : 'none';
@@ -174,6 +154,8 @@ export function AppShell() {
     || isSystemOwner
     || Boolean(userRoleNames.includes('admin') || userTenantRole === 'admin');
   const ownerModeActive = isSystemOwner;
+  const ownerViewActive = isSystemOwner && ownerViewEnabled;
+  const ownerViewLabel = ownerViewActive ? 'Platform owner view' : 'Tenant view';
   const canAccessPlatformProjectTier = hasAuthenticatedSession;
   const canAccessPlatformTenantTier = hasAuthenticatedSession && isTenantAdmin;
   const canAccessPlatformSystemTier = hasAuthenticatedSession && isSystemOwner;
@@ -210,6 +192,8 @@ export function AppShell() {
     if (!import.meta.env.DEV) return;
     console.info('[owner-mode] computed', {
       ownerModeActive,
+      ownerViewActive,
+      ownerViewEnabled,
       canAccessPlatformProjectTier,
       canAccessPlatformTenantTier,
       canAccessPlatformSystemTier,
@@ -228,6 +212,8 @@ export function AppShell() {
     canAccessPlatformTenantTier,
     canAccessPlatformSystemTier,
     ownerModeActive,
+    ownerViewActive,
+    ownerViewEnabled,
     pathname,
     tenantRoleLabel,
     userRoleLabel
@@ -235,21 +221,26 @@ export function AppShell() {
 
   useEffect(() => {
     const requiresTier = (() => {
-      if (pathname === '/settings' || pathname === '/agents') return 'project' as const;
-      if (pathname === '/providers') return 'tenant' as const;
-      if (pathname === '/tenants' || pathname === '/knowledge') return 'tenant' as const;
-      if (!pathname.startsWith('/settings/')) return undefined;
+      if (pathname.startsWith('/platform/')) return 'system' as const;
+      if (pathname.startsWith('/tenant/')) return 'tenant' as const;
+      if (pathname.startsWith('/account/')) return 'project' as const;
+      if (!pathname.startsWith('/settings/')) {
+        if (pathname === '/providers' || pathname === '/tenants' || pathname === '/knowledge') {
+          return 'tenant' as const;
+        }
+        return undefined;
+      }
       if (
-        pathname === '/settings/secrets'
+        pathname === '/settings/tenants'
+        || pathname === '/settings/secrets'
         || pathname === '/settings/integrations'
         || pathname === '/settings/rbac'
         || pathname === '/settings/audit'
         || pathname === '/settings/database'
         || pathname === '/settings/stack'
         || pathname === '/settings/versioning'
-      ) {
-        return 'system' as const;
-      }
+      ) return 'system' as const;
+
       if (
         pathname === '/settings/providers'
         || pathname === '/settings/models'
@@ -263,13 +254,11 @@ export function AppShell() {
         || pathname === '/settings/agents/new'
         || pathname.startsWith('/settings/agents/')
         || pathname === '/settings/skills'
-        || pathname === '/settings/tenants'
         || pathname === '/settings/runtime'
         || pathname === '/settings/usage'
         || pathname === '/settings/mcp'
-      ) {
-        return 'tenant' as const;
-      }
+      ) return 'tenant' as const;
+
       return 'project' as const;
     })();
 
@@ -313,7 +302,7 @@ export function AppShell() {
       });
     }
     setOwnerGuardNotice(reason);
-    void navigate({ to: '/settings' });
+    void navigate({ to: '/account/profile' });
   }, [
     auth.enabled,
     auth.loading,
@@ -339,10 +328,6 @@ export function AppShell() {
     return onThemeChange(setThemeModeState);
   }, []);
 
-  useEffect(() => {
-    setPlatformMenuOpen(false);
-  }, [pathname]);
-
   const sortedProjects = useMemo(
     () => [...state.projects].sort((left, right) => left.name.localeCompare(right.name)),
     [state.projects]
@@ -363,25 +348,25 @@ export function AppShell() {
     }
     return summaries;
   }, [sortedProjects, state.projectRepositoryLinks, state.roadmapItems, state.tasks]);
+  const projectRouteContext = useMemo(() => extractProjectRouteContext(pathname), [pathname]);
 
   const selectedProject = useMemo(() => {
-    const fromPath = projectFromPath(pathname);
+    const fromPath = projectRouteContext?.projectId;
     if (fromPath) {
       return sortedProjects.find((project) => project.id === fromPath) ?? sortedProjects[0];
     }
 
     return sortedProjects.find((project) => project.status === 'active') ?? sortedProjects[0];
-  }, [pathname, sortedProjects]);
+  }, [projectRouteContext?.projectId, sortedProjects]);
 
   const selectedProjectSummary = selectedProject ? projectLauncherSummaries.get(selectedProject.id) : undefined;
+  const setupIsRequired = Boolean(selectedProjectSummary?.likelyNeedsSetup);
+  const visualDomain: VisualDomain = useMemo(() => resolveVisualDomain(pathname), [pathname]);
 
   const contextMode: ShellContextMode = useMemo(() => {
-    if (pathname === '/settings' || pathname.startsWith('/settings/')) return 'platform';
-    if (pathname.startsWith('/project/')) {
-      return 'project';
-    }
-    return 'global';
-  }, [pathname]);
+    if (visualDomain === 'home') return 'global';
+    return visualDomain;
+  }, [visualDomain]);
 
   const context = useMemo(
     () => ({
@@ -392,96 +377,72 @@ export function AppShell() {
     [contextMode, selectedProject?.id, selectedProject?.tenantId, state.projects]
   );
 
-  const topBarItems: ShellNavItem[] = useMemo(
-    () => [
-      { to: '/projects', label: 'Projects', tier: 'primary' },
-      { to: '/activity', label: 'Activity', tier: 'primary' },
-      { to: '/agents', label: 'Agents', tier: 'primary' }
-    ],
-    []
+  const topBarItems: ShellNavItem[] = useMemo(() => {
+    const candidates: ShellNavItem[] = [
+      { id: 'home', to: '/', label: 'Home', visible: true },
+      { id: 'projects', to: '/projects', label: 'Projects', visible: true },
+      { id: 'account', to: '/account/profile', label: 'Account', visible: hasAuthenticatedSession },
+      { id: 'tenant', to: '/tenant/providers', label: 'Tenant', visible: canAccessPlatformTenantTier },
+      { id: 'platform', to: '/platform/secrets', label: 'Platform', visible: canAccessPlatformSystemTier }
+    ];
+    return candidates.filter((item) => item.visible);
+  }, [canAccessPlatformSystemTier, canAccessPlatformTenantTier, hasAuthenticatedSession]);
+
+  const queueBadge = useMemo(
+    () =>
+      jobsLoading
+        ? 'Queue syncing…'
+        : jobs.length > 0
+          ? `${runningJobsCount} running · ${readyJobsCount} ready`
+          : 'Queue idle',
+    [jobs.length, jobsLoading, readyJobsCount, runningJobsCount]
   );
 
-  const platformMenuItems: ShellNavItem[] = useMemo(() => {
-    if (!canAccessPlatformProjectTier) return [];
-    const candidates: ShellNavItem[] = [
-      { to: '/settings/providers', label: 'Providers', tier: 'primary', access: 'tenant' },
-      { to: '/settings/models', label: 'Models', tier: 'primary', access: 'tenant' },
-      { to: '/settings/knowledge', label: 'Knowledge', tier: 'primary', access: 'tenant' },
-      { to: '/settings/pipelines', label: 'Pipelines', tier: 'primary', access: 'tenant' },
-      { to: '/settings/users', label: 'Users', tier: 'primary', access: 'tenant' },
-      { to: '/settings/prompts', label: 'Prompt Registry', tier: 'primary', access: 'tenant' },
-      { to: '/settings/workers', label: 'Workers', tier: 'primary', access: 'tenant' },
-      { to: '/settings/agents', label: 'Agents', tier: 'secondary', access: 'tenant' },
-      { to: '/settings/skills', label: 'Skills', tier: 'secondary', access: 'project' },
-      { to: '/settings/usage', label: 'Usage', tier: 'secondary', access: 'tenant' },
-      { to: '/settings/tenants', label: 'Tenants', tier: 'secondary', access: 'tenant' },
-      { to: '/settings/secrets', label: 'Secrets', tier: 'secondary', access: 'system' },
-      { to: '/settings/integrations', label: 'Integrations', tier: 'secondary', access: 'system' },
-      { to: '/settings/audit', label: 'Audit', tier: 'secondary', access: 'system' },
-      { to: '/settings/rbac', label: 'RBAC', tier: 'secondary', access: 'system' }
-    ];
-    return candidates.filter((item) => hasAccessForTier(item.access ?? 'project'));
-  }, [canAccessPlatformProjectTier, hasAccessForTier]);
-
-  const projectNavigatorItems = useMemo((): ProjectNavigatorItem[] => {
+  const projectNavigationItems = useMemo(() => {
     if (!selectedProject?.id) return [];
-    const setupRequired = Boolean(selectedProjectSummary?.likelyNeedsSetup);
-    const queueBadge = jobsLoading
-      ? 'Queue syncing…'
-      : jobs.length > 0
-        ? `${runningJobsCount} running · ${readyJobsCount} ready`
-        : 'Queue idle';
-    return [
-      {
-        id: 'project-home',
-        label: 'Project Home',
-        to: '/project/$projectId',
-        params: { projectId: selectedProject.id }
-      },
-      {
-        id: 'setup',
-        label: 'Setup',
-        to: '/project/$projectId/onboarding',
-        params: { projectId: selectedProject.id },
-        badge: setupRequired ? 'Required' : 'Configured',
-        tone: setupRequired ? 'warn' : 'good'
-      },
-      {
-        id: 'coding',
-        label: 'Coding',
-        to: '/project/$projectId/coding',
-        params: { projectId: selectedProject.id }
-      },
-      {
-        id: 'context',
-        label: 'Context',
-        to: '/project/$projectId/context',
-        params: { projectId: selectedProject.id }
-      },
-      {
-        id: 'operations',
-        label: 'Operations',
-        to: '/project/$projectId/monitoring',
-        params: { projectId: selectedProject.id },
-        badge: queueBadge,
-        ...(jobs.length > 0 ? { tone: 'good' as const } : {})
-      }
-    ];
-  }, [
-    jobs.length,
-    jobsLoading,
-    readyJobsCount,
-    runningJobsCount,
-    selectedProject?.id,
-    selectedProjectSummary?.likelyNeedsSetup
-  ]);
+    return projectSidebarItems({
+      projectId: selectedProject.id,
+      setupRequired: Boolean(selectedProjectSummary?.likelyNeedsSetup),
+      queueBadge
+    });
+  }, [queueBadge, selectedProject?.id, selectedProjectSummary?.likelyNeedsSetup]);
+
+  const contextualNavItems: ContextNavItem[] = useMemo(() => {
+    if (visualDomain === 'project') return projectNavigationItems;
+    if (visualDomain === 'account') return accountSidebarItems();
+    if (visualDomain === 'tenant') return tenantSidebarItems();
+    if (visualDomain === 'platform') return platformSidebarItems();
+    return homeSidebarItems();
+  }, [projectNavigationItems, visualDomain]);
+
+  const contextRailTitle = useMemo(() => {
+    if (visualDomain === 'project') return 'Project Navigator';
+    return `${domainLabel(visualDomain)} Navigation`;
+  }, [visualDomain]);
+
+  const contextRailSubtitle = useMemo(() => {
+    if (visualDomain === 'project') {
+      return setupIsRequired
+        ? 'Follow Setup before moving into Workspace and Runs.'
+        : 'Use this navigator to move through daily project work.';
+    }
+    if (visualDomain === 'platform') return 'Owner controls are isolated from tenant operations.';
+    if (visualDomain === 'tenant') return 'Tenant administration and shared runtime governance.';
+    if (visualDomain === 'account') return 'Personal preferences and operator-level defaults.';
+    return 'Entry points into projects and operational activity.';
+  }, [visualDomain, setupIsRequired]);
+
+  const breadcrumbItems = useMemo(
+    () => buildBreadcrumb({ pathname, selectedProject }),
+    [pathname, selectedProject]
+  );
 
   const resolveProjectEntry = useCallback(
-    async (project: Project): Promise<{ to: '/project/$projectId' | '/project/$projectId/onboarding'; params: { projectId: string } }> => {
+    async (project: Project): Promise<{ to: '/projects/$projectId/overview' | '/projects/$projectId/setup'; params: { projectId: string } }> => {
       const fallback =
         projectLauncherSummaries.get(project.id)?.likelyNeedsSetup
-          ? { to: '/project/$projectId/onboarding' as const, params: { projectId: project.id } }
-          : { to: '/project/$projectId' as const, params: { projectId: project.id } };
+          ? { to: '/projects/$projectId/setup' as const, params: { projectId: project.id } }
+          : { to: '/projects/$projectId/overview' as const, params: { projectId: project.id } };
 
       try {
         const [runtimeResult, workspaceResult] = await Promise.all([
@@ -503,8 +464,8 @@ export function AppShell() {
         const hasWorkspace = Boolean(runtimeProfile?.workspaceId || workspace?.id || workspace?.localPath?.trim());
 
         return !hasPrimaryAgent || !hasWorkspace
-          ? { to: '/project/$projectId/onboarding', params: { projectId: project.id } }
-          : { to: '/project/$projectId', params: { projectId: project.id } };
+          ? { to: '/projects/$projectId/setup', params: { projectId: project.id } }
+          : { to: '/projects/$projectId/overview', params: { projectId: project.id } };
       } catch {
         return fallback;
       }
@@ -710,8 +671,8 @@ export function AppShell() {
     }
   };
 
-  const isActive = useMemo(
-    () => (item: ShellNavItem) => {
+  const isRouteActive = useMemo(
+    () => (item: { to: string; params?: Record<string, string> | undefined }) => {
       if (item.params) {
         return Boolean(matchRoute({ to: item.to as any, params: item.params as any, fuzzy: true }));
       }
@@ -723,28 +684,46 @@ export function AppShell() {
   const activeRouteLabel = routeLabelFromPath(pathname);
   const activeWorkspaceDescriptor = selectedProject ? `${selectedProject.key} · ${selectedProject.name}` : 'No project';
   const tenantName = selectedProject?.tenantId ?? state.projects[0]?.tenantId ?? 'tenant_default';
-  const setupIsRequired = Boolean(selectedProjectSummary?.likelyNeedsSetup);
   const selectedProjectGuidance = !selectedProject
     ? 'Select a project from Launcher to start.'
     : setupIsRequired
-      ? 'Continue setup first, then move to Coding and Operations.'
-      : 'Setup complete. Use Project Home, Coding, Context and Operations.';
+      ? 'Continue setup first, then move to Workspace and Runs.'
+      : 'Setup complete. Move between Overview, Workspace, Knowledge and Runs.';
   const setupStateLabel = setupIsRequired ? 'Setup required' : 'Setup complete';
-  const projectOperationsActive = Boolean(
-    selectedProject
-      && (
-        pathname.startsWith(`/project/${selectedProject.id}/monitoring`)
-        || pathname.startsWith(`/project/${selectedProject.id}/approvals`)
-        || pathname.startsWith(`/project/${selectedProject.id}/agents`)
-        || pathname.startsWith(`/project/${selectedProject.id}/observability`)
-      )
-  );
+  const topNavActive = useCallback((item: ShellNavItem): boolean => {
+    if (item.id === 'projects') return pathname.startsWith('/projects') || pathname.startsWith('/project/');
+    if (item.id === 'home') return visualDomain === 'home' && pathname === '/';
+    if (item.id === 'account') return visualDomain === 'account';
+    if (item.id === 'tenant') return visualDomain === 'tenant';
+    if (item.id === 'platform') return visualDomain === 'platform';
+    return false;
+  }, [pathname, visualDomain]);
   const contextDescriptor =
     context.mode === 'platform'
       ? `platform · ${context.tenantId}`
       : context.mode === 'project'
         ? `project · ${context.projectId ?? 'unselected'}`
-      : `global · ${context.tenantId}`;
+        : context.mode === 'tenant'
+          ? `tenant · ${context.tenantId}`
+          : context.mode === 'account'
+            ? `account · ${context.tenantId}`
+            : `global · ${context.tenantId}`;
+  const switchOwnerView = useCallback(
+    async (nextOwnerView: boolean): Promise<void> => {
+      setOwnerViewEnabled(setOwnerMode(nextOwnerView));
+      if (!isSystemOwner) return;
+      if (nextOwnerView) {
+        if (canAccessPlatformSystemTier) {
+          await navigate({ to: '/platform/secrets' });
+        }
+        return;
+      }
+      if (canAccessPlatformTenantTier) {
+        await navigate({ to: '/tenant/providers' });
+      }
+    },
+    [canAccessPlatformSystemTier, canAccessPlatformTenantTier, isSystemOwner, navigate]
+  );
 
   if (auth.enabled && isLoginRoute) {
     return (
@@ -775,55 +754,72 @@ export function AppShell() {
           <Link to="/" className="platform-topbar-brand" aria-label="DevTools Home">
             {brandName}
           </Link>
-          {topBarItems.map((item) => (
-            <Link
-              key={item.label}
-              to={item.to as any}
-              {...(item.params ? { params: item.params as any } : {})}
-              className={`nav-link platform-topbar-link ${isActive(item) ? 'nav-link-active' : ''}`}
-            >
-              {item.label}
-            </Link>
-          ))}
-          {canAccessPlatformProjectTier ? (
-            <div className="platform-megamenu">
+          <nav className="platform-topbar-nav" aria-label="Top level navigation">
+            {topBarItems.map((item) => (
+              <Link
+                key={item.id}
+                to={item.to as any}
+                {...(item.params ? { params: item.params as any } : {})}
+                className={`nav-link platform-topbar-link ${topNavActive(item) ? 'nav-link-active' : ''}`}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+        </div>
+        <div className="platform-topbar-right">
+          {isSystemOwner ? (
+            <div className="platform-owner-switch" role="group" aria-label="Owner mode switch">
               <button
                 type="button"
-                className={`nav-link platform-topbar-link ${pathname.startsWith('/settings/') ? 'nav-link-active' : ''}`}
-                onClick={() => setPlatformMenuOpen((current) => !current)}
+                className={`platform-owner-switch-option ${!ownerViewActive ? 'platform-owner-switch-option-active' : ''}`}
+                onClick={() => void switchOwnerView(false)}
               >
-                Platform
+                Tenant view
               </button>
-              {platformMenuOpen ? (
-                <div className="platform-megamenu-content">
-                  {platformMenuItems.map((item) => (
-                    <Link
-                      key={`platform:${item.label}`}
-                      to={item.to as any}
-                      {...(item.params ? { params: item.params as any } : {})}
-                      className={`nav-link ${
-                        item.tier === 'primary' ? 'nav-link-priority' : 'nav-link-secondary-tier'
-                      } ${isActive(item) ? 'nav-link-active' : ''}`}
-                    >
-                      {item.label}
-                    </Link>
-                  ))}
-                </div>
-              ) : null}
+              <button
+                type="button"
+                className={`platform-owner-switch-option ${ownerViewActive ? 'platform-owner-switch-option-active' : ''}`}
+                onClick={() => void switchOwnerView(true)}
+              >
+                Platform owner view
+              </button>
             </div>
           ) : null}
           <Link
             to="/help"
-            className={`nav-link platform-topbar-link platform-topbar-link-quiet ${isActive({ to: '/help', label: 'Help' }) ? 'nav-link-active' : ''}`}
+            className={`nav-link platform-topbar-link platform-topbar-link-quiet ${isRouteActive({ to: '/help' }) ? 'nav-link-active' : ''}`}
           >
             Help
           </Link>
-        </div>
-        <div className="platform-topbar-right">
           <div className="platform-session-text">tenant {tenantName}</div>
           <div className="platform-session-text">System Access: {ownerModeActive ? 'OWNER' : 'RESTRICTED'}</div>
         </div>
       </header>
+
+      <nav className="platform-breadcrumb-bar" aria-label="Breadcrumb">
+        <ol className="platform-breadcrumb-list">
+          {breadcrumbItems.map((item, index) => {
+            const isLast = index === breadcrumbItems.length - 1;
+            return (
+              <li key={item.id} className="platform-breadcrumb-item">
+                {item.to && !isLast ? (
+                  <Link
+                    to={item.to as any}
+                    {...(item.params ? { params: item.params as any } : {})}
+                    className="platform-breadcrumb-link"
+                  >
+                    {item.label}
+                  </Link>
+                ) : (
+                  <span className="platform-breadcrumb-current">{item.label}</span>
+                )}
+                {!isLast ? <span className="platform-breadcrumb-separator">/</span> : null}
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
 
       <div className="platform-grid">
         <aside className="platform-rail platform-rail-projects">
@@ -872,56 +868,33 @@ export function AppShell() {
 
         <aside className={`platform-rail platform-rail-jobs ${context.mode === 'project' ? 'platform-rail-jobs-active' : ''}`}>
           <header className="platform-header-block">
-            <div className="platform-job-title-row">
-              <div>
-                <div className="label">Current Project</div>
-                <div className="platform-title-sm">{selectedProject?.name ?? 'No project selected'}</div>
-                {selectedProject ? (
-                  <div className="platform-project-context-meta">
-                    <span className="platform-project-context-key">{selectedProject.key}</span>
-                    <span className={`platform-project-state-badge ${setupIsRequired ? 'platform-project-state-badge-warn' : 'platform-project-state-badge-good'}`}>
-                      {setupStateLabel}
-                    </span>
-                  </div>
-                ) : null}
+            <div className="label">{domainLabel(visualDomain)}</div>
+            <div className="platform-title-sm">{contextRailTitle}</div>
+            <div className="platform-subtitle">{contextRailSubtitle}</div>
+            {context.mode === 'project' && selectedProject ? (
+              <div className="platform-project-context-meta">
+                <span className="platform-project-context-key">{selectedProject.key}</span>
+                <span className={`platform-project-state-badge ${setupIsRequired ? 'platform-project-state-badge-warn' : 'platform-project-state-badge-good'}`}>
+                  {setupStateLabel}
+                </span>
               </div>
-              {selectedProject?.id ? (
-                <div className="platform-context-actions">
-                  <Button variant="secondary" onClick={() => void navigate({ to: '/project/$projectId', params: { projectId: selectedProject.id } } as any)}>
-                    Project Home
-                  </Button>
-                  <Button
-                    variant={setupIsRequired ? 'primary' : 'secondary'}
-                    onClick={() => void navigate({ to: '/project/$projectId/onboarding', params: { projectId: selectedProject.id } } as any)}
-                  >
-                    {setupIsRequired ? 'Continue setup' : 'Setup'}
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-            <div className="platform-subtitle">{selectedProjectGuidance}</div>
+            ) : null}
           </header>
 
           <section className="platform-section">
-            <div className="platform-section-title">Project Navigator</div>
+            <div className="platform-section-title">{contextRailTitle}</div>
             <div className="platform-project-navigator">
-              {projectNavigatorItems.length === 0 ? (
-                <div className="platform-empty-row">Select a project from launcher.</div>
+              {contextualNavItems.length === 0 ? (
+                <div className="platform-empty-row">
+                  {context.mode === 'project' ? 'Select a project from launcher.' : 'No routes available for this context.'}
+                </div>
               ) : (
-                projectNavigatorItems.map((item) => (
+                contextualNavItems.map((item) => (
                   <Link
                     key={item.id}
                     to={item.to as any}
                     {...(item.params ? { params: item.params as any } : {})}
-                    className={`platform-project-nav-item ${
-                      isActive(
-                        item.params
-                          ? { to: item.to, params: item.params, label: item.label }
-                          : { to: item.to, label: item.label }
-                      )
-                        ? 'platform-project-nav-item-active'
-                        : ''
-                    }`}
+                    className={`platform-project-nav-item ${isRouteActive(item) ? 'platform-project-nav-item-active' : ''}`}
                   >
                     <div className="platform-project-nav-copy">
                       <div className="platform-project-nav-title">{item.label}</div>
@@ -943,27 +916,36 @@ export function AppShell() {
             </div>
           </section>
 
-          <section className="platform-section">
-            <div className="platform-section-title">Live Queue</div>
-            {jobsLoading ? <div className="platform-empty-row">Loading jobs…</div> : null}
-            {!jobsLoading && jobsError ? <div className="platform-error-row">{jobsError}</div> : null}
-            {!jobsLoading && !jobsError ? (
-              <div className="platform-inline-stat-grid">
-                <div className="platform-inline-stat">
-                  <span>Running</span>
-                  <strong>{runningJobsCount}</strong>
+          {context.mode === 'project' ? (
+            <section className="platform-section">
+              <div className="platform-section-title">Live Queue</div>
+              {jobsLoading ? <div className="platform-empty-row">Loading jobs…</div> : null}
+              {!jobsLoading && jobsError ? <div className="platform-error-row">{jobsError}</div> : null}
+              {!jobsLoading && !jobsError ? (
+                <div className="platform-inline-stat-grid">
+                  <div className="platform-inline-stat">
+                    <span>Running</span>
+                    <strong>{runningJobsCount}</strong>
+                  </div>
+                  <div className="platform-inline-stat">
+                    <span>Ready</span>
+                    <strong>{readyJobsCount}</strong>
+                  </div>
+                  <div className="platform-inline-stat">
+                    <span>Action</span>
+                    <strong>{attentionJobs}</strong>
+                  </div>
                 </div>
-                <div className="platform-inline-stat">
-                  <span>Ready</span>
-                  <strong>{readyJobsCount}</strong>
-                </div>
-                <div className="platform-inline-stat">
-                  <span>Action</span>
-                  <strong>{attentionJobs}</strong>
-                </div>
+              ) : null}
+            </section>
+          ) : (
+            <section className="platform-section">
+              <div className="platform-section-title">Current View</div>
+              <div className="platform-empty-row">
+                {ownerModeActive ? ownerViewLabel : `${domainLabel(visualDomain)} view`}
               </div>
-            ) : null}
-          </section>
+            </section>
+          )}
         </aside>
 
         <main className={`platform-workspace ${context.mode === 'project' ? 'platform-workspace-project' : ''}`}>
@@ -1018,43 +1000,6 @@ export function AppShell() {
                 </div>
                 <div className="platform-subtitle">{selectedProjectGuidance}</div>
               </div>
-              <div className="platform-project-bar-actions">
-                <Link
-                  to="/project/$projectId"
-                  params={{ projectId: selectedProject.id }}
-                  className={`nav-link nav-link-priority ${pathname === `/project/${selectedProject.id}` ? 'nav-link-active' : ''}`}
-                >
-                  Project Home
-                </Link>
-                <Link
-                  to="/project/$projectId/onboarding"
-                  params={{ projectId: selectedProject.id }}
-                  className={`nav-link ${pathname.includes(`/project/${selectedProject.id}/onboarding`) ? 'nav-link-active' : ''}`}
-                >
-                  {setupIsRequired ? 'Continue setup' : 'Setup'}
-                </Link>
-                <Link
-                  to="/project/$projectId/coding"
-                  params={{ projectId: selectedProject.id }}
-                  className={`nav-link ${pathname.includes(`/project/${selectedProject.id}/coding`) ? 'nav-link-active' : ''}`}
-                >
-                  Coding
-                </Link>
-                <Link
-                  to="/project/$projectId/context"
-                  params={{ projectId: selectedProject.id }}
-                  className={`nav-link ${pathname.includes(`/project/${selectedProject.id}/context`) ? 'nav-link-active' : ''}`}
-                >
-                  Context
-                </Link>
-                <Link
-                  to="/project/$projectId/monitoring"
-                  params={{ projectId: selectedProject.id }}
-                  className={`nav-link ${projectOperationsActive ? 'nav-link-active' : ''}`}
-                >
-                  Operations
-                </Link>
-              </div>
             </section>
           ) : null}
 
@@ -1063,7 +1008,7 @@ export function AppShell() {
           ) : null}
           {showOwnerModeDebugPanel ? (
             <div className="platform-context-chip platform-workspace-banner" data-testid="owner-mode-debug-panel">
-              ownerModeActive={String(ownerModeActive)} | userRoles={userRoleLabel} | tenantRole={tenantRoleLabel}
+              ownerModeActive={String(ownerModeActive)} | ownerView={ownerViewActive ? 'platform' : 'tenant'} | userRoles={userRoleLabel} | tenantRole={tenantRoleLabel}
             </div>
           ) : null}
           {ownerGuardNotice ? (
