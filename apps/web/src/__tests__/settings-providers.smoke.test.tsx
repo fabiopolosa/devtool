@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider } from "@tanstack/react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { router } from "../router/router";
@@ -111,12 +111,14 @@ describe("Role-based settings providers smoke", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Owner Provider Settings" })).toBeInTheDocument();
-    expect(await screen.findByText("Configured Providers")).toBeInTheDocument();
+    expect(await screen.findByText("Provider Catalog")).toBeInTheDocument();
+    expect(await screen.findByText("Provider Configuration")).toBeInTheDocument();
+    expect(await screen.findByText("Status & Defaults")).toBeInTheDocument();
     expect((await screen.findAllByText("openai")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Default Tenant")).toBeInTheDocument();
   });
 
-  it("shows global Platform nav link with new shell labels", async () => {
+  it("shows top-level domain nav and owner switch", async () => {
     await act(async () => {
       window.history.pushState({}, "", "/");
       await router.navigate({ to: "/" });
@@ -128,12 +130,13 @@ describe("Role-based settings providers smoke", () => {
       </AppStoreProvider>
     );
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Platform" }));
-    });
-    const defaultLink = document.querySelector('a.nav-link[href="/settings/providers"]');
-    expect(defaultLink).not.toBeNull();
-    expect(screen.getAllByText("Providers").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Account" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Tenant" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Platform" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tenant view" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Platform owner view" })).toBeInTheDocument();
     first.unmount();
 
     window.localStorage.setItem("cp_owner_mode", "1");
@@ -144,11 +147,9 @@ describe("Role-based settings providers smoke", () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Platform" }));
+      fireEvent.click(screen.getByRole("button", { name: "Platform owner view" }));
     });
-    const ownerSettingsLink = document.querySelector('a.nav-link[href="/settings/providers"]');
-    expect(ownerSettingsLink).not.toBeNull();
-    expect(screen.getAllByText("Providers").length).toBeGreaterThan(0);
+    expect(router.state.location.pathname).toBe("/platform/secrets");
   });
 
   it("handles provider create as sync control action without job polling", async () => {
@@ -166,12 +167,19 @@ describe("Role-based settings providers smoke", () => {
 
     expect(await screen.findByRole("heading", { name: "Owner Provider Settings" })).toBeInTheDocument();
     expect((await screen.findAllByText("openai")).length).toBeGreaterThan(0);
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Loading provider configs…")).toBeNull();
     });
 
-    expect(await screen.findByText("Provider config created for openai.")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Create provider config"));
+
+    const createButton = screen.getByRole("button", { name: "Create provider" });
+    expect(createButton).not.toBeDisabled();
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(calledPaths.filter((path) => path === "/providers/config").length).toBeGreaterThan(1);
+    });
     expect(calledPaths.some((path) => path.startsWith("/jobs/"))).toBe(false);
   });
 
