@@ -1,0 +1,68 @@
+{
+  "$schema": "../Desktop/gestione_progetti/ops/coolify/polosaas-app.deploy.schema.json",
+  "deploymentStatus": "not_ready",
+  "app": {
+    "id": "devtools",
+    "displayName": "Devtools",
+    "repo": "https://github.com/fabiopolosa/devtool.git",
+    "branch": "codex/devtool-staging-sync-20260509"
+  },
+  "environments": {
+    "stg": {
+      "enabled": false,
+      "domains": {
+        "web": "https://stg.devtools.polosaas.it",
+        "api": "https://stg.devtools-api.polosaas.it"
+      },
+      "targets": {
+        "web": "edge-fe-01",
+        "api": "api-stg-01",
+        "worker": "state-stg-01",
+        "state": "state-stg-01"
+      }
+    },
+    "prod": {
+      "enabled": false,
+      "domains": {
+        "web": "https://devtools.polosaas.it",
+        "api": "https://devtools-api.polosaas.it"
+      },
+      "targets": {
+        "web": "edge-fe-01",
+        "api": "api-prod-01",
+        "worker": "state-prod-01",
+        "state": "state-prod-01"
+      }
+    }
+  },
+  "components": [],
+  "state": {
+    "postgres": {
+      "coolifyName": "platform-postgres-stg",
+      "target": "state-stg-01",
+      "schemas": [
+        "devtools"
+      ]
+    }
+  },
+  "contracts": {
+    "platformManifest": "/api/v1/app/manifest",
+    "openapi": "/documentation/json",
+    "sessionContext": "/api/v1/session/context",
+    "shellEmbed": "shell_embed=content",
+    "experienceContext": false,
+    "auditLogs": true,
+    "multitenant": true,
+    "statelessApi": false
+  },
+  "migrationNotes": [
+    "Initial Devtools deploy manifest created from the central PoloSaaS Coolify template on 2026-05-09.",
+    "No Coolify staging resources are declared or approved for autonomous deploy yet; stg.enabled remains false and deploymentStatus is not_ready.",
+    "The repo currently has apps/web, apps/api and apps/worker packages, but root Dockerfile.web, Dockerfile.api and Dockerfile.worker are missing.",
+    "API exposes /health, /api/v1/health, /api/v1/app/manifest, /api/v1/session/context, /api/v1/audit/events and /api/v1/usage; web/worker staging healthchecks still need deployable container contracts.",
+    "Staging PostgreSQL must use the shared platform-postgres-stg resource on state-stg-01, database polosaas_stg, app-owned schema devtools. Do not create a devtools-db-stg resource.",
+    "Runtime defaults to Postgres for API_STORE_MODE, but staging cutover is not proven and artifact storage still defaults to local development storage; do not claim full stateless staging compliance until object storage and worker/job recovery are verified.",
+    "Experience context, shell_embed=content, tenant skins and template-pack support are not complete enough to mark experienceContext=true.",
+    "A future ready manifest should declare devtools-web-stg on edge-fe-01, devtools-api-stg on api-stg-01 and devtools-worker-stg on state-stg-01 only after Dockerfiles, env, healthchecks and smoke checks exist."
+  ]
+}
